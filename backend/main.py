@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
 import schemas
 from database import engine, get_db, SessionLocal
-from routers import funds, expenses, transactions, transfers, income, checklist, overview, dev, monthly_reserve
+from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -20,23 +21,28 @@ app.add_middleware(
 )
 
 app.include_router(funds.router, prefix="/funds", tags=["funds"])
-app.include_router(expenses.router, prefix="/expenses", tags=["expenses"])
+app.include_router(expenses.router, prefix="/line-items", tags=["line-items"])
 app.include_router(transactions.router, prefix="/transactions", tags=["transactions"])
 app.include_router(transfers.router, prefix="/transfers", tags=["transfers"])
-app.include_router(income.router, prefix="/income", tags=["income"])
 app.include_router(checklist.router, prefix="/checklist", tags=["checklist"])
 app.include_router(overview.router, prefix="/overview", tags=["overview"])
 app.include_router(dev.router, prefix="/dev", tags=["dev"])
 app.include_router(monthly_reserve.router, prefix="/monthly-reserve", tags=["monthly-reserve"])
+app.include_router(income.router, tags=["income"])
 
 
 def _migrate() -> None:
     with engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(__import__('sqlalchemy').text("PRAGMA table_info(expenses)"))}
+        # expenses table additions
+        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(expenses)"))}
         if "actual_cents" not in existing:
-            conn.execute(__import__('sqlalchemy').text("ALTER TABLE expenses ADD COLUMN actual_cents INTEGER NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN actual_cents INTEGER NOT NULL DEFAULT 0"))
         if "category_id" not in existing:
-            conn.execute(__import__('sqlalchemy').text("ALTER TABLE expenses ADD COLUMN category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL"))
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN category_id INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL"))
+        if "type" not in existing:
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN type TEXT NOT NULL DEFAULT 'bill'"))
+        if "fund_id" not in existing:
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN fund_id INTEGER REFERENCES funds(id) ON DELETE SET NULL"))
         conn.commit()
 
 

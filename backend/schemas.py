@@ -53,24 +53,31 @@ class ExpenseCategoryCreate(BaseModel):
 class ExpenseOut(BaseModel):
     id: int
     name: str
+    type: str
     amount_cents: int
     actual_cents: int
     category_id: Optional[int] = None
+    fund_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
 class ExpenseCreate(BaseModel):
     name: str
+    type: str = "bill"
     amount_cents: int
     actual_cents: int = 0
     category_id: Optional[int] = None
+    fund_id: Optional[int] = None
+    new_fund_name: Optional[str] = None  # inline fund creation when type="fund"
 
 
 class ExpenseUpdate(BaseModel):
     name: Optional[str] = None
+    type: Optional[str] = None
     amount_cents: Optional[int] = None
     actual_cents: Optional[int] = None
     category_id: Optional[int] = None
+    fund_id: Optional[int] = None
 
 
 class IncomeSourceOut(BaseModel):

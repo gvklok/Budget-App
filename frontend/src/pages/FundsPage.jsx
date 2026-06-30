@@ -353,7 +353,7 @@ export default function FundsPage() {
   const [showTransfer, setShowTransfer] = useState(false)
   const [editFund, setEditFund] = useState(null)
   const [distributing, setDistributing] = useState(false)
-  const [distributeError, setDistributeError] = useState('')
+  const [distributeResult, setDistributeResult] = useState(null)
 
   const load = useCallback(async () => {
     const r = await fetch('/api/state')
@@ -403,13 +403,14 @@ export default function FundsPage() {
 
   async function handleDistribute() {
     setDistributing(true)
-    setDistributeError('')
+    setDistributeResult(null)
     try {
       const r = await fetch('/api/funds/distribute', { method: 'POST' })
+      const data = await r.json()
       if (!r.ok) {
-        const err = await r.json()
-        setDistributeError(err.detail || 'Distribute failed')
+        setDistributeResult({ error: data.detail || 'Distribute failed' })
       } else {
+        setDistributeResult(data)
         await load()
       }
     } finally {
@@ -488,8 +489,19 @@ export default function FundsPage() {
           </button>
         </div>
       </div>
-      {distributeError && (
-        <p className="text-xs text-red-500 mb-2 px-1">{distributeError}</p>
+      {distributeResult && (
+        <div className={`mb-2 px-4 py-3 rounded-2xl text-xs ${distributeResult.error ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
+          {distributeResult.error ? distributeResult.error : (
+            <>
+              {distributeResult.funded.length > 0 && (
+                <p>Funded: {distributeResult.funded.map((f) => `${f.name} (${c(f.amount_cents)})`).join(', ')}</p>
+              )}
+              {distributeResult.skipped.length > 0 && (
+                <p className="text-amber-600 mt-0.5">Skipped (not enough savings): {distributeResult.skipped.map((f) => f.name).join(', ')}</p>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {funds.length === 0 ? (

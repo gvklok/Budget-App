@@ -40,9 +40,11 @@ class Expense(Base):
     __tablename__ = "expenses"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
+    type = Column(String, nullable=False, default="bill")  # "bill" | "fund"
     amount_cents = Column(Integer, nullable=False)
     actual_cents = Column(Integer, default=0, nullable=False)
     category_id = Column(Integer, ForeignKey("expense_categories.id", ondelete="SET NULL"), nullable=True)
+    fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)
 
 
 class IncomeSource(Base):

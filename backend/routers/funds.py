@@ -48,25 +48,29 @@ def update_fund(fund_id: int, body: schemas.FundUpdate, db: Session = Depends(ge
 
 @router.post("/distribute")
 def distribute(db: Session = Depends(get_db)):
-    funds = db.query(models.Fund).filter(models.Fund.monthly_contribution_cents > 0).all()
+    funds = db.query(models.Fund).filter(models.Fund.monthly_contribution_cents > 0).order_by(models.Fund.id).all()
     if not funds:
         raise HTTPException(400, "No funds have a monthly contribution set")
 
-    total = sum(f.monthly_contribution_cents for f in funds)
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
-
-    if savings.balance_cents < total:
-        raise HTTPException(
-            400,
-            f"Not enough in Savings — need ${total / 100:.2f}, have ${savings.balance_cents / 100:.2f}",
-        )
+    funded = []
+    skipped = []
 
     for fund in funds:
-        fund.balance_cents += fund.monthly_contribution_cents
-        savings.balance_cents -= fund.monthly_contribution_cents
+        if savings.balance_cents >= fund.monthly_contribution_cents:
+            fund.balance_cents += fund.monthly_contribution_cents
+            savings.balance_cents -= fund.monthly_contribution_cents
+            funded.append({"id": fund.id, "name": fund.name, "amount_cents": fund.monthly_contribution_cents})
+        else:
+            skipped.append({"id": fund.id, "name": fund.name, "amount_cents": fund.monthly_contribution_cents})
+            break  # stop at first fund savings can't cover
 
     db.commit()
-    return {"ok": True, "distributed_cents": total}
+    return {
+        "funded": funded,
+        "skipped": skipped,
+        "savings_remaining_cents": savings.balance_cents,
+    }
 
 
 @router.delete("/{fund_id}")

@@ -7,6 +7,17 @@ from database import get_db
 
 router = APIRouter()
 
+VALID_TYPES = {"bill", "fund"}
+
+
+def _validate_type_and_fund(body_type, fund_id, new_fund_name, db):
+    if body_type not in VALID_TYPES:
+        raise HTTPException(400, "type must be 'bill' or 'fund'")
+    if body_type == "bill" and (fund_id or new_fund_name):
+        raise HTTPException(400, "Bill line items cannot have a fund")
+    if body_type == "fund" and not fund_id and not new_fund_name:
+        raise HTTPException(400, "Fund line items must link to a fund or provide new_fund_name")
+
 
 # ── Categories ────────────────────────────────────────────────────────────────
 
@@ -42,13 +53,12 @@ def delete_category(cat_id: int, db: Session = Depends(get_db)):
     cat = db.query(models.ExpenseCategory).filter(models.ExpenseCategory.id == cat_id).first()
     if not cat:
         raise HTTPException(404, "Category not found")
-    # FK ondelete=SET NULL handles nullifying expenses in this category
     db.delete(cat)
     db.commit()
     return {"ok": True}
 
 
-# ── Expenses ──────────────────────────────────────────────────────────────────
+# ── Line items ────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[schemas.ExpenseOut])
 def list_expenses(db: Session = Depends(get_db)):
@@ -59,14 +69,37 @@ def list_expenses(db: Session = Depends(get_db)):
 def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
     if body.amount_cents <= 0:
         raise HTTPException(400, "Amount must be positive")
+    _validate_type_and_fund(body.type, body.fund_id, body.new_fund_name, db)
+
+    resolved_fund_id = body.fund_id
+
+    if body.type == "fund":
+        if body.new_fund_name:
+            # Inline fund creation
+            new_fund = models.Fund(
+                name=body.new_fund_name.strip(),
+                balance_cents=0,
+                monthly_contribution_cents=body.amount_cents,
+            )
+            db.add(new_fund)
+            db.flush()
+            resolved_fund_id = new_fund.id
+        else:
+            fund = db.query(models.Fund).filter(models.Fund.id == body.fund_id).first()
+            if not fund:
+                raise HTTPException(404, "Fund not found")
+
     if body.category_id is not None:
         if not db.query(models.ExpenseCategory).filter(models.ExpenseCategory.id == body.category_id).first():
             raise HTTPException(404, "Category not found")
+
     expense = models.Expense(
         name=body.name,
+        type=body.type,
         amount_cents=body.amount_cents,
         actual_cents=body.actual_cents,
         category_id=body.category_id,
+        fund_id=resolved_fund_id,
     )
     db.add(expense)
     db.commit()
@@ -78,9 +111,13 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
 def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = Depends(get_db)):
     expense = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
     if not expense:
-        raise HTTPException(404, "Expense not found")
+        raise HTTPException(404, "Line item not found")
     if body.name is not None:
         expense.name = body.name
+    if body.type is not None:
+        if body.type not in VALID_TYPES:
+            raise HTTPException(400, "type must be 'bill' or 'fund'")
+        expense.type = body.type
     if body.amount_cents is not None:
         if body.amount_cents <= 0:
             raise HTTPException(400, "Amount must be positive")
@@ -93,6 +130,10 @@ def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = D
         expense.category_id = body.category_id
     if "category_id" in body.model_fields_set and body.category_id is None:
         expense.category_id = None
+    if body.fund_id is not None:
+        expense.fund_id = body.fund_id
+    if "fund_id" in body.model_fields_set and body.fund_id is None:
+        expense.fund_id = None
     db.commit()
     db.refresh(expense)
     return expense
@@ -102,7 +143,7 @@ def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = D
 def delete_expense(expense_id: int, db: Session = Depends(get_db)):
     expense = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
     if not expense:
-        raise HTTPException(404, "Expense not found")
+        raise HTTPException(404, "Line item not found")
     db.delete(expense)
     db.commit()
     return {"ok": True}
