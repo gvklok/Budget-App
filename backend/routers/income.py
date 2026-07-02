@@ -70,15 +70,13 @@ def delete_income_source(source_id: int, db: Session = Depends(get_db)):
 @router.get("/monthly-summary")
 def monthly_summary(db: Session = Depends(get_db)):
     sources = db.query(models.IncomeSource).all()
-    expenses = db.query(models.Expense).all()
+    bills = db.query(models.Expense).filter(models.Expense.type == "bill").all()
+    funds = db.query(models.Fund).all()
 
     expected_income = sum(_monthly_cents(s) for s in sources)
 
-    bills = [e for e in expenses if e.type == "bill"]
-    fund_items = [e for e in expenses if e.type == "fund"]
-
     bills_total = sum(e.amount_cents for e in bills)
-    fund_total = sum(e.amount_cents for e in fund_items)
+    fund_total = sum(f.monthly_contribution_cents for f in funds)
     expenses_total = bills_total + fund_total
 
     return {

@@ -55,6 +55,17 @@ class IncomeSource(Base):
     frequency = Column(String, nullable=False)  # monthly | semimonthly | biweekly | weekly
 
 
+class Transaction(Base):
+    __tablename__ = "transactions"
+    id = Column(Integer, primary_key=True)
+    amount_cents = Column(Integer, nullable=False)
+    date = Column(String, nullable=False)  # YYYY-MM-DD
+    merchant = Column(String, nullable=True)
+    line_item_id = Column(Integer, ForeignKey("expenses.id", ondelete="CASCADE"), nullable=True)
+    fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SimulatedTransaction(Base):
     __tablename__ = "simulated_transactions"
     id = Column(Integer, primary_key=True)

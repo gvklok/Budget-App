@@ -100,6 +100,24 @@ class IncomeSourceUpdate(BaseModel):
     frequency: Optional[str] = None
 
 
+class TransactionOut(BaseModel):
+    id: int
+    amount_cents: int
+    date: str
+    merchant: Optional[str] = None
+    line_item_id: Optional[int] = None
+    fund_id: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+
+class TransactionCreate(BaseModel):
+    amount_cents: int
+    date: str  # YYYY-MM-DD
+    merchant: Optional[str] = None
+    line_item_id: Optional[int] = None
+    fund_id: Optional[int] = None  # set this OR line_item_id, not both
+
+
 class TransferBody(BaseModel):
     from_bucket: str
     to_bucket: str

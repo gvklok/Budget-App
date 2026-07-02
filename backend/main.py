@@ -22,7 +22,7 @@ app.add_middleware(
 
 app.include_router(funds.router, prefix="/funds", tags=["funds"])
 app.include_router(expenses.router, prefix="/line-items", tags=["line-items"])
-app.include_router(transactions.router, prefix="/transactions", tags=["transactions"])
+app.include_router(transactions.router, prefix="/transactions", tags=["transactions"])  # Gate 12
 app.include_router(transfers.router, prefix="/transfers", tags=["transfers"])
 app.include_router(checklist.router, prefix="/checklist", tags=["checklist"])
 app.include_router(overview.router, prefix="/overview", tags=["overview"])
@@ -43,6 +43,30 @@ def _migrate() -> None:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN type TEXT NOT NULL DEFAULT 'bill'"))
         if "fund_id" not in existing:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN fund_id INTEGER REFERENCES funds(id) ON DELETE SET NULL"))
+
+        # transactions table: make line_item_id nullable + add fund_id
+        tx_cols = {row[1]: row for row in conn.execute(text("PRAGMA table_info(transactions)"))}
+        needs_rebuild = (
+            "line_item_id" in tx_cols and tx_cols["line_item_id"][3] == 1  # notnull=1
+        ) or "fund_id" not in tx_cols
+        if needs_rebuild:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS transactions_new (
+                    id INTEGER PRIMARY KEY,
+                    amount_cents INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    merchant TEXT,
+                    line_item_id INTEGER REFERENCES expenses(id) ON DELETE CASCADE,
+                    fund_id INTEGER REFERENCES funds(id) ON DELETE SET NULL,
+                    created_at DATETIME
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO transactions_new (id, amount_cents, date, merchant, line_item_id, created_at)
+                SELECT id, amount_cents, date, merchant, line_item_id, created_at FROM transactions
+            """))
+            conn.execute(text("DROP TABLE transactions"))
+            conn.execute(text("ALTER TABLE transactions_new RENAME TO transactions"))
         conn.commit()
 
 
