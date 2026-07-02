@@ -1,11 +1,71 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, Receipt } from 'lucide-react'
+import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, Receipt, LayoutList, PieChart } from 'lucide-react'
 import { fmt, toCents } from '../api'
 import Modal from '../components/Modal'
 
 function c(cents) { return fmt(cents / 100) }
-
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+const PALETTE = ['#6366f1','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#ef4444','#84cc16']
+
+// ── Donut Ring Chart ──────────────────────────────────────────────────────────
+
+function DonutChart({ segments }) {
+  const SIZE = 220
+  const cx = SIZE / 2, cy = SIZE / 2
+  const R = 82, SW = 30
+  const circ = 2 * Math.PI * R
+  const total = segments.reduce((s, seg) => s + seg.planned, 0)
+  const totalSpent = segments.reduce((s, seg) => s + seg.spent, 0)
+  if (total === 0) return <p className="text-slate-400 text-sm text-center py-8">No planned spending to chart</p>
+
+  let cumFrac = 0
+  const GAP = 3 // px gap between segments
+
+  return (
+    <div className="flex flex-col items-center gap-5">
+      <div className="relative" style={{ width: SIZE, height: SIZE }}>
+        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+          <circle cx={cx} cy={cy} r={R} fill="none" stroke="#f1f5f9" strokeWidth={SW} />
+          {segments.map((seg, i) => {
+            const frac = seg.planned / total
+            const dash = Math.max(0, frac * circ - GAP)
+            const rot = -90 + cumFrac * 360
+            cumFrac += frac
+            return (
+              <circle key={i} cx={cx} cy={cy} r={R} fill="none"
+                stroke={seg.color} strokeWidth={SW}
+                strokeDasharray={`${dash} ${circ}`}
+                transform={`rotate(${rot} ${cx} ${cy})`} />
+            )
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-bold text-slate-900">{c(totalSpent)}</span>
+          <span className="text-xs text-slate-400">spent</span>
+          <span className="text-xs text-slate-300 mt-0.5">of {c(total)}</span>
+        </div>
+      </div>
+      <div className="w-full space-y-2">
+        {segments.map((seg) => {
+          const pct = seg.planned > 0 ? Math.round((seg.spent / seg.planned) * 100) : 0
+          const over = seg.spent > seg.planned
+          return (
+            <div key={seg.label} className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: seg.color }} />
+              <span className="flex-1 text-sm text-slate-700 truncate">{seg.label}</span>
+              <span className={`text-xs font-mono font-semibold ${over ? 'text-red-500' : 'text-slate-600'}`}>
+                {c(seg.spent)}
+              </span>
+              <span className="text-xs text-slate-300">/</span>
+              <span className="text-xs font-mono text-slate-400">{c(seg.planned)}</span>
+              <span className={`text-xs w-8 text-right ${over ? 'text-red-400' : 'text-slate-400'}`}>{pct}%</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // ── Income Source Modal ───────────────────────────────────────────────────────
 
@@ -28,16 +88,9 @@ function IncomeSourceModal({ source, onClose, onSave }) {
     e.preventDefault()
     if (!name.trim()) return setError('Name is required')
     if (!amount) return setError('Amount is required')
-    setSaving(true)
-    setError('')
-    try {
-      await onSave({ name: name.trim(), amount_cents: toCents(amount), frequency })
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
+    setSaving(true); setError('')
+    try { await onSave({ name: name.trim(), amount_cents: toCents(amount), frequency }); onClose() }
+    catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
   return (
@@ -45,14 +98,12 @@ function IncomeSourceModal({ source, onClose, onSave }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Salary, Freelance, Rental"
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Salary, Freelance"
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Amount per payment</label>
-          <input type="number" step="0.01" min="0" value={amount}
-            onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
+          <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
         </div>
         <div>
@@ -81,16 +132,9 @@ function FundContributionModal({ fund, onClose, onSave }) {
   const [saving, setSaving] = useState(false)
 
   async function handleSubmit(e) {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      await onSave({ monthly_contribution_cents: toCents(contribution || '0') })
-      onClose()
-    } catch (err) {
-      // ignore
-    } finally {
-      setSaving(false)
-    }
+    e.preventDefault(); setSaving(true)
+    try { await onSave({ monthly_contribution_cents: toCents(contribution || '0') }); onClose() }
+    catch (err) { /* ignore */ } finally { setSaving(false) }
   }
 
   return (
@@ -101,7 +145,7 @@ function FundContributionModal({ fund, onClose, onSave }) {
           <input autoFocus type="number" step="0.01" min="0" value={contribution}
             onChange={(e) => setContribution(e.target.value)} placeholder="0.00"
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
-          <p className="text-xs text-slate-400 mt-1">Set to 0 to exclude from fund contributions total</p>
+          <p className="text-xs text-slate-400 mt-1">Set to 0 to exclude from contributions total</p>
         </div>
         <button type="submit" disabled={saving}
           className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
@@ -130,25 +174,17 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, o
     if (mode === 'category' && !lineItemId) return setError('Select a line item')
     if (mode === 'fund' && !fundId) return setError('Select a fund')
     if (!amount) return setError('Amount is required')
-    setSaving(true)
-    setError('')
+    setSaving(true); setError('')
     try {
       const payload = {
-        amount_cents: toCents(amount),
-        date,
-        merchant: merchant.trim() || null,
+        amount_cents: toCents(amount), date, merchant: merchant.trim() || null,
         ...(mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) }),
       }
-      await onSave(payload)
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
+      await onSave(payload); onClose()
+    } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
-  const tabClass = (active) =>
+  const tab = (active) =>
     `flex-1 py-2 text-sm font-semibold rounded-xl border transition-colors ${
       active ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'
     }`
@@ -157,14 +193,9 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, o
     <Modal title="Log Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="flex gap-2">
-          <button type="button" className={tabClass(mode === 'category')} onClick={() => setMode('category')}>
-            Bill
-          </button>
-          <button type="button" className={tabClass(mode === 'fund')} onClick={() => setMode('fund')}>
-            Fund
-          </button>
+          <button type="button" className={tab(mode === 'category')} onClick={() => setMode('category')}>Bill</button>
+          <button type="button" className={tab(mode === 'fund')} onClick={() => setMode('fund')}>Fund</button>
         </div>
-
         {mode === 'category' ? (
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Bill</label>
@@ -184,7 +215,6 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, o
             </select>
           </div>
         )}
-
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
           <input autoFocus type="number" step="0.01" min="0" value={amount}
@@ -215,7 +245,7 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, o
   )
 }
 
-// ── Bill Line Item Modal ───────────────────────────────────────────────────────
+// ── Bill Line Item Modal ──────────────────────────────────────────────────────
 
 function LineItemModal({ item, categories, onClose, onSave }) {
   const [name, setName] = useState(item?.name ?? '')
@@ -228,22 +258,11 @@ function LineItemModal({ item, categories, onClose, onSave }) {
     e.preventDefault()
     if (!name.trim()) return setError('Name is required')
     if (!amount) return setError('Amount is required')
-    setSaving(true)
-    setError('')
+    setSaving(true); setError('')
     try {
-      await onSave({
-        name: name.trim(),
-        type: 'bill',
-        amount_cents: toCents(amount),
-        actual_cents: 0,
-        category_id: categoryId !== '' ? Number(categoryId) : null,
-      })
+      await onSave({ name: name.trim(), type: 'bill', amount_cents: toCents(amount), actual_cents: 0, category_id: categoryId !== '' ? Number(categoryId) : null })
       onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
+    } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
   return (
@@ -251,14 +270,12 @@ function LineItemModal({ item, categories, onClose, onSave }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Rent, Groceries, Netflix"
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rent, Groceries"
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Monthly amount</label>
-          <input type="number" step="0.01" min="0" value={amount}
-            onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
+          <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
         </div>
         <div>
@@ -286,17 +303,14 @@ function CategoryModal({ category, onClose, onSave }) {
   const [saving, setSaving] = useState(false)
 
   async function handleSubmit(e) {
-    e.preventDefault()
-    if (!name.trim()) return
-    setSaving(true)
+    e.preventDefault(); if (!name.trim()) return; setSaving(true)
     try { await onSave({ name: name.trim() }); onClose() } finally { setSaving(false) }
   }
 
   return (
     <Modal title={category ? 'Rename Category' : 'New Category'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Fixed, Insurance, Groceries"
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fixed, Insurance"
           className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
         <button type="submit" disabled={saving || !name.trim()}
           className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
@@ -307,7 +321,7 @@ function CategoryModal({ category, onClose, onSave }) {
   )
 }
 
-// ── Shared expandable row ─────────────────────────────────────────────────────
+// ── Shared expandable item row ────────────────────────────────────────────────
 
 function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx }) {
   const [expanded, setExpanded] = useState(false)
@@ -326,64 +340,40 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
           {subtitle && <p className="text-xs text-slate-400 truncate">{subtitle}</p>}
         </div>
         <span className="w-20 text-right font-mono text-sm text-slate-500">{c(budgetCents)}</span>
-        <span className={`w-20 text-right font-mono text-sm font-semibold ${
-          spentCents === 0 ? 'text-slate-300' : over ? 'text-red-500' : 'text-slate-700'
-        }`}>
+        <span className={`w-20 text-right font-mono text-sm font-semibold ${spentCents === 0 ? 'text-slate-300' : over ? 'text-red-500' : 'text-slate-700'}`}>
           {spentCents === 0 ? '—' : c(spentCents)}
         </span>
-        <span className={`w-20 text-right font-mono text-sm font-semibold ${
-          over ? 'text-red-500' : remaining === budgetCents ? 'text-slate-300' : 'text-emerald-600'
-        }`}>
+        <span className={`w-20 text-right font-mono text-sm font-semibold ${over ? 'text-red-500' : remaining === budgetCents ? 'text-slate-300' : 'text-emerald-600'}`}>
           {over ? `−${c(Math.abs(remaining))}` : c(remaining)}
         </span>
         <div className="flex items-center gap-1 shrink-0 w-20 justify-end">
-          {onLogTx && (
-            <button onClick={onLogTx}
-              className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100" title="Log transaction">
-              <Receipt size={13} />
-            </button>
-          )}
-          {onEdit && (
-            <button onClick={onEdit}
-              className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100">
-              <Pencil size={13} />
-            </button>
-          )}
-          {onDelete && (
-            <button onClick={onDelete}
-              className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400">
-              <Trash2 size={13} />
-            </button>
-          )}
+          {onLogTx && <button onClick={onLogTx} className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100" title="Log transaction"><Receipt size={13} /></button>}
+          {onEdit && <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><Pencil size={13} /></button>}
+          {onDelete && <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400"><Trash2 size={13} /></button>}
         </div>
       </div>
-
       {expanded && (
         <div className="mx-4 mb-3 rounded-xl border border-slate-100 overflow-hidden">
-          {txns.length === 0 ? (
-            <p className="text-xs text-slate-400 px-4 py-3">No transactions this month</p>
-          ) : (
-            <div className="divide-y divide-slate-50">
-              {txns.map((tx) => (
-                <div key={tx.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <span className="text-xs text-slate-400 w-20 shrink-0">{tx.date}</span>
-                  <span className="flex-1 text-xs text-slate-600 truncate">{tx.merchant || '—'}</span>
-                  <span className="font-mono text-xs font-semibold text-slate-800">{c(tx.amount_cents)}</span>
-                  <button onClick={() => onDeleteTx(tx)}
-                    className="w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400">
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          {txns.length === 0
+            ? <p className="text-xs text-slate-400 px-4 py-3">No transactions this month</p>
+            : <div className="divide-y divide-slate-50">
+                {txns.map((tx) => (
+                  <div key={tx.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="text-xs text-slate-400 w-20 shrink-0">{tx.date}</span>
+                    <span className="flex-1 text-xs text-slate-600 truncate">{tx.merchant || '—'}</span>
+                    <span className="font-mono text-xs font-semibold text-slate-800">{c(tx.amount_cents)}</span>
+                    <button onClick={() => onDeleteTx(tx)} className="w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400"><Trash2 size={11} /></button>
+                  </div>
+                ))}
+              </div>
+          }
         </div>
       )}
     </div>
   )
 }
 
-// ── Bill group (by category) ──────────────────────────────────────────────────
+// ── Bill group (collapsible by category) ─────────────────────────────────────
 
 const COL_HEADER = (
   <div className="flex text-xs font-semibold text-slate-400">
@@ -395,44 +385,54 @@ const COL_HEADER = (
 )
 
 function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDeleteTx }) {
+  const [open, setOpen] = useState(true)
   const totalPlanned = bills.reduce((s, b) => s + b.amount_cents, 0)
   const totalSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
   const totalRemaining = totalPlanned - totalSpent
 
   return (
     <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-      <div className="flex items-center px-4 py-3 bg-slate-50 border-b border-slate-100">
-        <div className="w-5 shrink-0" />
-        <p className="flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        {COL_HEADER}
-      </div>
-      <div className="divide-y divide-slate-50">
-        {bills.map((b) => {
-          const itemTxns = txnsByItemId[b.id] ?? []
-          const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
-          return (
-            <ItemRow key={b.id}
-              name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
-              onEdit={() => onEdit(b)} onDelete={() => onDelete(b)}
-              onLogTx={() => onLogTx(b.id)} onDeleteTx={onDeleteTx} />
-          )
-        })}
-      </div>
-      {bills.length > 1 && (
-        <div className="flex items-center px-4 py-2.5 border-t border-slate-100 bg-slate-50">
-          <div className="w-5 shrink-0" />
-          <p className="flex-1 text-xs font-semibold text-slate-500">Subtotal</p>
-          <span className="w-20 text-right font-mono text-xs font-semibold text-slate-600">{c(totalPlanned)}</span>
-          <span className={`w-20 text-right font-mono text-xs font-semibold ${totalSpent === 0 ? 'text-slate-300' : 'text-slate-700'}`}>
-            {totalSpent === 0 ? '—' : c(totalSpent)}
-          </span>
-          <span className={`w-20 text-right font-mono text-xs font-semibold ${
-            totalRemaining < 0 ? 'text-red-500' : totalSpent === 0 ? 'text-slate-300' : 'text-emerald-600'
-          }`}>
-            {totalSpent === 0 ? '—' : totalRemaining < 0 ? `−${c(Math.abs(totalRemaining))}` : c(totalRemaining)}
-          </span>
-          <div className="w-20" />
+      <button onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center px-4 py-3 bg-slate-50 border-b border-slate-100">
+        <div className="w-5 shrink-0 flex items-center justify-center text-slate-400">
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </div>
+        <p className="flex-1 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        {!open && (
+          <div className="flex text-xs font-semibold text-slate-400">
+            <span className="w-20 text-right">{c(totalPlanned)}</span>
+            <span className={`w-20 text-right ${totalSpent > 0 ? 'text-slate-600' : 'text-slate-300'}`}>{totalSpent > 0 ? c(totalSpent) : '—'}</span>
+            <span className={`w-20 text-right ${totalRemaining < 0 ? 'text-red-400' : totalSpent > 0 ? 'text-emerald-500' : 'text-slate-300'}`}>
+              {totalSpent > 0 ? (totalRemaining < 0 ? `−${c(Math.abs(totalRemaining))}` : c(totalRemaining)) : '—'}
+            </span>
+            <div className="w-20" />
+          </div>
+        )}
+        {open && COL_HEADER}
+      </button>
+      {open && (
+        <>
+          <div className="divide-y divide-slate-50">
+            {bills.map((b) => {
+              const itemTxns = txnsByItemId[b.id] ?? []
+              const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
+              return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
+                onEdit={() => onEdit(b)} onDelete={() => onDelete(b)} onLogTx={() => onLogTx(b.id)} onDeleteTx={onDeleteTx} />
+            })}
+          </div>
+          {bills.length > 1 && (
+            <div className="flex items-center px-4 py-2.5 border-t border-slate-100 bg-slate-50">
+              <div className="w-5 shrink-0" />
+              <p className="flex-1 text-xs font-semibold text-slate-500">Subtotal</p>
+              <span className="w-20 text-right font-mono text-xs font-semibold text-slate-600">{c(totalPlanned)}</span>
+              <span className={`w-20 text-right font-mono text-xs font-semibold ${totalSpent === 0 ? 'text-slate-300' : 'text-slate-700'}`}>{totalSpent === 0 ? '—' : c(totalSpent)}</span>
+              <span className={`w-20 text-right font-mono text-xs font-semibold ${totalRemaining < 0 ? 'text-red-500' : totalSpent === 0 ? 'text-slate-300' : 'text-emerald-600'}`}>
+                {totalSpent === 0 ? '—' : totalRemaining < 0 ? `−${c(Math.abs(totalRemaining))}` : c(totalRemaining)}
+              </span>
+              <div className="w-20" />
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -448,14 +448,17 @@ export default function ExpensesPage() {
   const [funds, setFunds] = useState([])
   const [transactions, setTransactions] = useState([])
 
+  const [viewMode, setViewMode] = useState('list') // 'list' | 'chart'
+  const [billsOpen, setBillsOpen] = useState(true)
+  const [fundsOpen, setFundsOpen] = useState(true)
+
   const [showAddSource, setShowAddSource] = useState(false)
   const [editSource, setEditSource] = useState(null)
   const [showAddItem, setShowAddItem] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [showAddCat, setShowAddCat] = useState(false)
   const [editCat, setEditCat] = useState(null)
-  const [editFundContrib, setEditFundContrib] = useState(null) // fund to edit contribution
-  // logTx: null=closed, { lineItemId, fundId } = open
+  const [editFundContrib, setEditFundContrib] = useState(null)
   const [logTx, setLogTx] = useState(null)
 
   const load = useCallback(async () => {
@@ -495,34 +498,18 @@ export default function ExpensesPage() {
 
   async function handleCreateSource(data) { await post('/api/income-sources', data); await load() }
   async function handleUpdateSource(id, data) { await patch(`/api/income-sources/${id}`, data); await load() }
-  async function handleDeleteSource(s) {
-    if (!confirm(`Delete "${s.name}"?`)) return
-    await del(`/api/income-sources/${s.id}`)
-    await load()
-  }
+  async function handleDeleteSource(s) { if (!confirm(`Delete "${s.name}"?`)) return; await del(`/api/income-sources/${s.id}`); await load() }
   async function handleCreateItem(data) { await post('/api/line-items/', data); await load() }
   async function handleUpdateItem(id, data) { await patch(`/api/line-items/${id}`, data); await load() }
-  async function handleDeleteItem(item) {
-    if (!confirm(`Delete "${item.name}"?`)) return
-    await del(`/api/line-items/${item.id}`)
-    await load()
-  }
+  async function handleDeleteItem(item) { if (!confirm(`Delete "${item.name}"?`)) return; await del(`/api/line-items/${item.id}`); await load() }
   async function handleCreateCat(data) { await post('/api/line-items/categories', data); await load() }
   async function handleUpdateCat(id, data) { await patch(`/api/line-items/categories/${id}`, data); await load() }
-  async function handleDeleteCat(cat) {
-    if (!confirm(`Delete category "${cat.name}"? Bills in it become uncategorized.`)) return
-    await del(`/api/line-items/categories/${cat.id}`)
-    await load()
-  }
+  async function handleDeleteCat(cat) { if (!confirm(`Delete "${cat.name}"? Bills become uncategorized.`)) return; await del(`/api/line-items/categories/${cat.id}`); await load() }
   async function handleUpdateFundContrib(id, data) { await patch(`/api/funds/${id}`, data); await load() }
   async function handleLogTx(data) { await post('/api/transactions/', data); await load() }
-  async function handleDeleteTx(tx) {
-    if (!confirm('Delete this transaction?')) return
-    await del(`/api/transactions/${tx.id}`)
-    await load()
-  }
+  async function handleDeleteTx(tx) { if (!confirm('Delete this transaction?')) return; await del(`/api/transactions/${tx.id}`); await load() }
 
-  // Only current-month transactions
+  // Current month transactions
   const now = new Date()
   const currentMonth = now.getMonth() + 1
   const currentYear = now.getFullYear()
@@ -531,21 +518,17 @@ export default function ExpensesPage() {
     return y === currentYear && m === currentMonth
   })
 
-  // Bill transactions by line_item_id
   const txnsByItemId = {}
   for (const tx of currentMonthTxns.filter((t) => t.line_item_id)) {
     if (!txnsByItemId[tx.line_item_id]) txnsByItemId[tx.line_item_id] = []
     txnsByItemId[tx.line_item_id].push(tx)
   }
-
-  // Fund transactions by fund_id (direct spending)
   const txnsByFundId = {}
   for (const tx of currentMonthTxns.filter((t) => t.fund_id)) {
     if (!txnsByFundId[tx.fund_id]) txnsByFundId[tx.fund_id] = []
     txnsByFundId[tx.fund_id].push(tx)
   }
 
-  // Bills only
   const bills = lineItems.filter((i) => i.type === 'bill')
   const catMap = Object.fromEntries(categories.map((cat) => [cat.id, cat.name]))
   const grouped = {}
@@ -554,19 +537,44 @@ export default function ExpensesPage() {
     if (b.category_id && catMap[b.category_id]) {
       if (!grouped[b.category_id]) grouped[b.category_id] = []
       grouped[b.category_id].push(b)
-    } else {
-      uncategorized.push(b)
-    }
+    } else { uncategorized.push(b) }
   }
 
+  // Totals
   const totalBillPlanned = bills.reduce((s, b) => s + b.amount_cents, 0)
   const totalBillSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
-  const totalBillRemaining = totalBillPlanned - totalBillSpent
+  const totalFundPlanned = funds.reduce((s, f) => s + f.monthly_contribution_cents, 0)
+  const totalFundSpent = funds.reduce((s, f) => s + (txnsByFundId[f.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
+  const totalPlanned = totalBillPlanned + totalFundPlanned
+  const totalSpent = totalBillSpent + totalFundSpent
+  const spentPct = totalPlanned > 0 ? Math.min(100, Math.round((totalSpent / totalPlanned) * 100)) : 0
+
+  // Donut chart segments
+  const chartSegments = []
+  let colorIdx = 0
+  for (const cat of categories) {
+    const catBills = grouped[cat.id] ?? []
+    const planned = catBills.reduce((s, b) => s + b.amount_cents, 0)
+    const spent = catBills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
+    if (planned > 0) chartSegments.push({ label: cat.name, color: PALETTE[colorIdx++ % PALETTE.length], planned, spent })
+  }
+  if (uncategorized.length > 0) {
+    const planned = uncategorized.reduce((s, b) => s + b.amount_cents, 0)
+    const spent = uncategorized.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
+    if (planned > 0) chartSegments.push({ label: 'Uncategorized', color: '#94a3b8', planned, spent })
+  }
+  for (const f of funds) {
+    if (f.monthly_contribution_cents > 0) {
+      const spent = (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0)
+      chartSegments.push({ label: f.name, color: PALETTE[colorIdx++ % PALETTE.length], planned: f.monthly_contribution_cents, spent })
+    }
+  }
 
   const thisMonthName = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`
 
   return (
     <div className="px-4 pt-6 pb-6 space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-slate-950">Expenses</h1>
         <button onClick={() => setLogTx({})}
@@ -575,7 +583,7 @@ export default function ExpensesPage() {
         </button>
       </div>
 
-      {/* Monthly Summary */}
+      {/* Projected Monthly Summary */}
       {summary && (
         <div className="bg-slate-950 text-white rounded-3xl p-5 space-y-3">
           <p className="text-xs uppercase tracking-wide text-slate-400">{thisMonthName}</p>
@@ -613,20 +621,68 @@ export default function ExpensesPage() {
         </div>
       )}
 
+      {/* Planned vs Spent */}
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Planned vs Spent</p>
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+            <button onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${viewMode === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+              <LayoutList size={13} />List
+            </button>
+            <button onClick={() => setViewMode('chart')}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${viewMode === 'chart' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+              <PieChart size={13} />Chart
+            </button>
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-slate-50 rounded-2xl px-4 py-3">
+            <p className="text-xs text-slate-400 mb-0.5">Planned</p>
+            <p className="font-mono font-bold text-slate-900 text-lg">{c(totalPlanned)}</p>
+            <p className="text-xs text-slate-400 mt-1">Bills {c(totalBillPlanned)} · Funds {c(totalFundPlanned)}</p>
+          </div>
+          <div className="bg-slate-50 rounded-2xl px-4 py-3">
+            <p className="text-xs text-slate-400 mb-0.5">Spent</p>
+            <p className={`font-mono font-bold text-lg ${totalSpent > totalPlanned ? 'text-red-500' : 'text-slate-900'}`}>{c(totalSpent)}</p>
+            <p className="text-xs text-slate-400 mt-1">Bills {c(totalBillSpent)} · Funds {c(totalFundSpent)}</p>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        {totalPlanned > 0 && (
+          <div>
+            <div className="flex justify-between text-xs text-slate-400 mb-1.5">
+              <span>{spentPct}% used</span>
+              <span>{c(totalPlanned - totalSpent)} remaining</span>
+            </div>
+            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${totalSpent > totalPlanned ? 'bg-red-400' : 'bg-emerald-400'}`}
+                style={{ width: `${spentPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Chart view */}
+        {viewMode === 'chart' && <DonutChart segments={chartSegments} />}
+      </div>
+
       {/* Income Sources */}
       <div>
         <div className="flex items-center justify-between mb-3 px-1">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Income</p>
-          <button onClick={() => setShowAddSource(true)}
-            className="flex items-center gap-1 text-sm font-semibold text-slate-900">
+          <button onClick={() => setShowAddSource(true)} className="flex items-center gap-1 text-sm font-semibold text-slate-900">
             <Plus size={16} />Add
           </button>
         </div>
         {incomeSources.length === 0 ? (
           <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center">
             <p className="text-slate-400 text-sm mb-2">No income sources yet</p>
-            <button onClick={() => setShowAddSource(true)}
-              className="text-sm font-semibold text-slate-900">Add income source →</button>
+            <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-slate-900">Add income source →</button>
           </div>
         ) : (
           <div className="space-y-2">
@@ -638,14 +694,8 @@ export default function ExpensesPage() {
                     <p className="text-xs text-slate-400 mt-0.5">{c(s.amount_cents)} · {freqLabel(s.frequency)}</p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => setEditSource(s)}
-                      className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100">
-                      <Pencil size={14} />
-                    </button>
-                    <button onClick={() => handleDeleteSource(s)}
-                      className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400">
-                      <Trash2 size={14} />
-                    </button>
+                    <button onClick={() => setEditSource(s)} className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><Pencil size={14} /></button>
+                    <button onClick={() => handleDeleteSource(s)} className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400"><Trash2 size={14} /></button>
                   </div>
                 </div>
               </div>
@@ -654,132 +704,114 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Bills */}
-      <div>
-        <div className="flex items-center justify-between mb-3 px-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bills</p>
-          <div className="flex items-center gap-3">
-            <button onClick={() => setShowAddCat(true)}
-              className="flex items-center gap-1 text-xs font-semibold text-slate-500">
-              <Tag size={13} />Category
-            </button>
-            <button onClick={() => setShowAddItem(true)}
-              className="flex items-center gap-1 text-sm font-semibold text-slate-900">
-              <Plus size={16} />Add
-            </button>
-          </div>
-        </div>
-
-        {categories.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-3">
-            {categories.map((cat) => (
-              <div key={cat.id} className="flex items-center gap-1 bg-slate-100 rounded-full px-3 py-1">
-                <span className="text-xs font-medium text-slate-600">{cat.name}</span>
-                <button onClick={() => setEditCat(cat)} className="text-slate-400 hover:text-slate-600 ml-1">
-                  <Pencil size={11} />
-                </button>
-                <button onClick={() => handleDeleteCat(cat)} className="text-slate-400 hover:text-red-400">
-                  <Trash2 size={11} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {bills.length === 0 ? (
-          <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center">
-            <p className="text-slate-400 text-sm">No bills yet — add one above</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {categories.map((cat) => {
-              const group = grouped[cat.id]
-              if (!group?.length) return null
-              return (
-                <BillGroup key={cat.id} label={cat.name} bills={group} txnsByItemId={txnsByItemId}
-                  onEdit={setEditItem} onDelete={handleDeleteItem}
-                  onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
-              )
-            })}
-            {uncategorized.length > 0 && (
-              <BillGroup label="Uncategorized" bills={uncategorized} txnsByItemId={txnsByItemId}
-                onEdit={setEditItem} onDelete={handleDeleteItem}
-                onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
-            )}
-            <div className="flex items-center px-4 py-3">
-              <div className="w-5 shrink-0" />
-              <p className="flex-1 text-sm font-bold text-slate-900">Total</p>
-              <span className="w-20 text-right font-mono text-sm font-bold text-slate-900">{c(totalBillPlanned)}</span>
-              <span className={`w-20 text-right font-mono text-sm font-bold ${totalBillSpent === 0 ? 'text-slate-300' : 'text-slate-700'}`}>
-                {totalBillSpent === 0 ? '—' : c(totalBillSpent)}
-              </span>
-              <span className={`w-20 text-right font-mono text-sm font-bold ${
-                totalBillRemaining < 0 ? 'text-red-500' : totalBillSpent === 0 ? 'text-slate-300' : 'text-emerald-600'
-              }`}>
-                {totalBillSpent === 0 ? '—' : totalBillRemaining < 0 ? `−${c(Math.abs(totalBillRemaining))}` : c(totalBillRemaining)}
-              </span>
-              <div className="w-20" />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Funds */}
-      {funds.length > 0 && (
+      {/* Bills — collapsible */}
+      {viewMode === 'list' && (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3 px-1">Funds</p>
-          <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-            <div className="flex items-center px-4 py-3 bg-slate-50 border-b border-slate-100">
-              <div className="w-5 shrink-0" />
-              <p className="flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Fund</p>
-              {COL_HEADER}
+          <div className="flex items-center justify-between mb-3 px-1">
+            <button onClick={() => setBillsOpen((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {billsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Bills
+            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setShowAddCat(true)} className="flex items-center gap-1 text-xs font-semibold text-slate-500">
+                <Tag size={13} />Category
+              </button>
+              <button onClick={() => setShowAddItem(true)} className="flex items-center gap-1 text-sm font-semibold text-slate-900">
+                <Plus size={16} />Add
+              </button>
             </div>
-            <div className="divide-y divide-slate-50">
-              {funds.map((fund) => {
-                const fundTxns = txnsByFundId[fund.id] ?? []
-                const spent = fundTxns.reduce((s, t) => s + t.amount_cents, 0)
-                return (
-                  <ItemRow key={fund.id}
-                    name={fund.name}
+          </div>
+
+          {billsOpen && (
+            <>
+              {categories.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {categories.map((cat) => (
+                    <div key={cat.id} className="flex items-center gap-1 bg-slate-100 rounded-full px-3 py-1">
+                      <span className="text-xs font-medium text-slate-600">{cat.name}</span>
+                      <button onClick={() => setEditCat(cat)} className="text-slate-400 hover:text-slate-600 ml-1"><Pencil size={11} /></button>
+                      <button onClick={() => handleDeleteCat(cat)} className="text-slate-400 hover:text-red-400"><Trash2 size={11} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {bills.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center">
+                  <p className="text-slate-400 text-sm">No bills yet — add one above</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {categories.map((cat) => {
+                    const group = grouped[cat.id]
+                    if (!group?.length) return null
+                    return <BillGroup key={cat.id} label={cat.name} bills={group} txnsByItemId={txnsByItemId}
+                      onEdit={setEditItem} onDelete={handleDeleteItem}
+                      onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
+                  })}
+                  {uncategorized.length > 0 && (
+                    <BillGroup label="Uncategorized" bills={uncategorized} txnsByItemId={txnsByItemId}
+                      onEdit={setEditItem} onDelete={handleDeleteItem}
+                      onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
+                  )}
+                  <div className="flex items-center px-4 py-3">
+                    <div className="w-5 shrink-0" /><p className="flex-1 text-sm font-bold text-slate-900">Total</p>
+                    <span className="w-20 text-right font-mono text-sm font-bold text-slate-900">{c(totalBillPlanned)}</span>
+                    <span className={`w-20 text-right font-mono text-sm font-bold ${totalBillSpent === 0 ? 'text-slate-300' : 'text-slate-700'}`}>{totalBillSpent === 0 ? '—' : c(totalBillSpent)}</span>
+                    <span className={`w-20 text-right font-mono text-sm font-bold ${(totalBillPlanned - totalBillSpent) < 0 ? 'text-red-500' : totalBillSpent === 0 ? 'text-slate-300' : 'text-emerald-600'}`}>
+                      {totalBillSpent === 0 ? '—' : (totalBillPlanned - totalBillSpent) < 0 ? `−${c(Math.abs(totalBillPlanned - totalBillSpent))}` : c(totalBillPlanned - totalBillSpent)}
+                    </span>
+                    <div className="w-20" />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Funds — collapsible */}
+      {viewMode === 'list' && funds.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3 px-1">
+            <button onClick={() => setFundsOpen((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {fundsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Funds
+            </button>
+          </div>
+          {fundsOpen && (
+            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+              <div className="flex items-center px-4 py-3 bg-slate-50 border-b border-slate-100">
+                <div className="w-5 shrink-0" />
+                <p className="flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Fund</p>
+                {COL_HEADER}
+              </div>
+              <div className="divide-y divide-slate-50">
+                {funds.map((fund) => {
+                  const fundTxns = txnsByFundId[fund.id] ?? []
+                  const spent = fundTxns.reduce((s, t) => s + t.amount_cents, 0)
+                  return <ItemRow key={fund.id} name={fund.name}
                     subtitle={fund.monthly_contribution_cents === 0 ? 'No contribution set' : null}
-                    budgetCents={fund.monthly_contribution_cents}
-                    spentCents={spent}
-                    txns={fundTxns}
+                    budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
                     onEdit={() => setEditFundContrib(fund)}
                     onLogTx={() => setLogTx({ fundId: fund.id })}
-                    onDeleteTx={handleDeleteTx}
-                  />
-                )
-              })}
+                    onDeleteTx={handleDeleteTx} />
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
       {/* Modals */}
-      {logTx && (
-        <LogTransactionModal
-          bills={bills}
-          funds={funds}
-          defaultLineItemId={logTx.lineItemId}
-          defaultFundId={logTx.fundId}
-          onClose={() => setLogTx(null)}
-          onSave={handleLogTx}
-        />
-      )}
+      {logTx && <LogTransactionModal bills={bills} funds={funds} defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} onClose={() => setLogTx(null)} onSave={handleLogTx} />}
       {showAddSource && <IncomeSourceModal onClose={() => setShowAddSource(false)} onSave={handleCreateSource} />}
       {editSource && <IncomeSourceModal source={editSource} onClose={() => setEditSource(null)} onSave={(d) => handleUpdateSource(editSource.id, d)} />}
       {showAddItem && <LineItemModal categories={categories} onClose={() => setShowAddItem(false)} onSave={handleCreateItem} />}
       {editItem && <LineItemModal item={editItem} categories={categories} onClose={() => setEditItem(null)} onSave={(d) => handleUpdateItem(editItem.id, d)} />}
       {showAddCat && <CategoryModal onClose={() => setShowAddCat(false)} onSave={handleCreateCat} />}
       {editCat && <CategoryModal category={editCat} onClose={() => setEditCat(null)} onSave={(d) => handleUpdateCat(editCat.id, d)} />}
-      {editFundContrib && (
-        <FundContributionModal
-          fund={editFundContrib}
-          onClose={() => setEditFundContrib(null)}
-          onSave={(d) => handleUpdateFundContrib(editFundContrib.id, d)}
-        />
-      )}
+      {editFundContrib && <FundContributionModal fund={editFundContrib} onClose={() => setEditFundContrib(null)} onSave={(d) => handleUpdateFundContrib(editFundContrib.id, d)} />}
     </div>
   )
 }
