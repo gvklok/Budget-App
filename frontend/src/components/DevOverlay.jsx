@@ -50,8 +50,8 @@ function SetField({ label, currentCents, onSet }) {
   return (
     <div className="py-1">
       <div className="flex items-center gap-3">
-        <span className="text-sm text-slate-600 flex-1">{label}</span>
-        <span className="text-sm font-mono text-slate-800 w-24 text-right shrink-0">
+        <span className="text-sm text-slate-300 flex-1">{label}</span>
+        <span className="text-sm font-mono tabular text-white w-24 text-right shrink-0">
           {c(currentCents)}
         </span>
         <input
@@ -61,17 +61,17 @@ function SetField({ label, currentCents, onSet }) {
           value={value}
           onChange={(e) => { setValue(e.target.value); setError('') }}
           onKeyDown={(e) => e.key === 'Enter' && handleSet()}
-          className="w-28 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-400"
+          className="w-28 border border-white/10 bg-white/5 rounded-lg px-2.5 py-1.5 text-sm text-white outline-none focus:ring-2 focus:ring-white/30"
         />
         <button
           onClick={handleSet}
           disabled={saving || !value}
-          className="text-sm bg-slate-800 text-white rounded-lg px-3 py-1.5 disabled:opacity-40 shrink-0 font-medium"
+          className="text-sm bg-accent text-white rounded-lg px-3 py-1.5 disabled:opacity-40 shrink-0 font-medium"
         >
           Set
         </button>
       </div>
-      {error && <p className="text-xs text-red-500 mt-1 text-right">{error}</p>}
+      {error && <p className="text-xs text-critical mt-1 text-right">{error}</p>}
     </div>
   )
 }
@@ -85,41 +85,41 @@ function Reconciliation({ state }) {
   const gap = rc - buckets
 
   return (
-    <div className="bg-slate-50 rounded-2xl p-4 space-y-2">
+    <div className="bg-white/5 rounded-2xl p-4 space-y-2 border border-white/10">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">
         Reconciliation
       </p>
-      <div className="flex justify-between text-sm font-semibold text-slate-900">
+      <div className="flex justify-between text-sm font-semibold text-white">
         <span>Real Cash</span>
-        <span className="font-mono">{c(rc)}</span>
+        <span className="font-mono tabular">{c(rc)}</span>
       </div>
-      <div className="ml-3 space-y-1 text-sm text-slate-500">
+      <div className="ml-3 space-y-1 text-sm text-slate-400">
         <div className="flex justify-between">
           <span>Savings</span>
-          <span className="font-mono">{c(savings)}</span>
+          <span className="font-mono tabular">{c(savings)}</span>
         </div>
         <div className="flex justify-between">
           <span>Monthly Reserve</span>
-          <span className="font-mono">{c(mr)}</span>
+          <span className="font-mono tabular">{c(mr)}</span>
         </div>
         {state.funds.map((f) => (
           <div key={f.id} className="flex justify-between">
             <span>{f.name}</span>
-            <span className="font-mono">{c(f.balance_cents)}</span>
+            <span className="font-mono tabular">{c(f.balance_cents)}</span>
           </div>
         ))}
-        <div className="flex justify-between border-t border-slate-200 pt-1 text-slate-700 font-medium">
+        <div className="flex justify-between border-t border-white/10 pt-1 text-slate-200 font-medium">
           <span>Buckets total</span>
-          <span className="font-mono">{c(buckets)}</span>
+          <span className="font-mono tabular">{c(buckets)}</span>
         </div>
       </div>
       <div
         className={`flex justify-between items-center rounded-xl px-3 py-2 text-sm font-semibold mt-1 ${
           gap === 0
-            ? 'bg-emerald-100 text-emerald-700'
+            ? 'bg-good/20 text-good'
             : gap > 0
-            ? 'bg-amber-100 text-amber-700'
-            : 'bg-red-100 text-red-700'
+            ? 'bg-warn/20 text-warn'
+            : 'bg-critical/20 text-critical'
         }`}
       >
         <span>
@@ -129,7 +129,7 @@ function Reconciliation({ state }) {
             ? 'Unallocated (add to buckets)'
             : 'Over-allocated (reduce buckets)'}
         </span>
-        <span className="font-mono">{gap === 0 ? '✓' : c(Math.abs(gap))}</span>
+        <span className="font-mono tabular">{gap === 0 ? '✓' : c(Math.abs(gap))}</span>
       </div>
     </div>
   )
@@ -179,16 +179,16 @@ function SimulateSpend({ state, onDone }) {
       <select
         value={bucket}
         onChange={(e) => setBucket(e.target.value)}
-        className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-slate-400"
+        className="w-full border border-white/10 bg-white/5 rounded-lg px-2.5 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/30"
       >
         {buckets.map((b) => (
-          <option key={b.id} value={b.id}>
+          <option key={b.id} value={b.id} className="bg-ink">
             {b.label} — {c(b.balance_cents)}
           </option>
         ))}
       </select>
       {bucket === 'savings' && (
-        <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5">
+        <p className="text-xs text-warn bg-warn/10 rounded-lg px-2.5 py-1.5">
           Spending directly from Savings is unusual — money won't be coming from any specific fund or budget.
         </p>
       )}
@@ -199,21 +199,21 @@ function SimulateSpend({ state, onDone }) {
           placeholder="Amount"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400"
+          className="flex-1 border border-white/10 bg-white/5 rounded-lg px-2.5 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/30 placeholder:text-slate-500"
         />
         <input
           type="text"
           placeholder="Label (optional)"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-400"
+          className="flex-1 border border-white/10 bg-white/5 rounded-lg px-2.5 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/30 placeholder:text-slate-500"
         />
       </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-critical">{error}</p>}
       <button
         onClick={handleSpend}
         disabled={saving || !amount}
-        className="w-full bg-slate-800 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40"
+        className="w-full bg-accent text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40"
       >
         {saving ? 'Spending…' : 'Simulate Spend'}
       </button>
@@ -291,21 +291,21 @@ export default function DevOverlay() {
     <>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-20 right-4 z-50 bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg"
+        className="fixed bottom-24 right-4 z-50 bg-ink text-white text-[11px] font-bold tracking-wide px-3.5 py-2 rounded-full shadow-pop border border-white/10"
       >
-        Dev
+        DEV
       </button>
 
       {open && (
         <div className="fixed inset-0 z-40 flex flex-col justify-end items-center px-4">
-          <div className="absolute inset-0 bg-black/40" onClick={close} />
+          <div className="absolute inset-0 bg-black/50" onClick={close} />
 
-          <div className="relative bg-white rounded-2xl shadow-2xl flex flex-col max-h-[85vh] w-full max-w-sm mx-auto mb-4">
+          <div className="relative bg-ink rounded-[28px] shadow-pop flex flex-col max-h-[85vh] w-full max-w-sm mx-auto mb-4 border border-white/10">
             <div className="flex justify-center pt-3 pb-1 shrink-0">
-              <div className="w-10 h-1 rounded-full bg-slate-200" />
+              <div className="w-10 h-1 rounded-full bg-white/15" />
             </div>
             <div className="flex items-center justify-between px-5 py-3 shrink-0">
-              <span className="font-bold text-slate-900">Dev Panel</span>
+              <span className="font-bold text-white">Dev Panel</span>
               <button onClick={close} className="text-slate-400 text-sm font-medium">Done</button>
             </div>
 
@@ -319,7 +319,7 @@ export default function DevOverlay() {
                   {/* Set Values */}
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Set Values</p>
-                    <div className="divide-y divide-slate-100">
+                    <div className="divide-y divide-white/10">
                       <SetField
                         label="Real Cash → Savings"
                         currentCents={state.real_cash.balance_cents}
@@ -350,8 +350,8 @@ export default function DevOverlay() {
                       <div className="space-y-4">
                         {state.funds.map((fund) => (
                           <div key={fund.id}>
-                            <p className="text-sm font-semibold text-slate-700 mb-1">{fund.name}</p>
-                            <div className="divide-y divide-slate-100">
+                            <p className="text-sm font-semibold text-slate-200 mb-1">{fund.name}</p>
+                            <div className="divide-y divide-white/10">
                               <SetField
                                 label="Balance"
                                 currentCents={fund.balance_cents}
@@ -376,18 +376,18 @@ export default function DevOverlay() {
                       <button
                         onClick={handleSimulatePaycheck}
                         disabled={simulating}
-                        className="flex-1 bg-emerald-700 text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-40"
+                        className="flex-1 bg-good text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-40"
                       >
                         {simulating ? 'Adding…' : '+ Simulate Paycheck'}
                       </button>
                       {paycheckCount > 0 && (
-                        <span className="text-xs font-semibold text-slate-500 shrink-0">
+                        <span className="text-xs font-semibold text-slate-400 shrink-0">
                           ×{paycheckCount} this session
                         </span>
                       )}
                     </div>
-                    {paycheckError && <p className="text-xs text-red-500 mt-1">{paycheckError}</p>}
-                    <p className="text-xs text-slate-400 mt-1">Adds one month's income to Savings + Real Cash.</p>
+                    {paycheckError && <p className="text-xs text-critical mt-1">{paycheckError}</p>}
+                    <p className="text-xs text-slate-500 mt-1">Adds one month's income to Savings + Real Cash.</p>
                   </div>
 
                   {/* Simulate Spending */}
@@ -402,12 +402,12 @@ export default function DevOverlay() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Recent Simulated Spends</p>
                       <div className="space-y-1">
                         {simTxns.map((t) => (
-                          <div key={t.id} className="flex justify-between text-xs text-slate-600 py-1 border-b border-slate-50">
+                          <div key={t.id} className="flex justify-between text-xs text-slate-400 py-1 border-b border-white/5">
                             <span className="truncate flex-1">
                               {bucketLabel(t.bucket_ref, state.funds)}
                               {t.label ? ` · ${t.label}` : ''}
                             </span>
-                            <span className="font-mono text-slate-800 ml-2 shrink-0">−{c(t.amount_cents)}</span>
+                            <span className="font-mono tabular text-slate-200 ml-2 shrink-0">−{c(t.amount_cents)}</span>
                           </div>
                         ))}
                       </div>
@@ -417,7 +417,7 @@ export default function DevOverlay() {
                   <button
                     onClick={handleReset}
                     disabled={resetting}
-                    className="w-full bg-red-600 text-white rounded-xl py-3 font-semibold disabled:opacity-40"
+                    className="w-full bg-critical text-white rounded-xl py-3 font-semibold disabled:opacity-40"
                   >
                     {resetting ? 'Resetting…' : 'Reset All Data'}
                   </button>

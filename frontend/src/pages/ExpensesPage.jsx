@@ -1,31 +1,40 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, Receipt, LayoutList, PieChart } from 'lucide-react'
+import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, Receipt, PieChart } from 'lucide-react'
 import { fmt, toCents } from '../api'
+import { CHART_COLORS, LINE, statusColor } from '../theme'
 import Modal from '../components/Modal'
+import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented } from '../components/ui'
 
 function c(cents) { return fmt(cents / 100) }
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const PALETTE = ['#6366f1','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#ef4444','#84cc16']
+function fmtDate(dateStr) {
+  const [, m, d] = dateStr.split('-').map(Number)
+  return `${MONTHS[m - 1]} ${d}`
+}
 
-// ── Donut Ring Chart ──────────────────────────────────────────────────────────
+const inputClass =
+  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-white'
+const labelClass = 'block text-sm font-medium text-ink-2 mb-1.5'
+
+// ── Donut Ring Chart — category breakdown ──────────────────────────────────────
 
 function DonutChart({ segments }) {
-  const SIZE = 220
+  const SIZE = 216
   const cx = SIZE / 2, cy = SIZE / 2
-  const R = 82, SW = 30
+  const R = 80, SW = 26
   const circ = 2 * Math.PI * R
   const total = segments.reduce((s, seg) => s + seg.planned, 0)
   const totalSpent = segments.reduce((s, seg) => s + seg.spent, 0)
-  if (total === 0) return <p className="text-slate-400 text-sm text-center py-8">No planned spending to chart</p>
+  if (total === 0) return <p className="text-ink-3 text-sm text-center py-8">No planned spending to chart</p>
 
   let cumFrac = 0
-  const GAP = 3 // px gap between segments
+  const GAP = 3
 
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="relative" style={{ width: SIZE, height: SIZE }}>
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-          <circle cx={cx} cy={cy} r={R} fill="none" stroke="#f1f5f9" strokeWidth={SW} />
+          <circle cx={cx} cy={cy} r={R} fill="none" stroke={LINE} strokeWidth={SW} />
           {segments.map((seg, i) => {
             const frac = seg.planned / total
             const dash = Math.max(0, frac * circ - GAP)
@@ -33,35 +42,71 @@ function DonutChart({ segments }) {
             cumFrac += frac
             return (
               <circle key={i} cx={cx} cy={cy} r={R} fill="none"
-                stroke={seg.color} strokeWidth={SW}
+                stroke={seg.color} strokeWidth={SW} strokeLinecap="round"
                 strokeDasharray={`${dash} ${circ}`}
                 transform={`rotate(${rot} ${cx} ${cy})`} />
             )
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-xl font-bold text-slate-900">{c(totalSpent)}</span>
-          <span className="text-xs text-slate-400">spent</span>
-          <span className="text-xs text-slate-300 mt-0.5">of {c(total)}</span>
+          <span className="text-2xl font-bold text-ink tabular">{c(totalSpent)}</span>
+          <span className="text-xs text-ink-3">spent</span>
+          <span className="text-xs text-ink-3/70 mt-0.5 tabular">of {c(total)}</span>
         </div>
       </div>
-      <div className="w-full space-y-2">
+      <div className="w-full space-y-2.5">
         {segments.map((seg) => {
           const pct = seg.planned > 0 ? Math.round((seg.spent / seg.planned) * 100) : 0
           const over = seg.spent > seg.planned
           return (
-            <div key={seg.label} className="flex items-center gap-2">
+            <div key={seg.label} className="flex items-center gap-2.5">
               <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: seg.color }} />
-              <span className="flex-1 text-sm text-slate-700 truncate">{seg.label}</span>
-              <span className={`text-xs font-mono font-semibold ${over ? 'text-red-500' : 'text-slate-600'}`}>
+              <span className="flex-1 text-sm text-ink-2 truncate">{seg.label}</span>
+              <span className={`text-xs font-mono font-semibold tabular ${over ? 'text-critical' : 'text-ink-2'}`}>
                 {c(seg.spent)}
               </span>
-              <span className="text-xs text-slate-300">/</span>
-              <span className="text-xs font-mono text-slate-400">{c(seg.planned)}</span>
-              <span className={`text-xs w-8 text-right ${over ? 'text-red-400' : 'text-slate-400'}`}>{pct}%</span>
+              <span className="text-xs text-ink-3">/</span>
+              <span className="text-xs font-mono text-ink-3 tabular">{c(seg.planned)}</span>
+              <span className={`text-xs w-9 text-right tabular ${over ? 'text-critical' : 'text-ink-3'}`}>{pct}%</span>
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+// ── Allocation Bar — where expected income is going ────────────────────────────
+
+function AllocationBar({ income, bills, funds, net }) {
+  if (income <= 0) return null
+  const rawBills = (bills / income) * 100
+  const rawFunds = (funds / income) * 100
+  const rawNet = Math.max(0, (net / income) * 100)
+  const sum = rawBills + rawFunds + rawNet
+  const scale = sum > 100 ? 100 / sum : 1
+  const billsPct = rawBills * scale
+  const fundsPct = rawFunds * scale
+  const netPct = rawNet * scale
+
+  return (
+    <div className="space-y-3">
+      <div className="h-3 rounded-full bg-paper overflow-hidden flex gap-[2px]">
+        {billsPct > 0 && <div className="h-full bg-ink-3" style={{ width: `${billsPct}%` }} />}
+        {fundsPct > 0 && <div className="h-full bg-accent" style={{ width: `${fundsPct}%` }} />}
+        {netPct > 0 && <div className={`h-full ${net >= 0 ? 'bg-good' : 'bg-critical'}`} style={{ width: `${netPct}%` }} />}
+      </div>
+      <div className="flex items-center justify-between text-xs">
+        <span className="flex items-center gap-1.5 text-ink-2">
+          <span className="w-2 h-2 rounded-full bg-ink-3 shrink-0" />Bills <span className="text-ink-3 tabular">{c(bills)}</span>
+        </span>
+        <span className="flex items-center gap-1.5 text-ink-2">
+          <span className="w-2 h-2 rounded-full bg-accent shrink-0" />Funds <span className="text-ink-3 tabular">{c(funds)}</span>
+        </span>
+        <span className="flex items-center gap-1.5 text-ink-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${net >= 0 ? 'bg-good' : 'bg-critical'}`} />
+          {net >= 0 ? 'Savings' : 'Short'} <span className="text-ink-3 tabular">{c(Math.abs(net))}</span>
+        </span>
       </div>
     </div>
   )
@@ -97,27 +142,25 @@ function IncomeSourceModal({ source, onClose, onSave }) {
     <Modal title={source ? 'Edit Income Source' : 'Add Income Source'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+          <label className={labelClass}>Name</label>
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Salary, Freelance"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+            className={inputClass} />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Amount per payment</label>
+          <label className={labelClass}>Amount per payment</label>
           <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+            className={inputClass} />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Frequency</label>
-          <select value={frequency} onChange={(e) => setFrequency(e.target.value)}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400 bg-white">
+          <label className={labelClass}>Frequency</label>
+          <select value={frequency} onChange={(e) => setFrequency(e.target.value)} className={inputClass}>
             {FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <button type="submit" disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
+        {error && <p className="text-sm text-critical">{error}</p>}
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : source ? 'Save Changes' : 'Add'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
   )
@@ -141,16 +184,15 @@ function FundContributionModal({ fund, onClose, onSave }) {
     <Modal title={`${fund.name} — Monthly Contribution`} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Monthly contribution</label>
+          <label className={labelClass}>Monthly contribution</label>
           <input autoFocus type="number" step="0.01" min="0" value={contribution}
             onChange={(e) => setContribution(e.target.value)} placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
-          <p className="text-xs text-slate-400 mt-1">Set to 0 to exclude from contributions total</p>
+            className={inputClass} />
+          <p className="text-xs text-ink-3 mt-1.5">Set to 0 to exclude from contributions total</p>
         </div>
-        <button type="submit" disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : 'Save'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
   )
@@ -184,62 +226,52 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, o
     } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
-  const tab = (active) =>
-    `flex-1 py-2 text-sm font-semibold rounded-xl border transition-colors ${
-      active ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'
-    }`
-
   return (
     <Modal title="Log Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex gap-2">
-          <button type="button" className={tab(mode === 'category')} onClick={() => setMode('category')}>Bill</button>
-          <button type="button" className={tab(mode === 'fund')} onClick={() => setMode('fund')}>Fund</button>
-        </div>
+        <Segmented
+          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }]}
+          value={mode} onChange={setMode}
+        />
         {mode === 'category' ? (
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Bill</label>
-            <select value={lineItemId} onChange={(e) => setLineItemId(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400 bg-white">
+            <label className={labelClass}>Bill</label>
+            <select value={lineItemId} onChange={(e) => setLineItemId(e.target.value)} className={inputClass}>
               <option value="">Select…</option>
               {bills.map((li) => <option key={li.id} value={li.id}>{li.name}</option>)}
             </select>
           </div>
         ) : (
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Fund</label>
-            <select value={fundId} onChange={(e) => setFundId(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400 bg-white">
+            <label className={labelClass}>Fund</label>
+            <select value={fundId} onChange={(e) => setFundId(e.target.value)} className={inputClass}>
               <option value="">Select…</option>
               {funds.map((f) => <option key={f.id} value={f.id}>{f.name} ({c(f.balance_cents)} available)</option>)}
             </select>
           </div>
         )}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
+          <label className={labelClass}>Amount</label>
           <input autoFocus type="number" step="0.01" min="0" value={amount}
             onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+            className={inputClass} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+            <label className={labelClass}>Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Merchant <span className="text-slate-400 font-normal">(optional)</span>
+            <label className={labelClass}>
+              Merchant <span className="text-ink-3 font-normal">(optional)</span>
             </label>
-            <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="e.g. Walmart"
-              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+            <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="e.g. Walmart" className={inputClass} />
           </div>
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <button type="submit" disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
+        {error && <p className="text-sm text-critical">{error}</p>}
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : 'Log'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
   )
@@ -269,100 +301,146 @@ function LineItemModal({ item, categories, onClose, onSave }) {
     <Modal title={item ? 'Edit Bill' : 'Add Bill'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rent, Groceries"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+          <label className={labelClass}>Name</label>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rent, Groceries" className={inputClass} />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Monthly amount</label>
-          <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
+          <label className={labelClass}>Monthly amount</label>
+          <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className={inputClass} />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400 bg-white">
+          <label className={labelClass}>Category</label>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputClass}>
             <option value="">Uncategorized</option>
             {categories.map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
           </select>
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <button type="submit" disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
+        {error && <p className="text-sm text-critical">{error}</p>}
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : item ? 'Save Changes' : 'Add'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
   )
 }
 
-// ── Category Modal ────────────────────────────────────────────────────────────
+// ── Manage Categories Modal — list + rename + delete + add, all in one place ──
 
-function CategoryModal({ category, onClose, onSave }) {
-  const [name, setName] = useState(category?.name ?? '')
-  const [saving, setSaving] = useState(false)
+function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDelete }) {
+  const [newName, setNewName] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [renamingId, setRenamingId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
 
-  async function handleSubmit(e) {
-    e.preventDefault(); if (!name.trim()) return; setSaving(true)
-    try { await onSave({ name: name.trim() }); onClose() } finally { setSaving(false) }
+  async function handleAdd(e) {
+    e.preventDefault()
+    if (!newName.trim()) return
+    setAdding(true)
+    try { await onCreate({ name: newName.trim() }); setNewName('') } finally { setAdding(false) }
+  }
+
+  function startRename(cat) { setRenamingId(cat.id); setRenameValue(cat.name) }
+
+  async function commitRename(cat) {
+    const trimmed = renameValue.trim()
+    setRenamingId(null)
+    if (!trimmed || trimmed === cat.name) return
+    await onRename(cat.id, { name: trimmed })
   }
 
   return (
-    <Modal title={category ? 'Rename Category' : 'New Category'} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fixed, Insurance"
-          className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400" />
-        <button type="submit" disabled={saving || !name.trim()}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50">
-          {saving ? 'Saving…' : category ? 'Rename' : 'Create'}
-        </button>
-      </form>
+    <Modal title="Manage Categories" onClose={onClose}>
+      <div className="space-y-4">
+        {categories.length === 0 ? (
+          <p className="text-sm text-ink-3">No categories yet — add one below.</p>
+        ) : (
+          <div className="rounded-2xl border border-line divide-y divide-line overflow-hidden">
+            {categories.map((cat) => (
+              <div key={cat.id} className="flex items-center gap-2 px-3.5 py-2">
+                {renamingId === cat.id ? (
+                  <input
+                    autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => commitRename(cat)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename(cat)
+                      if (e.key === 'Escape') setRenamingId(null)
+                    }}
+                    className="flex-1 border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-accent/40"
+                  />
+                ) : (
+                  <span className="flex-1 text-sm text-ink">{cat.name}</span>
+                )}
+                <IconButton onClick={() => startRename(cat)}><Pencil size={13} /></IconButton>
+                <IconButton onClick={() => onDelete(cat)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={13} /></IconButton>
+              </div>
+            ))}
+          </div>
+        )}
+        <form onSubmit={handleAdd} className="flex gap-2">
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New category name"
+            className={`${inputClass} flex-1`} />
+          <PrimaryButton type="submit" disabled={adding || !newName.trim()} className="px-4 shrink-0">Add</PrimaryButton>
+        </form>
+      </div>
     </Modal>
   )
 }
 
-// ── Shared expandable item row ────────────────────────────────────────────────
+// ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
 function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
+  const pct = budgetCents > 0 ? (spentCents / budgetCents) * 100 : 0
+  const color = statusColor(pct)
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-3">
+      <div className="flex items-center gap-2.5 px-4 py-3.5">
         <button onClick={() => setExpanded((v) => !v)}
-          className="shrink-0 w-5 h-5 flex items-center justify-center text-slate-300 hover:text-slate-500">
+          className="shrink-0 w-5 h-5 flex items-center justify-center text-ink-3 hover:text-ink-2">
           {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
+
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-slate-800 truncate">{name}</p>
-          {subtitle && <p className="text-xs text-slate-400 truncate">{subtitle}</p>}
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-sm font-medium text-ink truncate">{name}</p>
+            <p className="text-sm tabular shrink-0">
+              <span className={`font-semibold ${spentCents === 0 ? 'text-ink-3' : over ? 'text-critical' : 'text-ink'}`}>
+                {spentCents === 0 ? '—' : c(spentCents)}
+              </span>
+              <span className="text-ink-3"> / {c(budgetCents)}</span>
+            </p>
+          </div>
+          {subtitle && <p className="text-xs text-ink-3 truncate mt-0.5">{subtitle}</p>}
+          {budgetCents > 0 && (
+            <div className="mt-2 flex items-center gap-2">
+              <Bar pct={pct} color={color} height={6} />
+              <span className={`text-[11px] w-16 text-right shrink-0 tabular ${over ? 'text-critical font-semibold' : 'text-ink-3'}`}>
+                {over ? `−${c(Math.abs(remaining))}` : `${c(remaining)} left`}
+              </span>
+            </div>
+          )}
         </div>
-        <span className="w-20 text-right font-mono text-sm text-slate-500">{c(budgetCents)}</span>
-        <span className={`w-20 text-right font-mono text-sm font-semibold ${spentCents === 0 ? 'text-slate-300' : over ? 'text-red-500' : 'text-slate-700'}`}>
-          {spentCents === 0 ? '—' : c(spentCents)}
-        </span>
-        <span className={`w-20 text-right font-mono text-sm font-semibold ${over ? 'text-red-500' : remaining === budgetCents ? 'text-slate-300' : 'text-emerald-600'}`}>
-          {over ? `−${c(Math.abs(remaining))}` : c(remaining)}
-        </span>
-        <div className="flex items-center gap-1 shrink-0 w-20 justify-end">
-          {onLogTx && <button onClick={onLogTx} className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100" title="Log transaction"><Receipt size={13} /></button>}
-          {onEdit && <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><Pencil size={13} /></button>}
-          {onDelete && <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400"><Trash2 size={13} /></button>}
+
+        <div className="flex items-center gap-0.5 shrink-0">
+          {onLogTx && <IconButton onClick={onLogTx} title="Log transaction"><Receipt size={13} /></IconButton>}
+          {onEdit && <IconButton onClick={onEdit}><Pencil size={13} /></IconButton>}
+          {onDelete && <IconButton onClick={onDelete} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={13} /></IconButton>}
         </div>
       </div>
       {expanded && (
-        <div className="mx-4 mb-3 rounded-xl border border-slate-100 overflow-hidden">
+        <div className="mx-4 mb-3 rounded-2xl bg-paper overflow-hidden">
           {txns.length === 0
-            ? <p className="text-xs text-slate-400 px-4 py-3">No transactions this month</p>
-            : <div className="divide-y divide-slate-50">
+            ? <p className="text-xs text-ink-3 px-4 py-3">No transactions this month</p>
+            : <div className="divide-y divide-line">
                 {txns.map((tx) => (
                   <div key={tx.id} className="flex items-center gap-3 px-4 py-2.5">
-                    <span className="text-xs text-slate-400 w-20 shrink-0">{tx.date}</span>
-                    <span className="flex-1 text-xs text-slate-600 truncate">{tx.merchant || '—'}</span>
-                    <span className="font-mono text-xs font-semibold text-slate-800">{c(tx.amount_cents)}</span>
-                    <button onClick={() => onDeleteTx(tx)} className="w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400"><Trash2 size={11} /></button>
+                    <span className="text-xs text-ink-3 w-16 shrink-0">{fmtDate(tx.date)}</span>
+                    <span className="flex-1 text-xs text-ink-2 truncate">{tx.merchant || '—'}</span>
+                    <span className="font-mono text-xs font-semibold text-ink tabular">{c(tx.amount_cents)}</span>
+                    <button onClick={() => onDeleteTx(tx)} className="w-6 h-6 flex items-center justify-center rounded-full text-ink-3 hover:bg-critical-soft hover:text-critical"><Trash2 size={11} /></button>
                   </div>
                 ))}
               </div>
@@ -375,14 +453,24 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
 
 // ── Bill group (collapsible by category) ─────────────────────────────────────
 
-const COL_HEADER = (
-  <div className="flex text-xs font-semibold text-slate-400">
-    <span className="w-20 text-right">Budget</span>
-    <span className="w-20 text-right">Spent</span>
-    <span className="w-20 text-right">Left</span>
-    <div className="w-20" />
-  </div>
-)
+function GroupSummary({ label, planned, spent }) {
+  const pct = planned > 0 ? (spent / planned) * 100 : 0
+  const remaining = planned - spent
+  const over = spent > planned
+  return (
+    <div className="flex items-center gap-3 flex-1 min-w-0">
+      <p className="text-xs font-semibold uppercase tracking-wide text-ink-2 truncate">{label}</p>
+      {spent > 0 && (
+        <div className="flex-1 max-w-[120px]">
+          <Bar pct={pct} color={statusColor(pct)} height={5} animate={false} />
+        </div>
+      )}
+      <span className="text-xs font-semibold text-ink-2 tabular shrink-0 ml-auto">
+        {spent > 0 ? c(spent) : '—'}<span className="text-ink-3 font-normal"> / {c(planned)}</span>
+      </span>
+    </div>
+  )
+}
 
 function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDeleteTx }) {
   const [open, setOpen] = useState(true)
@@ -391,28 +479,19 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
   const totalRemaining = totalPlanned - totalSpent
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+    <Card className="overflow-hidden">
       <button onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center px-4 py-3 bg-slate-50 border-b border-slate-100">
-        <div className="w-5 shrink-0 flex items-center justify-center text-slate-400">
+        className="w-full flex items-center gap-2 px-4 py-3 bg-paper/70 border-b border-line">
+        <div className="w-5 shrink-0 flex items-center justify-center text-ink-3">
           {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </div>
-        <p className="flex-1 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        {!open && (
-          <div className="flex text-xs font-semibold text-slate-400">
-            <span className="w-20 text-right">{c(totalPlanned)}</span>
-            <span className={`w-20 text-right ${totalSpent > 0 ? 'text-slate-600' : 'text-slate-300'}`}>{totalSpent > 0 ? c(totalSpent) : '—'}</span>
-            <span className={`w-20 text-right ${totalRemaining < 0 ? 'text-red-400' : totalSpent > 0 ? 'text-emerald-500' : 'text-slate-300'}`}>
-              {totalSpent > 0 ? (totalRemaining < 0 ? `−${c(Math.abs(totalRemaining))}` : c(totalRemaining)) : '—'}
-            </span>
-            <div className="w-20" />
-          </div>
-        )}
-        {open && COL_HEADER}
+        {open
+          ? <p className="text-xs font-semibold uppercase tracking-wide text-ink-3">{label}</p>
+          : <GroupSummary label={label} planned={totalPlanned} spent={totalSpent} />}
       </button>
       {open && (
         <>
-          <div className="divide-y divide-slate-50">
+          <div className="divide-y divide-line">
             {bills.map((b) => {
               const itemTxns = txnsByItemId[b.id] ?? []
               const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
@@ -421,20 +500,17 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
             })}
           </div>
           {bills.length > 1 && (
-            <div className="flex items-center px-4 py-2.5 border-t border-slate-100 bg-slate-50">
+            <div className="flex items-center px-4 py-2.5 border-t border-line bg-paper/50">
               <div className="w-5 shrink-0" />
-              <p className="flex-1 text-xs font-semibold text-slate-500">Subtotal</p>
-              <span className="w-20 text-right font-mono text-xs font-semibold text-slate-600">{c(totalPlanned)}</span>
-              <span className={`w-20 text-right font-mono text-xs font-semibold ${totalSpent === 0 ? 'text-slate-300' : 'text-slate-700'}`}>{totalSpent === 0 ? '—' : c(totalSpent)}</span>
-              <span className={`w-20 text-right font-mono text-xs font-semibold ${totalRemaining < 0 ? 'text-red-500' : totalSpent === 0 ? 'text-slate-300' : 'text-emerald-600'}`}>
-                {totalSpent === 0 ? '—' : totalRemaining < 0 ? `−${c(Math.abs(totalRemaining))}` : c(totalRemaining)}
+              <p className="text-xs font-semibold text-ink-2 mr-auto">Subtotal</p>
+              <span className={`text-xs font-semibold tabular ${totalSpent === 0 ? 'text-ink-3' : totalRemaining < 0 ? 'text-critical' : 'text-ink-2'}`}>
+                {totalSpent === 0 ? '—' : c(totalSpent)}<span className="text-ink-3 font-normal"> / {c(totalPlanned)}</span>
               </span>
-              <div className="w-20" />
             </div>
           )}
         </>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -448,16 +524,16 @@ export default function ExpensesPage() {
   const [funds, setFunds] = useState([])
   const [transactions, setTransactions] = useState([])
 
-  const [viewMode, setViewMode] = useState('list') // 'list' | 'chart'
+  const [showBreakdown, setShowBreakdown] = useState(false)
   const [billsOpen, setBillsOpen] = useState(true)
   const [fundsOpen, setFundsOpen] = useState(true)
+  const [incomeOpen, setIncomeOpen] = useState(false)
 
   const [showAddSource, setShowAddSource] = useState(false)
   const [editSource, setEditSource] = useState(null)
   const [showAddItem, setShowAddItem] = useState(false)
   const [editItem, setEditItem] = useState(null)
-  const [showAddCat, setShowAddCat] = useState(false)
-  const [editCat, setEditCat] = useState(null)
+  const [showCatManager, setShowCatManager] = useState(false)
   const [editFundContrib, setEditFundContrib] = useState(null)
   const [logTx, setLogTx] = useState(null)
 
@@ -547,7 +623,10 @@ export default function ExpensesPage() {
   const totalFundSpent = funds.reduce((s, f) => s + (txnsByFundId[f.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
   const totalPlanned = totalBillPlanned + totalFundPlanned
   const totalSpent = totalBillSpent + totalFundSpent
-  const spentPct = totalPlanned > 0 ? Math.min(100, Math.round((totalSpent / totalPlanned) * 100)) : 0
+  const billPct = totalBillPlanned > 0 ? (totalBillSpent / totalBillPlanned) * 100 : 0
+  const fundPct = totalFundPlanned > 0 ? (totalFundSpent / totalFundPlanned) * 100 : 0
+  const overBillsCount = bills.filter((b) => (txnsByItemId[b.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > b.amount_cents).length
+  const overFundsCount = funds.filter((f) => (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > f.monthly_contribution_cents).length
 
   // Donut chart segments
   const chartSegments = []
@@ -556,17 +635,17 @@ export default function ExpensesPage() {
     const catBills = grouped[cat.id] ?? []
     const planned = catBills.reduce((s, b) => s + b.amount_cents, 0)
     const spent = catBills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
-    if (planned > 0) chartSegments.push({ label: cat.name, color: PALETTE[colorIdx++ % PALETTE.length], planned, spent })
+    if (planned > 0) chartSegments.push({ label: cat.name, color: CHART_COLORS[colorIdx++ % CHART_COLORS.length], planned, spent })
   }
   if (uncategorized.length > 0) {
     const planned = uncategorized.reduce((s, b) => s + b.amount_cents, 0)
     const spent = uncategorized.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
-    if (planned > 0) chartSegments.push({ label: 'Uncategorized', color: '#94a3b8', planned, spent })
+    if (planned > 0) chartSegments.push({ label: 'Uncategorized', color: '#9c9484', planned, spent })
   }
   for (const f of funds) {
     if (f.monthly_contribution_cents > 0) {
       const spent = (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0)
-      chartSegments.push({ label: f.name, color: PALETTE[colorIdx++ % PALETTE.length], planned: f.monthly_contribution_cents, spent })
+      chartSegments.push({ label: f.name, color: CHART_COLORS[colorIdx++ % CHART_COLORS.length], planned: f.monthly_contribution_cents, spent })
     }
   }
 
@@ -576,217 +655,172 @@ export default function ExpensesPage() {
     <div className="px-4 pt-6 pb-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-950">Expenses</h1>
+        <h1 className="text-3xl font-bold text-ink tracking-tight">Expenses</h1>
         <button onClick={() => setLogTx({})}
-          className="flex items-center gap-1.5 bg-slate-900 text-white text-sm font-semibold px-4 py-2 rounded-2xl">
+          className="flex items-center gap-1.5 bg-ink text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
           <Receipt size={15} />Log
         </button>
       </div>
 
-      {/* Projected Monthly Summary */}
-      {summary && (
-        <div className="bg-slate-950 text-white rounded-3xl p-5 space-y-3">
-          <p className="text-xs uppercase tracking-wide text-slate-400">{thisMonthName}</p>
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-sm text-slate-300">
-              <span>Expected income</span>
-              <span className="font-mono text-emerald-400">+{c(summary.expected_income_cents)}</span>
-            </div>
-            {summary.expected_bills_total_cents > 0 && (
-              <div className="flex justify-between text-sm text-slate-300">
-                <span>Bills</span>
-                <span className="font-mono text-red-400">−{c(summary.expected_bills_total_cents)}</span>
-              </div>
-            )}
-            {summary.expected_fund_contributions_total_cents > 0 && (
-              <div className="flex justify-between text-sm text-slate-300">
-                <span>Fund contributions</span>
-                <span className="font-mono text-red-400">−{c(summary.expected_fund_contributions_total_cents)}</span>
-              </div>
+      {/* This month's income allocation */}
+      {summary && summary.expected_income_cents > 0 && (
+        <Card className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-wide text-ink-3">{thisMonthName} · Expected income</p>
+            {summary.expected_savings_cents >= 0 ? (
+              <Badge tone="good">{Math.round((summary.expected_savings_cents / summary.expected_income_cents) * 100)}% saved</Badge>
+            ) : (
+              <Badge tone="critical">Overspending</Badge>
             )}
           </div>
-          <div className={`flex justify-between items-center rounded-2xl px-4 py-3 ${summary.expected_savings_cents >= 0 ? 'bg-emerald-900/50' : 'bg-red-900/50'}`}>
-            <div>
-              <span className="font-semibold text-sm">Net to Savings</span>
-              {summary.expected_income_cents > 0 && (
-                <p className={`text-xs mt-0.5 ${summary.expected_savings_cents >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>
-                  {Math.round((summary.expected_savings_cents / summary.expected_income_cents) * 100)}% savings rate
-                </p>
-              )}
-            </div>
-            <span className={`font-mono font-bold text-lg ${summary.expected_savings_cents >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {summary.expected_savings_cents >= 0 ? '+' : '−'}{c(Math.abs(summary.expected_savings_cents))}
-            </span>
-          </div>
-        </div>
+          <p className="text-3xl font-bold text-ink tabular">{c(summary.expected_income_cents)}</p>
+
+          <AllocationBar
+            income={summary.expected_income_cents}
+            bills={summary.expected_bills_total_cents}
+            funds={summary.expected_fund_contributions_total_cents}
+            net={summary.expected_savings_cents}
+          />
+        </Card>
       )}
 
-      {/* Planned vs Spent */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Planned vs Spent</p>
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
-            <button onClick={() => setViewMode('list')}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${viewMode === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-              <LayoutList size={13} />List
-            </button>
-            <button onClick={() => setViewMode('chart')}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${viewMode === 'chart' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-              <PieChart size={13} />Chart
-            </button>
+      {/* Spending progress — Bills and Funds are funded differently, so tracked separately */}
+      {(totalBillPlanned > 0 || totalFundPlanned > 0) && (
+        <Card className="p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-4">Spending Progress</p>
+          <div className="grid grid-cols-2 gap-3">
+            {totalBillPlanned > 0 && (
+              <div className="flex flex-col items-center gap-2.5 text-center">
+                <Ring pct={billPct} size={76} stroke={8} color={statusColor(billPct)}>
+                  <span className="text-base font-bold text-ink tabular">{Math.round(billPct)}%</span>
+                </Ring>
+                <div>
+                  <p className="text-xs font-semibold text-ink-2">Bills</p>
+                  <p className="text-xs text-ink-3 tabular">{c(totalBillSpent)} / {c(totalBillPlanned)}</p>
+                </div>
+              </div>
+            )}
+            {totalFundPlanned > 0 && (
+              <div className="flex flex-col items-center gap-2.5 text-center">
+                <Ring pct={fundPct} size={76} stroke={8} color={statusColor(fundPct)}>
+                  <span className="text-base font-bold text-ink tabular">{Math.round(fundPct)}%</span>
+                </Ring>
+                <div>
+                  <p className="text-xs font-semibold text-ink-2">Funds</p>
+                  <p className="text-xs text-ink-3 tabular">{c(totalFundSpent)} / {c(totalFundPlanned)}</p>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
 
-        {/* Stats row */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-50 rounded-2xl px-4 py-3">
-            <p className="text-xs text-slate-400 mb-0.5">Planned</p>
-            <p className="font-mono font-bold text-slate-900 text-lg">{c(totalPlanned)}</p>
-            <p className="text-xs text-slate-400 mt-1">Bills {c(totalBillPlanned)} · Funds {c(totalFundPlanned)}</p>
-          </div>
-          <div className="bg-slate-50 rounded-2xl px-4 py-3">
-            <p className="text-xs text-slate-400 mb-0.5">Spent</p>
-            <p className={`font-mono font-bold text-lg ${totalSpent > totalPlanned ? 'text-red-500' : 'text-slate-900'}`}>{c(totalSpent)}</p>
-            <p className="text-xs text-slate-400 mt-1">Bills {c(totalBillSpent)} · Funds {c(totalFundSpent)}</p>
-          </div>
-        </div>
+          <button onClick={() => setShowBreakdown((v) => !v)}
+            className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-ink-2 mt-4 pt-4 border-t border-line">
+            <PieChart size={13} />{showBreakdown ? 'Hide' : 'Show'} category breakdown
+          </button>
+          {showBreakdown && <div className="mt-4"><DonutChart segments={chartSegments} /></div>}
+        </Card>
+      )}
 
-        {/* Progress bar */}
-        {totalPlanned > 0 && (
-          <div>
-            <div className="flex justify-between text-xs text-slate-400 mb-1.5">
-              <span>{spentPct}% used</span>
-              <span>{c(totalPlanned - totalSpent)} remaining</span>
-            </div>
-            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${totalSpent > totalPlanned ? 'bg-red-400' : 'bg-emerald-400'}`}
-                style={{ width: `${spentPct}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Chart view */}
-        {viewMode === 'chart' && <DonutChart segments={chartSegments} />}
-      </div>
-
-      {/* Income Sources */}
+      {/* Income Sources — collapsible, it's setup not a daily glance */}
       <div>
         <div className="flex items-center justify-between mb-3 px-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Income</p>
-          <button onClick={() => setShowAddSource(true)} className="flex items-center gap-1 text-sm font-semibold text-slate-900">
+          <button onClick={() => setIncomeOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+            {incomeOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Income Sources
+          </button>
+          <button onClick={() => setShowAddSource(true)} className="flex items-center gap-1 text-sm font-semibold text-ink">
             <Plus size={16} />Add
           </button>
         </div>
-        {incomeSources.length === 0 ? (
-          <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center">
-            <p className="text-slate-400 text-sm mb-2">No income sources yet</p>
-            <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-slate-900">Add income source →</button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {incomeSources.map((s) => (
-              <div key={s.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-900 truncate">{s.name}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{c(s.amount_cents)} · {freqLabel(s.frequency)}</p>
+        {incomeOpen && (
+          incomeSources.length === 0 ? (
+            <EmptyState title="No income sources yet" action={
+              <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-accent">Add income source →</button>
+            } />
+          ) : (
+            <div className="space-y-2">
+              {incomeSources.map((s) => (
+                <Card key={s.id} className="p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-ink truncate">{s.name}</p>
+                      <p className="text-xs text-ink-3 mt-0.5 tabular">{c(s.amount_cents)} · {freqLabel(s.frequency)}</p>
+                    </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <IconButton onClick={() => setEditSource(s)}><Pencil size={14} /></IconButton>
+                      <IconButton onClick={() => handleDeleteSource(s)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={14} /></IconButton>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => setEditSource(s)} className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><Pencil size={14} /></button>
-                    <button onClick={() => handleDeleteSource(s)} className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400"><Trash2 size={14} /></button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
+          )
         )}
       </div>
 
       {/* Bills — collapsible */}
-      {viewMode === 'list' && (
-        <div>
-          <div className="flex items-center justify-between mb-3 px-1">
-            <button onClick={() => setBillsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              {billsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Bills
+      <div>
+        <div className="flex items-center justify-between mb-3 px-1">
+          <button onClick={() => setBillsOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+            {billsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Bills
+            {overBillsCount > 0 && <Badge tone="critical">{overBillsCount} over budget</Badge>}
+          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowCatManager(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-white rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
+              <Tag size={12} />Categories
             </button>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setShowAddCat(true)} className="flex items-center gap-1 text-xs font-semibold text-slate-500">
-                <Tag size={13} />Category
-              </button>
-              <button onClick={() => setShowAddItem(true)} className="flex items-center gap-1 text-sm font-semibold text-slate-900">
-                <Plus size={16} />Add
-              </button>
-            </div>
+            <button onClick={() => setShowAddItem(true)}
+              className="flex items-center gap-1 text-sm font-semibold text-ink pl-2">
+              <Plus size={16} />Add
+            </button>
           </div>
-
-          {billsOpen && (
-            <>
-              {categories.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {categories.map((cat) => (
-                    <div key={cat.id} className="flex items-center gap-1 bg-slate-100 rounded-full px-3 py-1">
-                      <span className="text-xs font-medium text-slate-600">{cat.name}</span>
-                      <button onClick={() => setEditCat(cat)} className="text-slate-400 hover:text-slate-600 ml-1"><Pencil size={11} /></button>
-                      <button onClick={() => handleDeleteCat(cat)} className="text-slate-400 hover:text-red-400"><Trash2 size={11} /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {bills.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center">
-                  <p className="text-slate-400 text-sm">No bills yet — add one above</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {categories.map((cat) => {
-                    const group = grouped[cat.id]
-                    if (!group?.length) return null
-                    return <BillGroup key={cat.id} label={cat.name} bills={group} txnsByItemId={txnsByItemId}
-                      onEdit={setEditItem} onDelete={handleDeleteItem}
-                      onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
-                  })}
-                  {uncategorized.length > 0 && (
-                    <BillGroup label="Uncategorized" bills={uncategorized} txnsByItemId={txnsByItemId}
-                      onEdit={setEditItem} onDelete={handleDeleteItem}
-                      onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
-                  )}
-                  <div className="flex items-center px-4 py-3">
-                    <div className="w-5 shrink-0" /><p className="flex-1 text-sm font-bold text-slate-900">Total</p>
-                    <span className="w-20 text-right font-mono text-sm font-bold text-slate-900">{c(totalBillPlanned)}</span>
-                    <span className={`w-20 text-right font-mono text-sm font-bold ${totalBillSpent === 0 ? 'text-slate-300' : 'text-slate-700'}`}>{totalBillSpent === 0 ? '—' : c(totalBillSpent)}</span>
-                    <span className={`w-20 text-right font-mono text-sm font-bold ${(totalBillPlanned - totalBillSpent) < 0 ? 'text-red-500' : totalBillSpent === 0 ? 'text-slate-300' : 'text-emerald-600'}`}>
-                      {totalBillSpent === 0 ? '—' : (totalBillPlanned - totalBillSpent) < 0 ? `−${c(Math.abs(totalBillPlanned - totalBillSpent))}` : c(totalBillPlanned - totalBillSpent)}
-                    </span>
-                    <div className="w-20" />
-                  </div>
-                </div>
-              )}
-            </>
-          )}
         </div>
-      )}
+
+        {billsOpen && (
+          <>
+            {bills.length === 0 ? (
+              <EmptyState title="No bills yet — add one above" />
+            ) : (
+              <div className="space-y-3">
+                {categories.map((cat) => {
+                  const group = grouped[cat.id]
+                  if (!group?.length) return null
+                  return <BillGroup key={cat.id} label={cat.name} bills={group} txnsByItemId={txnsByItemId}
+                    onEdit={setEditItem} onDelete={handleDeleteItem}
+                    onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
+                })}
+                {uncategorized.length > 0 && (
+                  <BillGroup label="Uncategorized" bills={uncategorized} txnsByItemId={txnsByItemId}
+                    onEdit={setEditItem} onDelete={handleDeleteItem}
+                    onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
+                )}
+                <div className="flex items-center px-4 py-3">
+                  <p className="flex-1 text-sm font-bold text-ink">Total</p>
+                  <span className={`text-sm font-bold tabular ${(totalBillPlanned - totalBillSpent) < 0 ? 'text-critical' : 'text-ink'}`}>
+                    {totalBillSpent === 0 ? '—' : c(totalBillSpent)}<span className="text-ink-3 font-normal"> / {c(totalBillPlanned)}</span>
+                  </span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Funds — collapsible */}
-      {viewMode === 'list' && funds.length > 0 && (
+      {funds.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3 px-1">
             <button onClick={() => setFundsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
               {fundsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Funds
+              {overFundsCount > 0 && <Badge tone="critical">{overFundsCount} over budget</Badge>}
             </button>
           </div>
           {fundsOpen && (
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="flex items-center px-4 py-3 bg-slate-50 border-b border-slate-100">
-                <div className="w-5 shrink-0" />
-                <p className="flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Fund</p>
-                {COL_HEADER}
-              </div>
-              <div className="divide-y divide-slate-50">
+            <Card className="overflow-hidden">
+              <div className="divide-y divide-line">
                 {funds.map((fund) => {
                   const fundTxns = txnsByFundId[fund.id] ?? []
                   const spent = fundTxns.reduce((s, t) => s + t.amount_cents, 0)
@@ -798,7 +832,7 @@ export default function ExpensesPage() {
                     onDeleteTx={handleDeleteTx} />
                 })}
               </div>
-            </div>
+            </Card>
           )}
         </div>
       )}
@@ -809,8 +843,15 @@ export default function ExpensesPage() {
       {editSource && <IncomeSourceModal source={editSource} onClose={() => setEditSource(null)} onSave={(d) => handleUpdateSource(editSource.id, d)} />}
       {showAddItem && <LineItemModal categories={categories} onClose={() => setShowAddItem(false)} onSave={handleCreateItem} />}
       {editItem && <LineItemModal item={editItem} categories={categories} onClose={() => setEditItem(null)} onSave={(d) => handleUpdateItem(editItem.id, d)} />}
-      {showAddCat && <CategoryModal onClose={() => setShowAddCat(false)} onSave={handleCreateCat} />}
-      {editCat && <CategoryModal category={editCat} onClose={() => setEditCat(null)} onSave={(d) => handleUpdateCat(editCat.id, d)} />}
+      {showCatManager && (
+        <ManageCategoriesModal
+          categories={categories}
+          onClose={() => setShowCatManager(false)}
+          onCreate={handleCreateCat}
+          onRename={handleUpdateCat}
+          onDelete={handleDeleteCat}
+        />
+      )}
       {editFundContrib && <FundContributionModal fund={editFundContrib} onClose={() => setEditFundContrib(null)} onSave={(d) => handleUpdateFundContrib(editFundContrib.id, d)} />}
     </div>
   )

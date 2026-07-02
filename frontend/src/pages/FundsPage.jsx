@@ -1,11 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Pencil, Trash2, Plus, ArrowRightLeft } from 'lucide-react'
 import { fmt, toCents } from '../api'
+import { CHART_COLORS, SAVINGS_SWATCH, RESERVE_SWATCH } from '../theme'
 import Modal from '../components/Modal'
+import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState } from '../components/ui'
 
 function c(cents) {
   return fmt(cents / 100)
 }
+
+const inputClass =
+  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-white'
+const labelClass = 'block text-sm font-medium text-ink-2 mb-1.5'
 
 function AddFundModal({ savings_cents, onClose, onSave }) {
   const [name, setName] = useState('')
@@ -36,20 +42,20 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
     <Modal title="Add Fund" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+          <label className={labelClass}>Name</label>
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Vacation, Emergency"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
+            className={inputClass}
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Initial balance <span className="text-slate-400 font-normal">(optional)</span>
+          <label className={labelClass}>
+            Initial balance <span className="text-ink-3 font-normal">(optional)</span>
           </label>
-          <p className="text-xs text-slate-400 mb-1">Available in savings: {c(savings_cents)}</p>
+          <p className="text-xs text-ink-3 mb-1.5">Available in savings: {c(savings_cents)}</p>
           <input
             type="number"
             step="0.01"
@@ -57,20 +63,16 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
             value={balance}
             onChange={(e) => setBalance(e.target.value)}
             placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
+            className={inputClass}
           />
         </div>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-ink-3">
           Set this fund's monthly contribution on the Expenses page.
         </p>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <button
-          type="submit"
-          disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50"
-        >
+        {error && <p className="text-sm text-critical">{error}</p>}
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Adding…' : 'Add Fund'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
   )
@@ -100,29 +102,25 @@ function EditFundModal({ fund, onClose, onSave }) {
     <Modal title="Edit Fund" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+          <label className={labelClass}>Name</label>
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
+            className={inputClass}
           />
         </div>
-        <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-          <p className="text-xs text-slate-400 mb-0.5">Monthly contribution</p>
-          <p className="text-sm font-semibold text-slate-700">
+        <div className="rounded-2xl bg-paper px-3.5 py-3">
+          <p className="text-xs text-ink-3 mb-0.5">Monthly contribution</p>
+          <p className="text-sm font-semibold text-ink-2">
             {fund.monthly_contribution_cents > 0 ? `${c(fund.monthly_contribution_cents)} / month` : 'Not set'}
           </p>
-          <p className="text-xs text-slate-400 mt-1">Edit this on the Expenses page.</p>
+          <p className="text-xs text-ink-3 mt-1">Edit this on the Expenses page.</p>
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <button
-          type="submit"
-          disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50"
-        >
+        {error && <p className="text-sm text-critical">{error}</p>}
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : 'Save Changes'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
   )
@@ -164,14 +162,13 @@ function TransferModal({ state, onClose, onTransfer }) {
     }
   }
 
-  const selectClass =
-    'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400 bg-white'
+  const selectClass = `${inputClass} appearance-none`
 
   return (
     <Modal title="Transfer" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">From</label>
+          <label className={labelClass}>From</label>
           <select value={from} onChange={(e) => handleFromChange(e.target.value)} className={selectClass}>
             {buckets.map((b) => (
               <option key={b.id} value={b.id}>
@@ -181,7 +178,7 @@ function TransferModal({ state, onClose, onTransfer }) {
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">To</label>
+          <label className={labelClass}>To</label>
           <select value={to} onChange={(e) => setTo(e.target.value)} className={selectClass}>
             {toBuckets.map((b) => (
               <option key={b.id} value={b.id}>
@@ -191,8 +188,8 @@ function TransferModal({ state, onClose, onTransfer }) {
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
-          <p className="text-xs text-slate-400 mb-1">
+          <label className={labelClass}>Amount</label>
+          <p className="text-xs text-ink-3 mb-1.5">
             Available: {fromBucket ? c(fromBucket.balance_cents) : '—'}
           </p>
           <input
@@ -203,19 +200,44 @@ function TransferModal({ state, onClose, onTransfer }) {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
+            className={inputClass}
           />
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <button
-          type="submit"
-          disabled={saving}
-          className="w-full bg-slate-900 text-white font-semibold rounded-xl py-3 disabled:opacity-50"
-        >
+        {error && <p className="text-sm text-critical">{error}</p>}
+        <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Transferring…' : 'Transfer'}
-        </button>
+        </PrimaryButton>
       </form>
     </Modal>
+  )
+}
+
+function RealCashBreakdown({ savings, monthly_reserve, funds, total }) {
+  if (total <= 0) return null
+
+  const segments = [
+    { label: 'Savings', amount: savings.balance_cents, color: SAVINGS_SWATCH },
+    { label: 'Monthly Reserve', amount: monthly_reserve.balance_cents, color: RESERVE_SWATCH },
+    ...funds.map((f, i) => ({ label: f.name, amount: f.balance_cents, color: CHART_COLORS[i % CHART_COLORS.length] })),
+  ].filter((seg) => seg.amount > 0)
+
+  return (
+    <div className="mt-4 pt-4 border-t border-white/10">
+      <div className="h-2 rounded-full bg-white/10 overflow-hidden flex gap-[2px]">
+        {segments.map((seg) => (
+          <div key={seg.label} className="h-full" style={{ width: `${(seg.amount / total) * 100}%`, background: seg.color }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3">
+        {segments.map((seg) => (
+          <span key={seg.label} className="flex items-center gap-1.5 text-xs text-white/70">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: seg.color }} />
+            {seg.label}
+            <span className="text-white/40 tabular">{c(seg.amount)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -243,43 +265,32 @@ function MonthlyReserveCard({ mr, savings, onUpdate }) {
   }
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4 mb-4">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-slate-400 mb-1">Monthly Reserve</p>
-          <p className="text-2xl font-bold text-slate-900">{c(mr.balance_cents)}</p>
+    <Card className="p-5 mb-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wide text-ink-3 mb-1">Monthly Reserve</p>
+          <p className="text-2xl font-bold text-ink tabular">{c(mr.balance_cents)}</p>
+          {mr.target_cents > 0 ? (
+            <p className="text-xs text-ink-3 mt-1">remaining of {c(mr.target_cents)} bill target</p>
+          ) : (
+            <p className="text-xs text-ink-3 mt-1">No Bills configured yet</p>
+          )}
         </div>
-        <div className="text-right">
-          <p className="text-xs text-slate-400 mb-1">Target · from Bills</p>
-          <p className="text-sm font-semibold text-slate-600">{c(mr.target_cents)}</p>
+        <div className="shrink-0">
+          {shortfall > 0 && (
+            <button
+              onClick={handleTopOff}
+              disabled={toppingOff || savings.balance_cents < shortfall}
+              className="text-xs font-semibold bg-ink text-white rounded-full px-4 py-2 disabled:opacity-40 active:scale-[0.98] transition-transform whitespace-nowrap"
+            >
+              {toppingOff ? 'Topping off…' : `Top Off ${c(shortfall)}`}
+            </button>
+          )}
+          {atTarget && <Badge tone="good">Funded</Badge>}
         </div>
       </div>
-
-      {mr.target_cents > 0 && (
-        <div className="mt-3 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className="h-full bg-emerald-500 rounded-full transition-all"
-            style={{ width: `${Math.min((mr.balance_cents / mr.target_cents) * 100, 100)}%` }}
-          />
-        </div>
-      )}
-
-      {shortfall > 0 && (
-        <div className="mt-3 flex justify-end">
-          <button
-            onClick={handleTopOff}
-            disabled={toppingOff || savings.balance_cents < shortfall}
-            className="text-xs font-semibold bg-slate-900 text-white rounded-xl px-3 py-1.5 disabled:opacity-40"
-          >
-            {toppingOff ? 'Topping off…' : `Top Off ${c(shortfall)}`}
-          </button>
-        </div>
-      )}
-      {atTarget && (
-        <p className="mt-2 text-xs text-emerald-600 font-medium">Funded for this Month</p>
-      )}
-      {topOffError && <p className="mt-2 text-xs text-red-500">{topOffError}</p>}
-    </div>
+      {topOffError && <p className="mt-2 text-xs text-critical text-right">{topOffError}</p>}
+    </Card>
   )
 }
 
@@ -369,72 +380,77 @@ export default function FundsPage() {
   }
 
   if (loading || !state) {
-    return <div className="flex items-center justify-center h-64 text-slate-400">Loading…</div>
+    return <div className="flex items-center justify-center h-64 text-ink-3">Loading…</div>
   }
 
   const { real_cash, savings, monthly_reserve, funds } = state
 
   return (
     <div className="px-4 pt-6 pb-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-3xl font-bold text-slate-950">Funds</h1>
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-3xl font-bold text-ink tracking-tight">Funds</h1>
         <button
           onClick={() => setShowTransfer(true)}
-          className="flex items-center gap-1.5 text-sm font-semibold text-slate-600 border border-slate-200 bg-white rounded-xl px-3 py-2"
+          className="flex items-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-white rounded-full px-3.5 py-2 active:scale-[0.98] transition-transform"
         >
-          <ArrowRightLeft size={15} />
+          <ArrowRightLeft size={14} />
           Transfer
         </button>
       </div>
 
       {/* Real Cash */}
-      <div className="rounded-3xl bg-slate-950 text-white p-5 mb-4">
-        <p className="text-xs uppercase tracking-wide text-slate-400">Real Cash</p>
-        <p className="text-4xl font-bold mt-1">{c(real_cash.balance_cents)}</p>
-        <p className="text-xs text-slate-500 mt-2">Total in your bank account(s)</p>
-      </div>
+      <Card ink className="p-5 mb-3">
+        <p className="text-xs uppercase tracking-wide text-white/50">Real Cash</p>
+        <p className="text-4xl font-bold mt-1 tabular">{c(real_cash.balance_cents)}</p>
+        <p className="text-xs text-white/40 mt-2">Total in your bank account(s)</p>
+        <RealCashBreakdown savings={savings} monthly_reserve={monthly_reserve} funds={funds} total={real_cash.balance_cents} />
+      </Card>
 
       {/* Savings */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4 mb-3">
-        <p className="text-xs uppercase tracking-wide text-slate-400 mb-1">Savings</p>
-        <p className="text-2xl font-bold text-slate-900">{c(savings.balance_cents)}</p>
-        <p className="text-xs text-slate-400 mt-1">Default resting place for all money</p>
-      </div>
+      <Card className="p-4 mb-3">
+        <p className="text-xs uppercase tracking-wide text-ink-3 mb-1">Savings</p>
+        <p className="text-2xl font-bold text-ink tabular">{c(savings.balance_cents)}</p>
+        <p className="text-xs text-ink-3 mt-1">Default resting place for all money</p>
+      </Card>
 
       {/* Monthly Reserve */}
       <MonthlyReserveCard mr={monthly_reserve} savings={savings} onUpdate={load} />
 
       {/* Funds */}
-      <div className="flex items-center justify-between mb-3 px-1">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Funds</p>
-        <div className="flex items-center gap-3">
-          {funds.some((f) => f.monthly_contribution_cents > 0) && (
+      <SectionLabel
+        action={
+          <div className="flex items-center gap-3">
+            {funds.some((f) => f.monthly_contribution_cents > 0) && (
+              <button
+                onClick={handleDistribute}
+                disabled={distributing}
+                className="text-xs font-semibold text-good disabled:opacity-40"
+              >
+                {distributing ? 'Distributing…' : 'Distribute'}
+              </button>
+            )}
             <button
-              onClick={handleDistribute}
-              disabled={distributing}
-              className="text-xs font-semibold text-emerald-700 disabled:opacity-40"
+              onClick={() => setShowAdd(true)}
+              className="flex items-center gap-1 text-sm font-semibold text-ink"
             >
-              {distributing ? 'Distributing…' : 'Distribute'}
+              <Plus size={16} />
+              Add
             </button>
-          )}
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1 text-sm font-semibold text-slate-900"
-          >
-            <Plus size={16} />
-            Add
-          </button>
-        </div>
-      </div>
+          </div>
+        }
+      >
+        Funds
+      </SectionLabel>
+
       {distributeResult && (
-        <div className={`mb-2 px-4 py-3 rounded-2xl text-xs ${distributeResult.error ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
+        <div className={`mb-3 px-4 py-3 rounded-2xl text-xs ${distributeResult.error ? 'bg-critical-soft text-critical' : 'bg-paper text-ink-2'}`}>
           {distributeResult.error ? distributeResult.error : (
             <>
               {distributeResult.funded.length > 0 && (
                 <p>Funded: {distributeResult.funded.map((f) => `${f.name} (${c(f.amount_cents)})`).join(', ')}</p>
               )}
               {distributeResult.skipped.length > 0 && (
-                <p className="text-amber-600 mt-0.5">Skipped (not enough savings): {distributeResult.skipped.map((f) => f.name).join(', ')}</p>
+                <p className="text-warn mt-0.5">Skipped (not enough savings): {distributeResult.skipped.map((f) => f.name).join(', ')}</p>
               )}
             </>
           )}
@@ -442,40 +458,34 @@ export default function FundsPage() {
       )}
 
       {funds.length === 0 ? (
-        <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-8 text-center">
-          <p className="text-slate-400 text-sm">No funds yet — add one above</p>
-        </div>
+        <EmptyState title="No funds yet — add one above" />
       ) : (
-        <div className="space-y-3">
-          {funds.map((fund) => (
-            <div key={fund.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-900 truncate">{fund.name}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {fund.monthly_contribution_cents > 0
-                      ? `${c(fund.monthly_contribution_cents)} / month`
-                      : 'No contribution set'}
-                  </p>
+        <div className="space-y-2.5">
+          {funds.map((fund, i) => {
+            const color = CHART_COLORS[i % CHART_COLORS.length]
+            return (
+              <Card key={fund.id} className="p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                    <div className="min-w-0">
+                      <p className="font-semibold text-ink truncate">{fund.name}</p>
+                      <p className="text-xs text-ink-3 mt-0.5">
+                        {fund.monthly_contribution_cents > 0
+                          ? `${c(fund.monthly_contribution_cents)} / month`
+                          : 'No contribution set'}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-lg font-bold text-ink shrink-0 tabular">{c(fund.balance_cents)}</p>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <IconButton onClick={() => setEditFund(fund)}><Pencil size={14} /></IconButton>
+                    <IconButton onClick={() => handleDelete(fund)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={14} /></IconButton>
+                  </div>
                 </div>
-                <p className="text-lg font-bold text-slate-900 shrink-0">{c(fund.balance_cents)}</p>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => setEditFund(fund)}
-                    className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(fund)}
-                    className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-400"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+              </Card>
+            )
+          })}
         </div>
       )}
 
