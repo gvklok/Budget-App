@@ -80,11 +80,21 @@ def _seed(db: Session) -> None:
     db.commit()
 
 
+def _sync_mr_target(db: Session) -> None:
+    from sqlalchemy import func
+    total = db.query(func.sum(models.Expense.amount_cents)).filter(models.Expense.type == "bill").scalar() or 0
+    mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
+    if mr:
+        mr.target_cents = total
+    db.commit()
+
+
 @app.on_event("startup")
 def startup() -> None:
     _migrate()
     with SessionLocal() as db:
         _seed(db)
+        _sync_mr_target(db)
 
 
 @app.get("/health")

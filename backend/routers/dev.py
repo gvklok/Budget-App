@@ -121,6 +121,23 @@ def set_fund_contribution(body: FundContributionBody, db: Session = Depends(get_
     return {"ok": True}
 
 
+_MULTIPLIERS = {"monthly": 1, "semimonthly": 2, "biweekly": 26 / 12, "weekly": 52 / 12}
+
+
+@router.post("/simulate-paycheck")
+def simulate_paycheck(db: Session = Depends(get_db)):
+    sources = db.query(models.IncomeSource).all()
+    if not sources:
+        raise HTTPException(400, "No income sources configured — add one on the Expenses page")
+    monthly_cents = sum(round(s.amount_cents * _MULTIPLIERS[s.frequency]) for s in sources)
+    savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
+    savings.balance_cents += monthly_cents
+    rc.balance_cents += monthly_cents
+    db.commit()
+    return {"ok": True, "added_cents": monthly_cents}
+
+
 @router.post("/simulate-transaction")
 def simulate_transaction(body: SimulateTransactionBody, db: Session = Depends(get_db)):
     bucket = _resolve_spendable(db, body.bucket)
@@ -167,7 +184,11 @@ def list_simulated_transactions(db: Session = Depends(get_db)):
 
 @router.post("/reset")
 def reset(db: Session = Depends(get_db)):
+    db.query(models.Transaction).delete()
     db.query(models.SimulatedTransaction).delete()
+    db.query(models.Expense).delete()
+    db.query(models.ExpenseCategory).delete()
+    db.query(models.IncomeSource).delete()
     db.query(models.Fund).delete()
     db.query(models.RealCash).delete()
     db.query(models.Savings).delete()

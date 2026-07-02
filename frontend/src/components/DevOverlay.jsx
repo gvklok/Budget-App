@@ -236,6 +236,9 @@ export default function DevOverlay() {
   const [state, setState] = useState(null)
   const [simTxns, setSimTxns] = useState([])
   const [resetting, setResetting] = useState(false)
+  const [paycheckCount, setPaycheckCount] = useState(0)
+  const [paycheckError, setPaycheckError] = useState('')
+  const [simulating, setSimulating] = useState(false)
 
   async function load() {
     const [s, txns] = await Promise.all([fetchState(), fetchSimTxns()])
@@ -262,9 +265,25 @@ export default function DevOverlay() {
     setResetting(true)
     try {
       await devPost('reset', {})
+      setPaycheckCount(0)
+      setPaycheckError('')
       await load()
     } finally {
       setResetting(false)
+    }
+  }
+
+  async function handleSimulatePaycheck() {
+    setSimulating(true)
+    setPaycheckError('')
+    try {
+      await devPost('simulate-paycheck', {})
+      setPaycheckCount((n) => n + 1)
+      await load()
+    } catch (err) {
+      setPaycheckError(err.message)
+    } finally {
+      setSimulating(false)
     }
   }
 
@@ -349,6 +368,27 @@ export default function DevOverlay() {
                       </div>
                     </div>
                   )}
+
+                  {/* Simulate Paycheck */}
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Simulate Paycheck</p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={handleSimulatePaycheck}
+                        disabled={simulating}
+                        className="flex-1 bg-emerald-700 text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-40"
+                      >
+                        {simulating ? 'Adding…' : '+ Simulate Paycheck'}
+                      </button>
+                      {paycheckCount > 0 && (
+                        <span className="text-xs font-semibold text-slate-500 shrink-0">
+                          ×{paycheckCount} this session
+                        </span>
+                      )}
+                    </div>
+                    {paycheckError && <p className="text-xs text-red-500 mt-1">{paycheckError}</p>}
+                    <p className="text-xs text-slate-400 mt-1">Adds one month's income to Savings + Real Cash.</p>
+                  </div>
 
                   {/* Simulate Spending */}
                   <div>

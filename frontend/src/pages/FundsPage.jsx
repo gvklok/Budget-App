@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Pencil, Trash2, Plus, ArrowRightLeft, Check, X } from 'lucide-react'
+import { Pencil, Trash2, Plus, ArrowRightLeft } from 'lucide-react'
 import { fmt, toCents } from '../api'
 import Modal from '../components/Modal'
 
@@ -10,7 +10,6 @@ function c(cents) {
 function AddFundModal({ savings_cents, onClose, onSave }) {
   const [name, setName] = useState('')
   const [balance, setBalance] = useState('')
-  const [contribution, setContribution] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -23,7 +22,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
       await onSave({
         name: name.trim(),
         balance_cents: toCents(balance),
-        monthly_contribution_cents: toCents(contribution),
+        monthly_contribution_cents: 0,
       })
       onClose()
     } catch (err) {
@@ -61,20 +60,9 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Monthly contribution <span className="text-slate-400 font-normal">(optional)</span>
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={contribution}
-            onChange={(e) => setContribution(e.target.value)}
-            placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
-          />
-        </div>
+        <p className="text-xs text-slate-400">
+          Set this fund's monthly contribution on the Expenses page.
+        </p>
         {error && <p className="text-sm text-red-500">{error}</p>}
         <button
           type="submit"
@@ -90,9 +78,6 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
 
 function EditFundModal({ fund, onClose, onSave }) {
   const [name, setName] = useState(fund.name)
-  const [contribution, setContribution] = useState(
-    fund.monthly_contribution_cents ? (fund.monthly_contribution_cents / 100).toFixed(2) : ''
-  )
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -102,10 +87,7 @@ function EditFundModal({ fund, onClose, onSave }) {
     setSaving(true)
     setError('')
     try {
-      await onSave(fund.id, {
-        name: name.trim(),
-        monthly_contribution_cents: toCents(contribution),
-      })
+      await onSave(fund.id, { name: name.trim() })
       onClose()
     } catch (err) {
       setError(err.message)
@@ -126,17 +108,12 @@ function EditFundModal({ fund, onClose, onSave }) {
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Monthly contribution</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={contribution}
-            onChange={(e) => setContribution(e.target.value)}
-            placeholder="0.00"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-slate-400"
-          />
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+          <p className="text-xs text-slate-400 mb-0.5">Monthly contribution</p>
+          <p className="text-sm font-semibold text-slate-700">
+            {fund.monthly_contribution_cents > 0 ? `${c(fund.monthly_contribution_cents)} / month` : 'Not set'}
+          </p>
+          <p className="text-xs text-slate-400 mt-1">Edit this on the Expenses page.</p>
         </div>
         {error && <p className="text-sm text-red-500">{error}</p>}
         <button
@@ -243,27 +220,11 @@ function TransferModal({ state, onClose, onTransfer }) {
 }
 
 function MonthlyReserveCard({ mr, savings, onUpdate }) {
-  const [editingTarget, setEditingTarget] = useState(false)
-  const [targetValue, setTargetValue] = useState('')
   const [toppingOff, setToppingOff] = useState(false)
   const [topOffError, setTopOffError] = useState('')
 
   const shortfall = mr.target_cents > 0 ? Math.max(0, mr.target_cents - mr.balance_cents) : 0
   const atTarget = mr.target_cents > 0 && mr.balance_cents >= mr.target_cents
-
-  async function handleSetTarget() {
-    const cents = toCents(targetValue)
-    const r = await fetch('/api/monthly-reserve/target', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_cents: cents }),
-    })
-    if (r.ok) {
-      setEditingTarget(false)
-      setTargetValue('')
-      onUpdate()
-    }
-  }
 
   async function handleTopOff() {
     setToppingOff(true)
@@ -289,32 +250,8 @@ function MonthlyReserveCard({ mr, savings, onUpdate }) {
           <p className="text-2xl font-bold text-slate-900">{c(mr.balance_cents)}</p>
         </div>
         <div className="text-right">
-          <p className="text-xs text-slate-400 mb-1">Target</p>
-          {editingTarget ? (
-            <div className="flex items-center gap-1">
-              <input
-                autoFocus
-                type="number"
-                step="0.01"
-                min="0"
-                value={targetValue}
-                onChange={(e) => setTargetValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSetTarget(); if (e.key === 'Escape') setEditingTarget(false) }}
-                placeholder="0.00"
-                className="w-24 border border-slate-200 rounded-lg px-2 py-1 text-sm text-right outline-none focus:ring-2 focus:ring-slate-400"
-              />
-              <button onClick={handleSetTarget} className="text-emerald-600"><Check size={14} /></button>
-              <button onClick={() => setEditingTarget(false)} className="text-slate-400"><X size={14} /></button>
-            </div>
-          ) : (
-            <button
-              onClick={() => { setTargetValue(mr.target_cents ? (mr.target_cents / 100).toFixed(2) : ''); setEditingTarget(true) }}
-              className="flex items-center gap-1 text-sm font-semibold text-slate-600 hover:text-slate-900 group"
-            >
-              {c(mr.target_cents)}
-              <Pencil size={11} className="opacity-0 group-hover:opacity-40 transition-opacity" />
-            </button>
-          )}
+          <p className="text-xs text-slate-400 mb-1">Target · from Bills</p>
+          <p className="text-sm font-semibold text-slate-600">{c(mr.target_cents)}</p>
         </div>
       </div>
 
@@ -515,11 +452,11 @@ export default function FundsPage() {
               <div className="flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-slate-900 truncate">{fund.name}</p>
-                  {fund.monthly_contribution_cents > 0 && (
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      {c(fund.monthly_contribution_cents)} / month
-                    </p>
-                  )}
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {fund.monthly_contribution_cents > 0
+                      ? `${c(fund.monthly_contribution_cents)} / month`
+                      : 'No contribution set'}
+                  </p>
                 </div>
                 <p className="text-lg font-bold text-slate-900 shrink-0">{c(fund.balance_cents)}</p>
                 <div className="flex items-center gap-1 shrink-0">

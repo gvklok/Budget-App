@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
@@ -8,6 +9,13 @@ from database import get_db
 router = APIRouter()
 
 VALID_TYPES = {"bill", "fund"}
+
+
+def _sync_mr_target(db: Session) -> None:
+    total = db.query(func.sum(models.Expense.amount_cents)).filter(models.Expense.type == "bill").scalar() or 0
+    mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
+    if mr:
+        mr.target_cents = total
 
 
 def _validate_type_and_fund(body_type, fund_id, new_fund_name, db):
@@ -102,6 +110,8 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
         fund_id=resolved_fund_id,
     )
     db.add(expense)
+    db.flush()
+    _sync_mr_target(db)
     db.commit()
     db.refresh(expense)
     return expense
@@ -134,6 +144,7 @@ def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = D
         expense.fund_id = body.fund_id
     if "fund_id" in body.model_fields_set and body.fund_id is None:
         expense.fund_id = None
+    _sync_mr_target(db)
     db.commit()
     db.refresh(expense)
     return expense
@@ -145,5 +156,7 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db)):
     if not expense:
         raise HTTPException(404, "Line item not found")
     db.delete(expense)
+    db.flush()
+    _sync_mr_target(db)
     db.commit()
     return {"ok": True}
