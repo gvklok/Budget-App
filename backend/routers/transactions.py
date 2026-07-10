@@ -28,7 +28,8 @@ def _debit(tx: models.Transaction, db: Session) -> None:
             fund = db.query(models.Fund).filter(models.Fund.id == line_item.fund_id).first()
             if not fund:
                 raise HTTPException(404, "Linked fund not found")
-            if fund.balance_cents < tx.amount_cents:
+            # U9: a Fund tagged allow_negative_balance may go below zero freely.
+            if not fund.allow_negative_balance and fund.balance_cents < tx.amount_cents:
                 raise HTTPException(
                     400,
                     f"{fund.name} has insufficient funds — need ${tx.amount_cents / 100:.2f}, have ${fund.balance_cents / 100:.2f}",
@@ -38,7 +39,7 @@ def _debit(tx: models.Transaction, db: Session) -> None:
         fund = db.query(models.Fund).filter(models.Fund.id == tx.fund_id).first()
         if not fund:
             raise HTTPException(404, "Fund not found")
-        if fund.balance_cents < tx.amount_cents:
+        if not fund.allow_negative_balance and fund.balance_cents < tx.amount_cents:
             raise HTTPException(
                 400,
                 f"{fund.name} has insufficient funds — need ${tx.amount_cents / 100:.2f}, have ${fund.balance_cents / 100:.2f}",

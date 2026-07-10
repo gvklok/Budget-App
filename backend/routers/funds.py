@@ -1,11 +1,16 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+import plans as plans_lib
 from database import get_db
 
 router = APIRouter()
+
+VALID_DESTINATION_TYPES = {"external_spend", "transfer_out"}
 
 
 @router.get("/", response_model=list[schemas.FundOut])
@@ -15,6 +20,8 @@ def list_funds(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.FundOut)
 def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
+    if body.destination_type not in VALID_DESTINATION_TYPES:
+        raise HTTPException(400, f"destination_type must be one of {sorted(VALID_DESTINATION_TYPES)}")
     if body.balance_cents > 0:
         savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
         if savings.balance_cents < body.balance_cents:
@@ -25,6 +32,8 @@ def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
         name=body.name,
         balance_cents=body.balance_cents,
         monthly_contribution_cents=body.monthly_contribution_cents,
+        destination_type=body.destination_type,
+        allow_negative_balance=body.allow_negative_balance,
     )
     db.add(fund)
     db.commit()
@@ -41,15 +50,35 @@ def update_fund(fund_id: int, body: schemas.FundUpdate, db: Session = Depends(ge
         fund.name = body.name
     if body.monthly_contribution_cents is not None:
         fund.monthly_contribution_cents = body.monthly_contribution_cents
+    if body.destination_type is not None:
+        if body.destination_type not in VALID_DESTINATION_TYPES:
+            raise HTTPException(400, f"destination_type must be one of {sorted(VALID_DESTINATION_TYPES)}")
+        fund.destination_type = body.destination_type
+    if body.allow_negative_balance is not None:
+        # U9: switching true->false while already negative is allowed — the
+        # existing negative balance persists; only NEW transactions immediately
+        # start following the strict (no-further-negative) rule.
+        fund.allow_negative_balance = body.allow_negative_balance
     db.commit()
     db.refresh(fund)
     return fund
+
+
+def _mark_distribute_executed(db: Session) -> None:
+    """U6: record that distribute ran for the current month, so the new-month
+    banner stops nagging — marked whenever the action was attempted, funded or
+    partially skipped alike."""
+    year, month = plans_lib.current_year_month(db)
+    plan = plans_lib.get_or_create_plan(db, year, month)
+    plan.distribute_executed_at = datetime.utcnow()
+    db.commit()
 
 
 @router.post("/distribute")
 def distribute(db: Session = Depends(get_db)):
     funds = db.query(models.Fund).filter(models.Fund.monthly_contribution_cents > 0).order_by(models.Fund.id).all()
     if not funds:
+        _mark_distribute_executed(db)
         raise HTTPException(400, "No funds have a monthly contribution set")
 
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
@@ -65,7 +94,7 @@ def distribute(db: Session = Depends(get_db)):
             skipped.append({"id": fund.id, "name": fund.name, "amount_cents": fund.monthly_contribution_cents})
             break  # stop at first fund savings can't cover
 
-    db.commit()
+    _mark_distribute_executed(db)
     return {
         "funded": funded,
         "skipped": skipped,

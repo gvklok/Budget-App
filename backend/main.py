@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -5,8 +7,9 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+import plans as plans_lib
 from database import engine, get_db, SessionLocal
-from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income
+from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income, plans
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -29,10 +32,30 @@ app.include_router(overview.router, prefix="/overview", tags=["overview"])
 app.include_router(dev.router, prefix="/dev", tags=["dev"])
 app.include_router(monthly_reserve.router, prefix="/monthly-reserve", tags=["monthly-reserve"])
 app.include_router(income.router, tags=["income"])
+app.include_router(plans.router, prefix="/plans", tags=["plans"])  # U3
 
 
 def _migrate() -> None:
     with engine.connect() as conn:
+        # funds table additions (U1, U9)
+        fund_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(funds)"))}
+        if "destination_type" not in fund_cols:
+            conn.execute(text("ALTER TABLE funds ADD COLUMN destination_type TEXT NOT NULL DEFAULT 'external_spend'"))
+        if "allow_negative_balance" not in fund_cols:
+            conn.execute(text("ALTER TABLE funds ADD COLUMN allow_negative_balance BOOLEAN NOT NULL DEFAULT 0"))
+
+        # monthly_plans table additions (U6)
+        plan_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(monthly_plans)"))}
+        if "top_off_executed_at" not in plan_cols:
+            conn.execute(text("ALTER TABLE monthly_plans ADD COLUMN top_off_executed_at DATETIME"))
+        if "distribute_executed_at" not in plan_cols:
+            conn.execute(text("ALTER TABLE monthly_plans ADD COLUMN distribute_executed_at DATETIME"))
+
+        # simulated_transactions table additions (U1)
+        sim_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(simulated_transactions)"))}
+        if "destination_type" not in sim_cols:
+            conn.execute(text("ALTER TABLE simulated_transactions ADD COLUMN destination_type TEXT NOT NULL DEFAULT 'external_spend'"))
+
         # expenses table additions
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(expenses)"))}
         if "actual_cents" not in existing:
@@ -43,6 +66,29 @@ def _migrate() -> None:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN type TEXT NOT NULL DEFAULT 'bill'"))
         if "fund_id" not in existing:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN fund_id INTEGER REFERENCES funds(id) ON DELETE SET NULL"))
+        if "plan_id" not in existing:
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN plan_id INTEGER REFERENCES monthly_plans(id) ON DELETE CASCADE"))
+            conn.commit()
+            # Backfill (U3): any pre-existing line items didn't belong to a month
+            # yet — assign them to the real current month's plan so they don't
+            # silently vanish from the now-month-scoped Expenses page.
+            today = date.today()
+            existing_plan = conn.execute(
+                text("SELECT id FROM monthly_plans WHERE year = :y AND month = :m"),
+                {"y": today.year, "m": today.month},
+            ).first()
+            if existing_plan:
+                plan_id = existing_plan[0]
+            else:
+                result = conn.execute(
+                    text("INSERT INTO monthly_plans (year, month) VALUES (:y, :m)"),
+                    {"y": today.year, "m": today.month},
+                )
+                plan_id = result.lastrowid
+            conn.execute(
+                text("UPDATE expenses SET plan_id = :p WHERE plan_id IS NULL"),
+                {"p": plan_id},
+            )
 
         # transactions table: make line_item_id nullable + add fund_id
         tx_cols = {row[1]: row for row in conn.execute(text("PRAGMA table_info(transactions)"))}
@@ -77,15 +123,8 @@ def _seed(db: Session) -> None:
         db.add(models.Savings(id=1, balance_cents=0))
     if not db.query(models.MonthlyReserve).first():
         db.add(models.MonthlyReserve(id=1, balance_cents=0, target_cents=0))
-    db.commit()
-
-
-def _sync_mr_target(db: Session) -> None:
-    from sqlalchemy import func
-    total = db.query(func.sum(models.Expense.amount_cents)).filter(models.Expense.type == "bill").scalar() or 0
-    mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
-    if mr:
-        mr.target_cents = total
+    if not db.query(models.AppClock).first():
+        db.add(models.AppClock(id=1, simulated_date=None))
     db.commit()
 
 
@@ -94,12 +133,31 @@ def startup() -> None:
     _migrate()
     with SessionLocal() as db:
         _seed(db)
-        _sync_mr_target(db)
+        plans_lib.sync_mr_target(db)
+        db.commit()
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/current-month-status")
+def current_month_status(db: Session = Depends(get_db)):
+    """U6: whether top-off/distribute have been run for the effective current
+    month — drives the new-month banner. Never about whichever month is being
+    viewed on the Expenses page, only the real (or simulated) current month."""
+    year, month = plans_lib.current_year_month(db)
+    plan = plans_lib.get_plan(db, year, month)
+    top_off_done = bool(plan and plan.top_off_executed_at)
+    distribute_done = bool(plan and plan.distribute_executed_at)
+    return {
+        "year": year,
+        "month": month,
+        "top_off_done": top_off_done,
+        "distribute_done": distribute_done,
+        "needs_banner": not (top_off_done and distribute_done),
+    }
 
 
 @app.get("/state", response_model=schemas.StateOut)

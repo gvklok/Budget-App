@@ -11,6 +11,11 @@ async function fetchSimTxns() {
   return r.json()
 }
 
+async function fetchCurrentDate() {
+  const r = await fetch('/api/dev/current-date')
+  return r.json()
+}
+
 async function devPost(path, body) {
   const r = await fetch(`/api/dev/${path}`, {
     method: 'POST',
@@ -72,6 +77,79 @@ function SetField({ label, currentCents, onSet }) {
         </button>
       </div>
       {error && <p className="text-xs text-critical mt-1 text-right">{error}</p>}
+    </div>
+  )
+}
+
+function SimulatedDateControl({ clockInfo, onDone }) {
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSet() {
+    if (!value) return
+    setSaving(true)
+    setError('')
+    try {
+      await devPost('set-simulated-date', { date: value })
+      setValue('')
+      await onDone()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleClear() {
+    setSaving(true)
+    setError('')
+    try {
+      await devPost('clear-simulated-date', {})
+      await onDone()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!clockInfo) return null
+
+  return (
+    <div className={`rounded-2xl p-4 border ${clockInfo.is_simulated ? 'bg-warn/10 border-warn/30' : 'bg-white/5 border-white/10'}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Simulated Date</p>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm text-slate-300">Effective "today"</span>
+        <span className={`text-sm font-mono font-bold ${clockInfo.is_simulated ? 'text-warn' : 'text-white'}`}>
+          {clockInfo.effective_date}{clockInfo.is_simulated ? ' (simulated)' : ' (real)'}
+        </span>
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => { setValue(e.target.value); setError('') }}
+          className="flex-1 border border-white/10 bg-white/5 rounded-lg px-2.5 py-1.5 text-sm text-white outline-none focus:ring-2 focus:ring-white/30"
+        />
+        <button
+          onClick={handleSet}
+          disabled={saving || !value}
+          className="text-sm bg-accent text-white rounded-lg px-3 py-1.5 disabled:opacity-40 shrink-0 font-medium"
+        >
+          Set
+        </button>
+        {clockInfo.is_simulated && (
+          <button
+            onClick={handleClear}
+            disabled={saving}
+            className="text-sm bg-white/10 text-white rounded-lg px-3 py-1.5 disabled:opacity-40 shrink-0 font-medium"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {error && <p className="text-xs text-critical mt-1">{error}</p>}
     </div>
   )
 }
@@ -235,15 +313,17 @@ export default function DevOverlay() {
   const [open, setOpen] = useState(false)
   const [state, setState] = useState(null)
   const [simTxns, setSimTxns] = useState([])
+  const [clockInfo, setClockInfo] = useState(null)
   const [resetting, setResetting] = useState(false)
   const [paycheckCount, setPaycheckCount] = useState(0)
   const [paycheckError, setPaycheckError] = useState('')
   const [simulating, setSimulating] = useState(false)
 
   async function load() {
-    const [s, txns] = await Promise.all([fetchState(), fetchSimTxns()])
+    const [s, txns, clock] = await Promise.all([fetchState(), fetchSimTxns(), fetchCurrentDate()])
     setState(s)
     setSimTxns(txns)
+    setClockInfo(clock)
   }
 
   function close() {
@@ -314,6 +394,8 @@ export default function DevOverlay() {
                 <p className="text-slate-400 text-sm text-center py-12">Loading…</p>
               ) : (
                 <>
+                  <SimulatedDateControl clockInfo={clockInfo} onDone={load} />
+
                   <Reconciliation state={state} />
 
                   {/* Set Values */}

@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -6,6 +8,7 @@ from typing import Optional
 
 import models
 from database import get_db
+from clock import get_current_date
 
 router = APIRouter()
 
@@ -32,6 +35,11 @@ class SimulateTransactionBody(BaseModel):
     bucket: str
     amount_cents: int
     label: Optional[str] = None
+    destination_type: Optional[str] = "external_spend"  # meaningful when bucket == "savings" (U1)
+
+
+class SetSimulatedDateBody(BaseModel):
+    date: str  # YYYY-MM-DD
 
 
 def _resolve_spendable(db: Session, bucket: str):
@@ -140,9 +148,14 @@ def simulate_paycheck(db: Session = Depends(get_db)):
 
 @router.post("/simulate-transaction")
 def simulate_transaction(body: SimulateTransactionBody, db: Session = Depends(get_db)):
+    if body.destination_type not in ("external_spend", "transfer_out"):
+        raise HTTPException(400, "destination_type must be 'external_spend' or 'transfer_out'")
+
     bucket = _resolve_spendable(db, body.bucket)
 
-    if bucket.balance_cents < body.amount_cents:
+    # U9: a Fund tagged allow_negative_balance may go below zero freely.
+    bucket_allows_negative = isinstance(bucket, models.Fund) and bucket.allow_negative_balance
+    if not bucket_allows_negative and bucket.balance_cents < body.amount_cents:
         raise HTTPException(400, "Insufficient balance in bucket")
 
     rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
@@ -156,6 +169,7 @@ def simulate_transaction(body: SimulateTransactionBody, db: Session = Depends(ge
         bucket_ref=body.bucket,
         amount_cents=body.amount_cents,
         label=body.label,
+        destination_type=body.destination_type or "external_spend",
     )
     db.add(txn)
     db.commit()
@@ -176,10 +190,44 @@ def list_simulated_transactions(db: Session = Depends(get_db)):
             "bucket_ref": r.bucket_ref,
             "amount_cents": r.amount_cents,
             "label": r.label,
+            "destination_type": r.destination_type,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows
     ]
+
+
+# ── Simulated date / AppClock (U2) ─────────────────────────────────────────────
+
+@router.post("/set-simulated-date")
+def set_simulated_date(body: SetSimulatedDateBody, db: Session = Depends(get_db)):
+    try:
+        date.fromisoformat(body.date)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    clock = db.query(models.AppClock).filter(models.AppClock.id == 1).first()
+    clock.simulated_date = body.date
+    db.commit()
+    return {"ok": True, "simulated_date": clock.simulated_date}
+
+
+@router.post("/clear-simulated-date")
+def clear_simulated_date(db: Session = Depends(get_db)):
+    clock = db.query(models.AppClock).filter(models.AppClock.id == 1).first()
+    clock.simulated_date = None
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/current-date")
+def current_date(db: Session = Depends(get_db)):
+    clock = db.query(models.AppClock).filter(models.AppClock.id == 1).first()
+    effective = get_current_date(db)
+    return {
+        "effective_date": effective.isoformat(),
+        "simulated_date": clock.simulated_date if clock else None,
+        "is_simulated": bool(clock and clock.simulated_date),
+    }
 
 
 @router.post("/reset")
@@ -193,9 +241,11 @@ def reset(db: Session = Depends(get_db)):
     db.query(models.RealCash).delete()
     db.query(models.Savings).delete()
     db.query(models.MonthlyReserve).delete()
+    db.query(models.AppClock).delete()
     db.commit()
     db.add(models.RealCash(id=1, balance_cents=0))
     db.add(models.Savings(id=1, balance_cents=0))
     db.add(models.MonthlyReserve(id=1, balance_cents=0, target_cents=0))
+    db.add(models.AppClock(id=1, simulated_date=None))
     db.commit()
     return {"ok": True}

@@ -26,6 +26,8 @@ class FundOut(BaseModel):
     name: str
     balance_cents: int
     monthly_contribution_cents: int
+    destination_type: str
+    allow_negative_balance: bool
     model_config = {"from_attributes": True}
 
 
@@ -33,11 +35,15 @@ class FundCreate(BaseModel):
     name: str
     balance_cents: int = 0
     monthly_contribution_cents: int = 0
+    destination_type: str = "external_spend"
+    allow_negative_balance: bool = False
 
 
 class FundUpdate(BaseModel):
     name: Optional[str] = None
     monthly_contribution_cents: Optional[int] = None
+    destination_type: Optional[str] = None
+    allow_negative_balance: Optional[bool] = None
 
 
 class ExpenseCategoryOut(BaseModel):
@@ -58,6 +64,7 @@ class ExpenseOut(BaseModel):
     actual_cents: int
     category_id: Optional[int] = None
     fund_id: Optional[int] = None
+    plan_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
@@ -69,6 +76,8 @@ class ExpenseCreate(BaseModel):
     category_id: Optional[int] = None
     fund_id: Optional[int] = None
     new_fund_name: Optional[str] = None  # inline fund creation when type="fund"
+    year: Optional[int] = None   # U3: which month's plan this belongs to;
+    month: Optional[int] = None  # defaults to the effective current month
 
 
 class ExpenseUpdate(BaseModel):

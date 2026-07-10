@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
 from database import Base
 
 
@@ -28,12 +28,26 @@ class Fund(Base):
     name = Column(String, nullable=False)
     balance_cents = Column(Integer, default=0, nullable=False)
     monthly_contribution_cents = Column(Integer, default=0, nullable=False)
+    destination_type = Column(String, default="external_spend", nullable=False)  # "external_spend" | "transfer_out"
+    allow_negative_balance = Column(Boolean, default=False, nullable=False)  # U9
 
 
 class ExpenseCategory(Base):
     __tablename__ = "expense_categories"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
+
+
+class MonthlyPlan(Base):
+    """A (year, month) that has been planned — line items are scoped to one of
+    these (U3). Existence of a row is what distinguishes a planned month from
+    an unplanned one."""
+    __tablename__ = "monthly_plans"
+    id = Column(Integer, primary_key=True)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)  # 1-12
+    top_off_executed_at = Column(DateTime, nullable=True)  # U6
+    distribute_executed_at = Column(DateTime, nullable=True)  # U6
 
 
 class Expense(Base):
@@ -45,6 +59,7 @@ class Expense(Base):
     actual_cents = Column(Integer, default=0, nullable=False)
     category_id = Column(Integer, ForeignKey("expense_categories.id", ondelete="SET NULL"), nullable=True)
     fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)
+    plan_id = Column(Integer, ForeignKey("monthly_plans.id", ondelete="CASCADE"), nullable=True)  # U3
 
 
 class IncomeSource(Base):
@@ -66,10 +81,22 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AppClock(Base):
+    """Singleton. When simulated_date is set, it stands in for 'today' everywhere
+    the backend needs the current date — enables testing month-boundary behavior
+    without waiting for real time (U2)."""
+    __tablename__ = "app_clock"
+    id = Column(Integer, primary_key=True)
+    simulated_date = Column(String, nullable=True)  # YYYY-MM-DD or None
+
+
 class SimulatedTransaction(Base):
     __tablename__ = "simulated_transactions"
     id = Column(Integer, primary_key=True)
     bucket_ref = Column(String, nullable=False)
     amount_cents = Column(Integer, nullable=False)
     label = Column(String, nullable=True)
+    # Only meaningful when bucket_ref == "savings" (a Savings Withdrawal, U1) —
+    # tags whether the money left your net worth or moved to another owned account.
+    destination_type = Column(String, default="external_spend", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, Receipt, PieChart } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle } from 'lucide-react'
 import { fmt, toCents } from '../api'
 import { CHART_COLORS, LINE, statusColor } from '../theme'
 import Modal from '../components/Modal'
@@ -10,6 +11,13 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 function fmtDate(dateStr) {
   const [, m, d] = dateStr.split('-').map(Number)
   return `${MONTHS[m - 1]} ${d}`
+}
+function shiftMonth({ year, month }, delta) {
+  let m = month + delta
+  let y = year
+  if (m < 1) { m = 12; y -= 1 }
+  if (m > 12) { m = 1; y += 1 }
+  return { year: y, month: m }
 }
 
 const inputClass =
@@ -200,8 +208,8 @@ function FundContributionModal({ fund, onClose, onSave }) {
 
 // ── Log Transaction Modal ─────────────────────────────────────────────────────
 
-function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, onClose, onSave }) {
-  const today = new Date().toISOString().slice(0, 10)
+function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, defaultDate, onClose, onSave }) {
+  const today = defaultDate ?? new Date().toISOString().slice(0, 10)
   const [mode, setMode] = useState(defaultFundId ? 'fund' : 'category')
   const [lineItemId, setLineItemId] = useState(defaultLineItemId ?? '')
   const [fundId, setFundId] = useState(defaultFundId ?? '')
@@ -324,6 +332,89 @@ function LineItemModal({ item, categories, onClose, onSave }) {
   )
 }
 
+// ── Source Labeling Prompt (U5) — mid-month Bill increases must say where the
+// extra money is coming from: relabel from another Bill, or move real money
+// from Savings. Cancel reverts the edit that triggered this.
+
+function SourceLabelModal({ prompt, bills, onCancel, onReallocate, onTransfer }) {
+  const otherBills = bills.filter((b) => b.id !== prompt.itemId)
+  const [choice, setChoice] = useState('reduce')
+  const [reduceFromId, setReduceFromId] = useState(otherBills[0]?.id ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleConfirm() {
+    setSaving(true)
+    setError('')
+    try {
+      if (choice === 'reduce') {
+        if (!reduceFromId) return setError('Pick a Bill to reduce')
+        await onReallocate(Number(reduceFromId))
+      } else {
+        await onTransfer()
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const optionClass = (active) =>
+    `flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer transition-colors ${
+      active ? 'border-accent bg-accent-soft' : 'border-line bg-white'
+    }`
+
+  return (
+    <Modal title={`Where is the additional ${c(prompt.delta)} coming from?`} onClose={onCancel}>
+      <div className="space-y-4">
+        <p className="text-xs text-ink-3">{prompt.itemName} went up by {c(prompt.delta)} this month.</p>
+
+        <label className={optionClass(choice === 'reduce')} onClick={() => setChoice('reduce')}>
+          <input type="radio" checked={choice === 'reduce'} onChange={() => setChoice('reduce')} className="mt-1" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-ink">Reduce another Bill this month</p>
+            <p className="text-xs text-ink-3 mt-0.5">No money moves — just relabels where the budget comes from. Monthly Reserve is unaffected.</p>
+            {choice === 'reduce' && otherBills.length > 0 && (
+              <select
+                value={reduceFromId}
+                onChange={(e) => setReduceFromId(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                className={`${inputClass} mt-2`}
+              >
+                {otherBills.map((b) => <option key={b.id} value={b.id}>{b.name} — {c(b.amount_cents)}</option>)}
+              </select>
+            )}
+            {choice === 'reduce' && otherBills.length === 0 && (
+              <p className="text-xs text-critical mt-2">No other Bills this month to reduce from.</p>
+            )}
+          </div>
+        </label>
+
+        <label className={optionClass(choice === 'transfer')} onClick={() => setChoice('transfer')}>
+          <input type="radio" checked={choice === 'transfer'} onChange={() => setChoice('transfer')} className="mt-1" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-ink">Transfer from Savings</p>
+            <p className="text-xs text-ink-3 mt-0.5">Moves {c(prompt.delta)} from Savings into Monthly Reserve. Real money moves.</p>
+          </div>
+        </label>
+
+        {error && <p className="text-sm text-critical">{error}</p>}
+
+        <div className="flex gap-2">
+          <button onClick={onCancel} disabled={saving}
+            className="flex-1 border border-line bg-white text-ink-2 font-semibold rounded-2xl py-3 disabled:opacity-40">
+            Cancel
+          </button>
+          <PrimaryButton onClick={handleConfirm} disabled={saving || (choice === 'reduce' && otherBills.length === 0)} className="flex-1">
+            {saving ? 'Saving…' : 'Confirm'}
+          </PrimaryButton>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Manage Categories Modal — list + rename + delete + add, all in one place ──
 
 function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDelete }) {
@@ -388,7 +479,7 @@ function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDele
 
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
-function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx }) {
+function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx, negative, recoveryNote }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
@@ -405,7 +496,11 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2">
-            <p className="text-sm font-medium text-ink truncate">{name}</p>
+            <p className="text-sm font-medium text-ink truncate flex items-center gap-1.5">
+              {negative && <AlertTriangle size={12} className="text-critical shrink-0" />}
+              {name}
+              {negative && <Badge tone="critical">Recovering</Badge>}
+            </p>
             <p className="text-sm tabular shrink-0">
               <span className={`font-semibold ${spentCents === 0 ? 'text-ink-3' : over ? 'text-critical' : 'text-ink'}`}>
                 {spentCents === 0 ? '—' : c(spentCents)}
@@ -414,6 +509,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
             </p>
           </div>
           {subtitle && <p className="text-xs text-ink-3 truncate mt-0.5">{subtitle}</p>}
+          {recoveryNote && <p className="text-xs text-critical truncate mt-0.5">{recoveryNote}</p>}
           {budgetCents > 0 && (
             <div className="mt-2 flex items-center gap-2">
               <Bar pct={pct} color={color} height={6} />
@@ -440,7 +536,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
                     <span className="text-xs text-ink-3 w-16 shrink-0">{fmtDate(tx.date)}</span>
                     <span className="flex-1 text-xs text-ink-2 truncate">{tx.merchant || '—'}</span>
                     <span className="font-mono text-xs font-semibold text-ink tabular">{c(tx.amount_cents)}</span>
-                    <button onClick={() => onDeleteTx(tx)} className="w-6 h-6 flex items-center justify-center rounded-full text-ink-3 hover:bg-critical-soft hover:text-critical"><Trash2 size={11} /></button>
+                    {onDeleteTx && <button onClick={() => onDeleteTx(tx)} className="w-6 h-6 flex items-center justify-center rounded-full text-ink-3 hover:bg-critical-soft hover:text-critical"><Trash2 size={11} /></button>}
                   </div>
                 ))}
               </div>
@@ -496,7 +592,8 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
               const itemTxns = txnsByItemId[b.id] ?? []
               const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
               return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
-                onEdit={() => onEdit(b)} onDelete={() => onDelete(b)} onLogTx={() => onLogTx(b.id)} onDeleteTx={onDeleteTx} />
+                onEdit={onEdit && (() => onEdit(b))} onDelete={onDelete && (() => onDelete(b))}
+                onLogTx={onLogTx && (() => onLogTx(b.id))} onDeleteTx={onDeleteTx} />
             })}
           </div>
           {bills.length > 1 && (
@@ -523,6 +620,21 @@ export default function ExpensesPage() {
   const [categories, setCategories] = useState([])
   const [funds, setFunds] = useState([])
   const [transactions, setTransactions] = useState([])
+  const [effectiveDate, setEffectiveDate] = useState(null) // YYYY-MM-DD, from AppClock (U2)
+
+  // U8: the viewed month lives in the URL, not just component state — so a
+  // reload keeps you looking at the same month (and correctly re-locks it,
+  // rather than silently jumping back to the current month on every refresh).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [selected, setSelectedRaw] = useState(() => {
+    const y = Number(searchParams.get('year'))
+    const m = Number(searchParams.get('month'))
+    return y && m ? { year: y, month: m } : null
+  })
+  function setSelected(next) {
+    setSelectedRaw(next)
+    setSearchParams(next ? { year: String(next.year), month: String(next.month) } : {}, { replace: true })
+  }
 
   const [showBreakdown, setShowBreakdown] = useState(false)
   const [billsOpen, setBillsOpen] = useState(true)
@@ -536,25 +648,47 @@ export default function ExpensesPage() {
   const [showCatManager, setShowCatManager] = useState(false)
   const [editFundContrib, setEditFundContrib] = useState(null)
   const [logTx, setLogTx] = useState(null)
+  const [reallocatePrompt, setReallocatePrompt] = useState(null) // U5: { itemId, itemName, delta, isNew, oldAmount? }
+  const [unlockedMonth, setUnlockedMonth] = useState(null) // U8: { year, month } currently unlocked for editing this session
+
+  // Resolve the effective "today" once on mount, then default the viewed month to it
+  // (unless the URL already names one).
+  useEffect(() => {
+    fetch('/api/dev/current-date').then((r) => r.json()).then((d) => {
+      setEffectiveDate(d.effective_date)
+      if (!selected) {
+        const [y, m] = d.effective_date.split('-').map(Number)
+        setSelected({ year: y, month: m })
+      }
+    })
+  }, [])
 
   const load = useCallback(async () => {
-    const [srcRes, sumRes, itemsRes, catRes, fundsRes, txRes] = await Promise.all([
+    if (!selected) return
+    const [srcRes, sumRes, planRes, catRes, fundsRes, txRes, clockRes] = await Promise.all([
       fetch('/api/income-sources'),
-      fetch('/api/monthly-summary'),
-      fetch('/api/line-items/'),
+      fetch(`/api/monthly-summary?year=${selected.year}&month=${selected.month}`),
+      fetch(`/api/plans/${selected.year}/${selected.month}`),
       fetch('/api/line-items/categories'),
       fetch('/api/funds/'),
       fetch('/api/transactions/'),
+      fetch('/api/dev/current-date'),
     ])
     setIncomeSources(await srcRes.json())
     setSummary(await sumRes.json())
-    setLineItems(await itemsRes.json())
+    const plan = await planRes.json()
+    setLineItems(plan.line_items)
     setCategories(await catRes.json())
     setFunds(await fundsRes.json())
     setTransactions(await txRes.json())
-  }, [])
+    setEffectiveDate((await clockRes.json()).effective_date)
+  }, [selected])
 
   useEffect(() => { load() }, [load])
+
+  // U8: navigating away from an unlocked past month re-locks it (per-session unlock only)
+  useEffect(() => { setUnlockedMonth(null) }, [selected?.year, selected?.month])
+
   useEffect(() => {
     window.addEventListener('dev-refresh', load)
     return () => window.removeEventListener('dev-refresh', load)
@@ -575,8 +709,28 @@ export default function ExpensesPage() {
   async function handleCreateSource(data) { await post('/api/income-sources', data); await load() }
   async function handleUpdateSource(id, data) { await patch(`/api/income-sources/${id}`, data); await load() }
   async function handleDeleteSource(s) { if (!confirm(`Delete "${s.name}"?`)) return; await del(`/api/income-sources/${s.id}`); await load() }
-  async function handleCreateItem(data) { await post('/api/line-items/', data); await load() }
-  async function handleUpdateItem(id, data) { await patch(`/api/line-items/${id}`, data); await load() }
+  async function handleCreateItem(data) {
+    const created = await post('/api/line-items/', { ...data, year: selected.year, month: selected.month })
+    await load()
+    // U5: adding a new Bill to the CURRENT month always prompts for source labeling
+    if (isCurrentMonth && created.type === 'bill' && created.amount_cents > 0) {
+      setReallocatePrompt({ itemId: created.id, itemName: created.name, delta: created.amount_cents, isNew: true })
+    }
+  }
+  async function handleUpdateItem(id, data) {
+    const before = lineItems.find((i) => i.id === id)
+    const updated = await patch(`/api/line-items/${id}`, data)
+    await load()
+    // U5: only a Bill INCREASE in the CURRENT month prompts — decreases, Fund
+    // edits, and edits to other months are silent.
+    if (isCurrentMonth && updated.type === 'bill' && before && updated.amount_cents > before.amount_cents) {
+      setReallocatePrompt({
+        itemId: id, itemName: updated.name,
+        delta: updated.amount_cents - before.amount_cents,
+        isNew: false, oldAmount: before.amount_cents,
+      })
+    }
+  }
   async function handleDeleteItem(item) { if (!confirm(`Delete "${item.name}"?`)) return; await del(`/api/line-items/${item.id}`); await load() }
   async function handleCreateCat(data) { await post('/api/line-items/categories', data); await load() }
   async function handleUpdateCat(id, data) { await patch(`/api/line-items/categories/${id}`, data); await load() }
@@ -585,10 +739,44 @@ export default function ExpensesPage() {
   async function handleLogTx(data) { await post('/api/transactions/', data); await load() }
   async function handleDeleteTx(tx) { if (!confirm('Delete this transaction?')) return; await del(`/api/transactions/${tx.id}`); await load() }
 
-  // Current month transactions
-  const now = new Date()
-  const currentMonth = now.getMonth() + 1
-  const currentYear = now.getFullYear()
+  // U5: resolve the source-labeling prompt
+  async function handleReallocate(decreasedLineItemId) {
+    await post('/api/line-items/reallocate', {
+      increased_line_item_id: reallocatePrompt.itemId,
+      decreased_line_item_id: decreasedLineItemId,
+      amount_cents: reallocatePrompt.delta,
+    })
+    await load()
+    setReallocatePrompt(null)
+  }
+  async function handleTransferForPrompt() {
+    await post('/api/transfers/', { from_bucket: 'savings', to_bucket: 'mr', amount_cents: reallocatePrompt.delta })
+    await load()
+    setReallocatePrompt(null)
+  }
+  async function handleCancelPrompt() {
+    if (reallocatePrompt.isNew) {
+      await del(`/api/line-items/${reallocatePrompt.itemId}`)
+    } else {
+      await patch(`/api/line-items/${reallocatePrompt.itemId}`, { amount_cents: reallocatePrompt.oldAmount })
+    }
+    await load()
+    setReallocatePrompt(null)
+  }
+
+  if (!selected) {
+    return <div className="flex items-center justify-center h-64 text-ink-3">Loading…</div>
+  }
+
+  // Transactions in the VIEWED month (U3) — navigating the month selector
+  // changes what counts as "this month" throughout the page.
+  const currentYear = selected.year
+  const currentMonth = selected.month
+  const [effYear, effMonth] = (effectiveDate ?? `${currentYear}-${String(currentMonth).padStart(2, '0')}`).split('-').map(Number)
+  const isCurrentMonth = currentYear === effYear && currentMonth === effMonth
+  const isPastMonth = currentYear < effYear || (currentYear === effYear && currentMonth < effMonth)
+  const isUnlockedForThisMonth = !!(unlockedMonth && unlockedMonth.year === currentYear && unlockedMonth.month === currentMonth)
+  const locked = isPastMonth && !isUnlockedForThisMonth
   const currentMonthTxns = transactions.filter((tx) => {
     const [y, m] = tx.date.split('-').map(Number)
     return y === currentYear && m === currentMonth
@@ -617,10 +805,14 @@ export default function ExpensesPage() {
   }
 
   // Totals
+  // U1: transfer-out Funds (401k, Roth, HSA, ...) don't count as spending — the
+  // money moved to another account you own. They're reported separately below.
+  const fundSpent = (f) => (txnsByFundId[f.id] ?? []).reduce((a, t) => a + t.amount_cents, 0)
   const totalBillPlanned = bills.reduce((s, b) => s + b.amount_cents, 0)
   const totalBillSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
   const totalFundPlanned = funds.reduce((s, f) => s + f.monthly_contribution_cents, 0)
-  const totalFundSpent = funds.reduce((s, f) => s + (txnsByFundId[f.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
+  const totalFundSpent = funds.filter((f) => f.destination_type !== 'transfer_out').reduce((s, f) => s + fundSpent(f), 0)
+  const transfersOutTotal = funds.filter((f) => f.destination_type === 'transfer_out').reduce((s, f) => s + fundSpent(f), 0)
   const totalPlanned = totalBillPlanned + totalFundPlanned
   const totalSpent = totalBillSpent + totalFundSpent
   const billPct = totalBillPlanned > 0 ? (totalBillSpent / totalBillPlanned) * 100 : 0
@@ -643,24 +835,65 @@ export default function ExpensesPage() {
     if (planned > 0) chartSegments.push({ label: 'Uncategorized', color: '#9c9484', planned, spent })
   }
   for (const f of funds) {
-    if (f.monthly_contribution_cents > 0) {
+    if (f.monthly_contribution_cents > 0 && f.destination_type !== 'transfer_out') {
       const spent = (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0)
       chartSegments.push({ label: f.name, color: CHART_COLORS[colorIdx++ % CHART_COLORS.length], planned: f.monthly_contribution_cents, spent })
     }
   }
 
-  const thisMonthName = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`
+  const thisMonthName = `${MONTHS[currentMonth - 1]} ${currentYear}`
+  const logTxDefaultDate = isCurrentMonth ? effectiveDate : `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`
 
   return (
     <div className="px-4 pt-6 pb-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-ink tracking-tight">Expenses</h1>
-        <button onClick={() => setLogTx({})}
-          className="flex items-center gap-1.5 bg-ink text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
-          <Receipt size={15} />Log
-        </button>
+        {!locked && (
+          <button onClick={() => setLogTx({})}
+            className="flex items-center gap-1.5 bg-ink text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
+            <Receipt size={15} />Log
+          </button>
+        )}
       </div>
+
+      {/* Month selector (U3) */}
+      <div className="flex items-center justify-center gap-1">
+        <IconButton onClick={() => setSelected(shiftMonth(selected, -1))}><ChevronLeft size={16} /></IconButton>
+        <p className="text-sm font-semibold text-ink w-32 text-center tabular">{thisMonthName}</p>
+        <IconButton onClick={() => setSelected(shiftMonth(selected, 1))}><ChevronRight size={16} /></IconButton>
+        {!isCurrentMonth && (
+          <button
+            onClick={() => setSelected({ year: effYear, month: effMonth })}
+            className="text-xs font-semibold text-accent ml-1"
+          >
+            Today
+          </button>
+        )}
+      </div>
+
+      {/* Read-only / edit-unlock indicator (U8) — past months only; current and
+          future months are always editable with no lock at all */}
+      {isPastMonth && (
+        <div className="flex items-center justify-center">
+          {locked ? (
+            <div className="flex items-center gap-2 bg-paper border border-line rounded-full px-3 py-1.5">
+              <Badge tone="neutral">Read only</Badge>
+              <button onClick={() => setUnlockedMonth({ year: currentYear, month: currentMonth })}
+                className="text-xs font-semibold text-accent">
+                Edit
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-warn-soft border border-warn/20 rounded-full px-3 py-1.5">
+              <Badge tone="warn">Editing</Badge>
+              <button onClick={() => setUnlockedMonth(null)} className="text-xs font-semibold text-ink-2">
+                Done
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* This month's income allocation */}
       {summary && summary.expected_income_cents > 0 && (
@@ -713,6 +946,16 @@ export default function ExpensesPage() {
             )}
           </div>
 
+          {transfersOutTotal > 0 && (
+            <div className="mt-4 pt-4 border-t border-line flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-ink-2">Transfers out</p>
+                <p className="text-[11px] text-ink-3">Moved to accounts you own — not spending</p>
+              </div>
+              <span className="text-sm font-semibold text-accent tabular">{c(transfersOutTotal)}</span>
+            </div>
+          )}
+
           <button onClick={() => setShowBreakdown((v) => !v)}
             className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-ink-2 mt-4 pt-4 border-t border-line">
             <PieChart size={13} />{showBreakdown ? 'Hide' : 'Show'} category breakdown
@@ -728,14 +971,16 @@ export default function ExpensesPage() {
             className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
             {incomeOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Income Sources
           </button>
-          <button onClick={() => setShowAddSource(true)} className="flex items-center gap-1 text-sm font-semibold text-ink">
-            <Plus size={16} />Add
-          </button>
+          {!locked && (
+            <button onClick={() => setShowAddSource(true)} className="flex items-center gap-1 text-sm font-semibold text-ink">
+              <Plus size={16} />Add
+            </button>
+          )}
         </div>
         {incomeOpen && (
           incomeSources.length === 0 ? (
             <EmptyState title="No income sources yet" action={
-              <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-accent">Add income source →</button>
+              !locked && <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-accent">Add income source →</button>
             } />
           ) : (
             <div className="space-y-2">
@@ -746,10 +991,12 @@ export default function ExpensesPage() {
                       <p className="font-semibold text-ink truncate">{s.name}</p>
                       <p className="text-xs text-ink-3 mt-0.5 tabular">{c(s.amount_cents)} · {freqLabel(s.frequency)}</p>
                     </div>
-                    <div className="flex items-center gap-0.5 shrink-0">
-                      <IconButton onClick={() => setEditSource(s)}><Pencil size={14} /></IconButton>
-                      <IconButton onClick={() => handleDeleteSource(s)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={14} /></IconButton>
-                    </div>
+                    {!locked && (
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <IconButton onClick={() => setEditSource(s)}><Pencil size={14} /></IconButton>
+                        <IconButton onClick={() => handleDeleteSource(s)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={14} /></IconButton>
+                      </div>
+                    )}
                   </div>
                 </Card>
               ))}
@@ -758,7 +1005,9 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Bills — collapsible */}
+      {/* Bills — collapsible, month-scoped (U3/U4: unplanned months auto-load
+          from the most recent prior plan, so there's always a plan by the time
+          this renders) */}
       <div>
         <div className="flex items-center justify-between mb-3 px-1">
           <button onClick={() => setBillsOpen((v) => !v)}
@@ -766,16 +1015,18 @@ export default function ExpensesPage() {
             {billsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Bills
             {overBillsCount > 0 && <Badge tone="critical">{overBillsCount} over budget</Badge>}
           </button>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowCatManager(true)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-white rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
-              <Tag size={12} />Categories
-            </button>
-            <button onClick={() => setShowAddItem(true)}
-              className="flex items-center gap-1 text-sm font-semibold text-ink pl-2">
-              <Plus size={16} />Add
-            </button>
-          </div>
+          {!locked && (
+            <div className="flex items-center gap-2">
+              <button onClick={() => setShowCatManager(true)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-white rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
+                <Tag size={12} />Categories
+              </button>
+              <button onClick={() => setShowAddItem(true)}
+                className="flex items-center gap-1 text-sm font-semibold text-ink pl-2">
+                <Plus size={16} />Add
+              </button>
+            </div>
+          )}
         </div>
 
         {billsOpen && (
@@ -788,13 +1039,13 @@ export default function ExpensesPage() {
                   const group = grouped[cat.id]
                   if (!group?.length) return null
                   return <BillGroup key={cat.id} label={cat.name} bills={group} txnsByItemId={txnsByItemId}
-                    onEdit={setEditItem} onDelete={handleDeleteItem}
-                    onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
+                    onEdit={locked ? undefined : setEditItem} onDelete={locked ? undefined : handleDeleteItem}
+                    onLogTx={locked ? undefined : (id) => setLogTx({ lineItemId: id })} onDeleteTx={locked ? undefined : handleDeleteTx} />
                 })}
                 {uncategorized.length > 0 && (
                   <BillGroup label="Uncategorized" bills={uncategorized} txnsByItemId={txnsByItemId}
-                    onEdit={setEditItem} onDelete={handleDeleteItem}
-                    onLogTx={(id) => setLogTx({ lineItemId: id })} onDeleteTx={handleDeleteTx} />
+                    onEdit={locked ? undefined : setEditItem} onDelete={locked ? undefined : handleDeleteItem}
+                    onLogTx={locked ? undefined : (id) => setLogTx({ lineItemId: id })} onDeleteTx={locked ? undefined : handleDeleteTx} />
                 )}
                 <div className="flex items-center px-4 py-3">
                   <p className="flex-1 text-sm font-bold text-ink">Total</p>
@@ -824,12 +1075,23 @@ export default function ExpensesPage() {
                 {funds.map((fund) => {
                   const fundTxns = txnsByFundId[fund.id] ?? []
                   const spent = fundTxns.reduce((s, t) => s + t.amount_cents, 0)
+                  const subtitle = fund.destination_type === 'transfer_out'
+                    ? 'Transfer out — not counted as spending'
+                    : fund.monthly_contribution_cents === 0 ? 'No contribution set' : null
+                  // U9: recovery timeline for Funds allowed to go negative
+                  const isNegative = fund.balance_cents < 0
+                  let recoveryNote = null
+                  if (isNegative) {
+                    recoveryNote = fund.monthly_contribution_cents > 0
+                      ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
+                      : 'No contribution set — will not recover automatically'
+                  }
                   return <ItemRow key={fund.id} name={fund.name}
-                    subtitle={fund.monthly_contribution_cents === 0 ? 'No contribution set' : null}
+                    subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
                     budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
-                    onEdit={() => setEditFundContrib(fund)}
-                    onLogTx={() => setLogTx({ fundId: fund.id })}
-                    onDeleteTx={handleDeleteTx} />
+                    onEdit={locked ? undefined : () => setEditFundContrib(fund)}
+                    onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
+                    onDeleteTx={locked ? undefined : handleDeleteTx} />
                 })}
               </div>
             </Card>
@@ -838,7 +1100,16 @@ export default function ExpensesPage() {
       )}
 
       {/* Modals */}
-      {logTx && <LogTransactionModal bills={bills} funds={funds} defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} onClose={() => setLogTx(null)} onSave={handleLogTx} />}
+      {logTx && <LogTransactionModal bills={bills} funds={funds} defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultDate={logTxDefaultDate} onClose={() => setLogTx(null)} onSave={handleLogTx} />}
+      {reallocatePrompt && (
+        <SourceLabelModal
+          prompt={reallocatePrompt}
+          bills={bills}
+          onCancel={handleCancelPrompt}
+          onReallocate={handleReallocate}
+          onTransfer={handleTransferForPrompt}
+        />
+      )}
       {showAddSource && <IncomeSourceModal onClose={() => setShowAddSource(false)} onSave={handleCreateSource} />}
       {editSource && <IncomeSourceModal source={editSource} onClose={() => setEditSource(null)} onSave={(d) => handleUpdateSource(editSource.id, d)} />}
       {showAddItem && <LineItemModal categories={categories} onClose={() => setShowAddItem(false)} onSave={handleCreateItem} />}

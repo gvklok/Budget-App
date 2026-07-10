@@ -1,8 +1,11 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+import plans as plans_lib
 from database import get_db
 
 router = APIRouter()
@@ -66,12 +69,23 @@ def delete_income_source(source_id: int, db: Session = Depends(get_db)):
 
 
 # ── Monthly summary ───────────────────────────────────────────────────────────
+# U3: bills come from the requested (or effective-current, if omitted) month's
+# plan. Funds stay month-agnostic — this app's Fund contributions are a global
+# property of the Fund itself, not a per-month line item (see U3 notes).
 
 @router.get("/monthly-summary")
-def monthly_summary(db: Session = Depends(get_db)):
+def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
+    if year is None or month is None:
+        year, month = plans_lib.current_year_month(db)
+
     sources = db.query(models.IncomeSource).all()
-    bills = db.query(models.Expense).filter(models.Expense.type == "bill").all()
+    plan = plans_lib.get_plan(db, year, month)
+    bills = (
+        db.query(models.Expense).filter(models.Expense.plan_id == plan.id, models.Expense.type == "bill").all()
+        if plan else []
+    )
     funds = db.query(models.Fund).all()
+    fund_by_id = {f.id: f for f in funds}
 
     expected_income = sum(_monthly_cents(s) for s in sources)
 
@@ -79,10 +93,34 @@ def monthly_summary(db: Session = Depends(get_db)):
     fund_total = sum(f.monthly_contribution_cents for f in funds)
     expenses_total = bills_total + fund_total
 
+    # Actual spending in the requested month (U1 + U3): transfer-out Fund
+    # transactions don't count as spending — they moved to another account you
+    # own, not out of your net worth.
+    bill_line_item_ids = {e.id for e in bills}
+    month_prefix = f"{year:04d}-{month:02d}"
+    month_txns = db.query(models.Transaction).filter(models.Transaction.date.like(f"{month_prefix}%")).all()
+    actual_bills_spent = 0
+    actual_fund_spent = 0
+    transfers_out_cents = 0
+
+    for tx in month_txns:
+        if tx.line_item_id is not None and tx.line_item_id in bill_line_item_ids:
+            actual_bills_spent += tx.amount_cents
+        elif tx.fund_id is not None:
+            fund = fund_by_id.get(tx.fund_id)
+            if fund is not None and fund.destination_type == "transfer_out":
+                transfers_out_cents += tx.amount_cents
+            elif fund is not None:
+                actual_fund_spent += tx.amount_cents
+
     return {
+        "year": year,
+        "month": month,
         "expected_income_cents": expected_income,
         "expected_bills_total_cents": bills_total,
         "expected_fund_contributions_total_cents": fund_total,
         "expected_expenses_total_cents": expenses_total,
         "expected_savings_cents": expected_income - expenses_total,
+        "actual_spending_cents": actual_bills_spent + actual_fund_spent,
+        "transfers_out_cents": transfers_out_cents,
     }

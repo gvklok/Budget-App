@@ -1,21 +1,17 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+import plans as plans_lib
 from database import get_db
 
 router = APIRouter()
 
 VALID_TYPES = {"bill", "fund"}
-
-
-def _sync_mr_target(db: Session) -> None:
-    total = db.query(func.sum(models.Expense.amount_cents)).filter(models.Expense.type == "bill").scalar() or 0
-    mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
-    if mr:
-        mr.target_cents = total
 
 
 def _validate_type_and_fund(body_type, fund_id, new_fund_name, db):
@@ -25,6 +21,40 @@ def _validate_type_and_fund(body_type, fund_id, new_fund_name, db):
         raise HTTPException(400, "Bill line items cannot have a fund")
     if body_type == "fund" and not fund_id and not new_fund_name:
         raise HTTPException(400, "Fund line items must link to a fund or provide new_fund_name")
+
+
+class ReallocateBody(BaseModel):
+    increased_line_item_id: int
+    decreased_line_item_id: int
+    amount_cents: int
+
+
+@router.post("/reallocate")
+def reallocate(body: ReallocateBody, db: Session = Depends(get_db)):
+    # U5: the "increased" Bill was already bumped up via a normal PATCH before
+    # this is called — this endpoint only performs the offsetting decrease, so
+    # the total Bills sum (and therefore MR target) stays exactly unchanged.
+    if body.amount_cents <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    if body.increased_line_item_id == body.decreased_line_item_id:
+        raise HTTPException(400, "Must pick a different Bill to reduce")
+    increased = db.query(models.Expense).filter(models.Expense.id == body.increased_line_item_id).first()
+    decreased = db.query(models.Expense).filter(models.Expense.id == body.decreased_line_item_id).first()
+    if not increased or not decreased:
+        raise HTTPException(404, "Line item not found")
+    if increased.type != "bill" or decreased.type != "bill":
+        raise HTTPException(400, "Reallocation only applies to Bills")
+    if decreased.amount_cents - body.amount_cents <= 0:
+        raise HTTPException(400, f"{decreased.name} would go to zero or below — pick a different Bill or a smaller amount")
+    decreased.amount_cents -= body.amount_cents
+    plans_lib.sync_mr_target(db)
+    db.commit()
+    db.refresh(increased)
+    db.refresh(decreased)
+    return {
+        "increased": schemas.ExpenseOut.model_validate(increased),
+        "decreased": schemas.ExpenseOut.model_validate(decreased),
+    }
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -67,10 +97,23 @@ def delete_category(cat_id: int, db: Session = Depends(get_db)):
 
 
 # ── Line items ────────────────────────────────────────────────────────────────
+# U3: line items are scoped to a MonthlyPlan. year/month are optional on read
+# (default to the effective current month) but resolve to a real plan on write —
+# auto-creating it if this is the first item added to that month.
 
 @router.get("/", response_model=list[schemas.ExpenseOut])
-def list_expenses(db: Session = Depends(get_db)):
-    return db.query(models.Expense).order_by(models.Expense.category_id.nullslast(), models.Expense.id).all()
+def list_expenses(year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
+    if year is None or month is None:
+        year, month = plans_lib.current_year_month(db)
+    plan = plans_lib.get_plan(db, year, month)
+    if not plan:
+        return []
+    return (
+        db.query(models.Expense)
+        .filter(models.Expense.plan_id == plan.id)
+        .order_by(models.Expense.category_id.nullslast(), models.Expense.id)
+        .all()
+    )
 
 
 @router.post("/", response_model=schemas.ExpenseOut)
@@ -78,6 +121,9 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
     if body.amount_cents <= 0:
         raise HTTPException(400, "Amount must be positive")
     _validate_type_and_fund(body.type, body.fund_id, body.new_fund_name, db)
+
+    year, month = (body.year, body.month) if body.year and body.month else plans_lib.current_year_month(db)
+    plan = plans_lib.get_or_create_plan(db, year, month)
 
     resolved_fund_id = body.fund_id
 
@@ -108,10 +154,11 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
         actual_cents=body.actual_cents,
         category_id=body.category_id,
         fund_id=resolved_fund_id,
+        plan_id=plan.id,
     )
     db.add(expense)
     db.flush()
-    _sync_mr_target(db)
+    plans_lib.sync_mr_target(db)
     db.commit()
     db.refresh(expense)
     return expense
@@ -144,7 +191,7 @@ def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = D
         expense.fund_id = body.fund_id
     if "fund_id" in body.model_fields_set and body.fund_id is None:
         expense.fund_id = None
-    _sync_mr_target(db)
+    plans_lib.sync_mr_target(db)
     db.commit()
     db.refresh(expense)
     return expense
@@ -157,6 +204,6 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Line item not found")
     db.delete(expense)
     db.flush()
-    _sync_mr_target(db)
+    plans_lib.sync_mr_target(db)
     db.commit()
     return {"ok": True}
