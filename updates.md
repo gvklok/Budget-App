@@ -401,3 +401,61 @@ Follow the same stop-and-verify discipline as the original gates.
 # End of Updates
 
 After U7, the update set is complete. Fold into `PROJECT.md` and `BUILD_INSTRUCTIONS.md` as canonical if the user chooses. Otherwise this file remains as an amendment layer on top of the base spec.
+
+---
+
+# Changelog — Orchestrated improvement pass (2026-07-10, branch `fableFun`)
+
+Confirmed-philosophy pass run by the orchestrator with subagents (see `CLAUDE.md` →
+Orchestration Model). Everything below is additive; the money model and invariant are
+unchanged.
+
+## New: the Ledger
+- `LedgerEntry` — append-only record of every money movement (paycheck, transfer,
+  top-off, distribute, spend, spend reversal, fund create/delete, dev adjustments).
+  Transaction deletion appends a reversal; nothing is ever rewritten.
+- Read API: `GET /ledger` (filter by bucket/kind/month), `GET /funds/{id}/detail`
+  (all-time activity + balance-over-time series reconstructed from the ledger),
+  `GET /overview/monthly`, `GET /overview/spending-breakdown`,
+  `GET /overview/balance-series`.
+
+## New: UI
+- **Fund detail page** (`/funds/:id`, tap any fund row): balance-over-time chart,
+  full activity history (contributions, transfers, spends, reversals), recovery
+  projection when negative, quick Transfer / Log-spend actions.
+- **Overview page** (was a stub): kept-vs-spent stacked monthly bars with income
+  reference, bucket balance trends (savings / MR / funds / Real Cash), per-month
+  "where it went" breakdown with transfers-out separated as not-spending.
+- **Checklist page** (Gate 18, was never built): full CRUD, tap-to-toggle,
+  progress bar, reset-for-new-month.
+- Foundation: one shared API client (was 4 hand-rolled copies), error/retry states
+  on every load (pages used to hang on "Loading…"), entity colors stable per id
+  across pages, transfer modal validates against available balance before submit,
+  new-month banner reports what actually happened ("Topped off $X · Distributed $Y
+  to N funds") including no-op phrasing.
+
+## Fixed (bugs)
+- Reset All Data left `MonthlyPlan` rows behind — stale top-off/distribute
+  timestamps suppressed the new-month banner after a reset.
+- Monthly summary dropped fund-line-item transactions from Actual Spending (and
+  ignored their fund's transfer-out tag).
+- Distribute reported only the first fund it couldn't afford; now lists all
+  remaining unfunded funds (funding still stops at the first shortfall).
+- Top-off/distribute no-op cases ("already at target", "no bills", "no
+  contributions") returned 400 errors; now 200 with a `status` field.
+- Reallocate refused to reduce a Bill to exactly $0 (spec allows zero).
+- `POST /funds/` accepted a negative initial balance, silently breaking the
+  invariant — now rejected; funds can only go negative by spending (U9).
+- Creating a line item in a never-visited month bypassed the U4 auto-copy and
+  left a sparse plan; first touch now initializes the month from the most recent
+  prior plan, same as navigating to it.
+- Changing/clearing the simulated date now resyncs the MR target immediately.
+
+## New: quality gates
+- `backend/tests/` pytest suite (money ops with exact-balance + invariant asserts,
+  ledger recording, reporting math, month-boundary semantics). Dev deps in
+  `backend/requirements-dev.txt`.
+- `.claude/agents/` — money-core (opus), backend-dev, ui-dev (sonnet),
+  test-writer (haiku); orchestration rules in `CLAUDE.md`.
+- README data-model section rewritten to match `PROJECT.md` (it described a
+  pre-build model).

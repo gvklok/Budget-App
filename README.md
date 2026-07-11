@@ -41,8 +41,12 @@ VITE_API_URL=http://localhost:8000 npm run dev
 
 ## Data model
 
-- **Funds** hold real money (Savings, Emergency Fund, Vacation, etc.) — total fund balance = total real cash.
-- **Expense categories** are monthly budget trackers (Groceries, Rent, etc.) — spending against them deducts from a fund (usually Savings).
-- **Transactions** always specify a source fund, and optionally an expense category for budget tracking.
-- **Paychecks** add directly to the Savings fund.
-- **Transfers** move money between funds.
+Canonical docs: `PROJECT.md` (model + UX) and `updates.md` (amendments). Summary:
+
+- Three buckets: **Savings** (default resting place — paychecks land here), **Monthly Reserve** (one number that pre-funds the month's Bills), and **Funds** (goal buckets like Vacation or Emergency; roll over, receive monthly contributions from Savings).
+- **Reconciliation invariant** after every operation: `Real Cash = Savings + Monthly Reserve + Σ Fund balances`.
+- The **Expenses page** plans each month (independent `MonthlyPlan`s; a new month copies the previous plan once). Bill line items route spending to Monthly Reserve; fund spending routes to that Fund. Real Cash drops on every real spend.
+- **Transfers** move money between buckets and never change Real Cash. Every money movement is recorded in an append-only **ledger**, which powers per-fund history and the Overview analytics.
+- Funds tagged **transfer-out** (Roth, 401k) still move money normally but are reported separately — moving money to yourself is not spending.
+
+Backend tests: `cd backend && pip install -r requirements-dev.txt && python -m pytest`
