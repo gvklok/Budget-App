@@ -368,11 +368,9 @@ export default function FundsPage() {
         </button>
       </div>
 
-      {/* Real Cash — ranks #1 through size, not darkness */}
-      <Card
-        className="p-5 mb-3"
-        style={{ background: 'linear-gradient(180deg, #eef6f2 0%, #ffffff 60%)' }}
-      >
+      {/* Real Cash — ranks #1 through size, not darkness. Flat card, no
+          gradient wash — clean and honest, not a forced hero treatment. */}
+      <Card className="p-5 mb-3">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Real Cash</p>
         <p className="hero-figure text-5xl font-bold text-ink mt-1.5">{c(real_cash.balance_cents)}</p>
         <p className="text-xs text-ink-3 mt-2">Total across your bank account(s)</p>

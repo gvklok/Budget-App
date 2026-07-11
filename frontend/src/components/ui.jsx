@@ -94,8 +94,10 @@ export function SectionLabel({ children, action }) {
 const BADGE_TONES = {
   neutral: 'bg-paper text-ink-2',
   accent: 'bg-accent-soft text-accent',
-  good: 'bg-good-soft text-good', // alias of `saving` — the app's one green
-  saving: 'bg-saving-soft text-saving',
+  // alias of `saving` — the app's one green. `-ink` is the darker text-safe
+  // step (>=4.5:1 on the soft chip background), never the lighter fill hue.
+  good: 'bg-good-soft text-good-ink',
+  saving: 'bg-saving-soft text-saving-ink',
   bills: 'bg-bills-soft text-bills',
   funds: 'bg-funds-soft text-funds',
   transfer: 'bg-transfer-soft text-transfer',
@@ -128,11 +130,19 @@ export function IconButton({ children, className = '', compact = false, ...rest 
 // ── Buttons ───────────────────────────────────────────────────────────────────
 
 // Solid accent — THE primary action on a screen. One button language across
-// the app: no ink-black pills.
-export function PrimaryButton({ children, className = '', ...rest }) {
+// the app, with one deliberate exception: `variant="ink"` — the sanctioned
+// black pill reserved for buttons that LOG money (Expenses "Log", Fund
+// "Log spend"), so they read as a distinct, weightier action against the
+// accent language everywhere else. Never flip the default to ink.
+const PRIMARY_BUTTON_VARIANTS = {
+  accent: 'bg-accent hover:bg-accent-hover text-white',
+  ink: 'bg-ink hover:bg-ink/90 text-white',
+}
+
+export function PrimaryButton({ children, className = '', variant = 'accent', ...rest }) {
   return (
     <button
-      className={`bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
+      className={`${PRIMARY_BUTTON_VARIANTS[variant]} font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
       {...rest}
     >
       {children}

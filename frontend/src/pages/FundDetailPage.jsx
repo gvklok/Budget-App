@@ -303,7 +303,7 @@ function ActivityRow({ entry, bucket, fundNameById }) {
         <p className="text-sm font-medium text-ink truncate">{text}</p>
         <p className="text-xs text-ink-3 mt-0.5">{shortDate(entry.date)}</p>
       </div>
-      <p className={`text-sm font-semibold tabular shrink-0 ${isIn ? 'text-good' : 'text-ink'}`}>
+      <p className={`text-sm font-semibold tabular shrink-0 ${isIn ? 'text-good-ink' : 'text-ink'}`}>
         {isIn ? '+' : '−'}{c(Math.abs(entry.amount_cents))}
       </p>
     </div>
@@ -525,9 +525,11 @@ export default function FundDetailPage() {
           <ArrowRightLeft size={14} />
           Transfer
         </button>
+        {/* Ink-black — the one sanctioned black pill, reserved for buttons
+            that LOG money, deliberately distinct from the accent language. */}
         <button
           onClick={() => setShowLogSpend(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-accent rounded-2xl py-2.5 active:scale-[0.98] transition-transform"
+          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-ink hover:bg-ink/90 rounded-2xl py-2.5 active:scale-[0.98] transition-transform"
         >
           <ShoppingBag size={14} />
           Log spend

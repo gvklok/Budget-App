@@ -462,7 +462,7 @@ export default function DevOverlay() {
                       <button
                         onClick={handleSimulatePaycheck}
                         disabled={simulating}
-                        className="flex-1 bg-good text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-40"
+                        className="flex-1 bg-accent text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-40"
                       >
                         {simulating ? 'Adding…' : '+ Simulate Paycheck'}
                       </button>

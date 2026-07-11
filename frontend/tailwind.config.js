@@ -23,14 +23,20 @@ export default {
         // Semantic money-concept colors (see theme.js for the full rationale)
         // — one hue per concept, app-wide. `good` is a deliberate alias of
         // `saving`: the app has exactly one green and it always means
-        // "kept/saved."
+        // "kept/saved." `saving` is deliberately lighter/friendlier than
+        // `accent` — decoupled on purpose so Savings never reads as "another
+        // button." `ink` is the darker text-safe step for small text on the
+        // `soft` background (>=4.5:1) — use it wherever saving/good renders
+        // as small TEXT (chips, amounts), reserve DEFAULT for fills/marks.
         saving: {
-          DEFAULT: '#0f5c52',
-          soft: '#e4efea',
+          DEFAULT: '#3a9c69',
+          soft: '#e7f3ed',
+          ink: '#286b49',
         },
         good: {
-          DEFAULT: '#0f5c52',
-          soft: '#e4efea',
+          DEFAULT: '#3a9c69',
+          soft: '#e7f3ed',
+          ink: '#286b49',
         },
         bills: {
           DEFAULT: '#3e6c8c',

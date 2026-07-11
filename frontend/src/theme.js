@@ -33,7 +33,18 @@ export const ACCENT_SOFT = '#e4efea'
 //   TRANSFER_OUT money moved to another account you own (401k, Roth, HSA) —
 //                visibly NOT spending, and never wears warn/critical.
 //   CRITICAL     overspend and negative balances only — the one true alarm.
-export const SAVING = ACCENT // '#0f5c52' — the existing deep green accent family
+//
+// SAVING is deliberately decoupled from ACCENT: ACCENT is the interactive
+// language (buttons, nav, focus rings); SAVING is the calm "money kept" hue
+// — lighter and friendlier so Savings never reads as just "another button
+// color." Validated with the dataviz skill's validator (mark contrast
+// >=3:1 on both #ffffff and #f6f4ef paper). Small/thin TEXT rendered in the
+// SAVING family (chips, "+$150.00" amounts, "covered") uses SAVING_TEXT
+// instead — a darker step of the same hue that clears 4.5:1 text contrast
+// on white, paper, AND the saving-soft chip background.
+export const SAVING = '#3a9c69' // lighter, friendlier green — mark/fill use (bars, swatches, dots, large stat text)
+export const SAVING_TEXT = '#286b49' // darker text-safe variant — small text, chips, contribution amounts
+export const SAVING_SOFT = '#e7f3ed' // light tint for chip/badge backgrounds
 export const BILLS = '#3e6c8c' // slate-blue
 export const FUNDS_HUE = '#c1652f' // warm terracotta
 export const TRANSFER_OUT = '#9c9484' // neutral stone
@@ -41,6 +52,7 @@ export const TRANSFER_OUT = '#9c9484' // neutral stone
 // GOOD is a deliberate alias of SAVING, not a second green — the app has
 // exactly one green and it always means "kept/saved."
 export const GOOD = SAVING
+export const GOOD_TEXT = SAVING_TEXT
 export const WARN = '#a8791f'
 export const CRITICAL = '#b23b2e'
 

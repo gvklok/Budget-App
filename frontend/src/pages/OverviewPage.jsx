@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { LayoutDashboard, Check, AlertTriangle } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
-  colorForId, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, CRITICAL,
-  INK, INK_2, INK_3, LINE, areaGradientId,
+  colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, SAVING_SOFT, TRANSFER_OUT, CRITICAL,
+  INK, INK_2, INK_3, LINE, PAPER, areaGradientId,
 } from '../theme'
 import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
 
@@ -109,7 +109,10 @@ function Stat({ label, value, dotColor, tone }) {
   )
 }
 
-function PeriodReviewCard({ months, rangeMonths }) {
+// Months with no activity at all are excluded so a long 1y window isn't
+// diluted by history that predates the seed/real data. Shared by
+// PeriodReviewCard and MoneyFlowCard so both cards agree on the same totals.
+function aggregateRange(months) {
   const active = months.filter((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
   const n = active.length
   const totalIncome = active.reduce((s, m) => s + m.income_cents, 0)
@@ -118,6 +121,11 @@ function PeriodReviewCard({ months, rangeMonths }) {
   const totalFunds = active.reduce((s, m) => s + m.funds_spent_cents, 0)
   const totalTransfers = active.reduce((s, m) => s + m.transfers_out_cents, 0)
   const overspentCount = active.filter((m) => m.kept_cents < 0).length
+  return { n, totalIncome, totalKept, totalBills, totalFunds, totalTransfers, overspentCount }
+}
+
+function PeriodReviewCard({ months, rangeMonths }) {
+  const { n, totalIncome, totalKept, totalBills, totalFunds, totalTransfers, overspentCount } = aggregateRange(months)
   const avgSpent = n > 0 ? (totalBills + totalFunds) / n : 0
   const avgKept = n > 0 ? totalKept / n : 0
   const rate = totalIncome > 0 ? (totalKept / totalIncome) * 100 : null
@@ -165,6 +173,165 @@ function PeriodReviewCard({ months, rangeMonths }) {
   )
 }
 
+// ── Money Flow — Monarch-style cash-flow sankey for the selected range ──────
+// Single left source "Income $X" fans into right destination nodes: Bills
+// (slate), Funds (terracotta), Transfers out (stone), Kept (SAVING) — a
+// two-column, hand-rolled SVG sankey (no library). Ribbons are flat fills at
+// ~85% opacity, no gradients — calm by design. Zero income hides the card
+// entirely; a zero-value destination just omits its ribbon/node. When the
+// period is overspent (outflows > income), there is no "Kept" node — instead
+// the diagram fans Income proportionally into the real destinations (which
+// now sum to more than Income), and the resulting shortfall is called out
+// as a dashed red bracket + caption rather than invented as a fake node
+// (never misrepresent a real node's own dollar amount to make room for it).
+
+// Nodes are sized proportionally to their real dollar amount (honest
+// geometry), but that means a small node (e.g. Transfers out next to a much
+// bigger Bills) can sit close enough to its neighbor that two-line labels
+// would overlap. Labels get their own collision-resolved centers — nudged
+// apart to a minimum gap — while the node rects/ribbons keep their true
+// proportional positions; only the label anchor moves.
+function resolveLabelCenters(naturalCenters, minGap, lo, hi) {
+  const centers = [...naturalCenters]
+  for (let i = 1; i < centers.length; i++) {
+    if (centers[i] - centers[i - 1] < minGap) centers[i] = centers[i - 1] + minGap
+  }
+  if (centers[centers.length - 1] > hi) {
+    centers[centers.length - 1] = hi
+    for (let i = centers.length - 2; i >= 0; i--) {
+      if (centers[i + 1] - centers[i] < minGap) centers[i] = centers[i + 1] - minGap
+    }
+  }
+  return centers.map((y) => Math.max(lo, y))
+}
+
+function MoneyFlowCard({ months }) {
+  const agg = aggregateRange(months)
+  if (agg.totalIncome <= 0) return null
+
+  const overspent = agg.totalKept < 0
+
+  const rightDefs = [
+    { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS },
+    { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE },
+    { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT },
+    ...(overspent ? [] : [{ key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }]),
+  ].filter((d) => d.amount > 0)
+
+  if (rightDefs.length === 0) return null
+
+  const leftTotal = agg.totalIncome
+  const rightTotal = rightDefs.reduce((s, d) => s + d.amount, 0)
+  const scaleTotal = Math.max(leftTotal, rightTotal)
+  const gapCents = overspent ? Math.max(0, rightTotal - leftTotal) : 0
+
+  const NODE_W = 8
+  const VBW = 190
+  const LABEL_MIN_GAP = 32 // px between adjacent right-label centers, enough for two lines of 11px text
+  const topPad = 8
+  const bottomPad = 8
+  const VBH = Math.max(120, (rightDefs.length - 1) * LABEL_MIN_GAP + topPad + bottomPad + 24)
+  const plotH = VBH - topPad - bottomPad
+  const scale = plotH / scaleTotal
+
+  const leftH = leftTotal * scale
+  const leftY0 = topPad + (plotH - leftH) / 2
+  const leftX0 = 0
+  const rightX0 = VBW - NODE_W
+
+  let cursor = topPad
+  const rightNodes = rightDefs.map((d) => {
+    const h = Math.max(d.amount * scale, 1)
+    const node = { ...d, y0: cursor, h }
+    cursor += h
+    return node
+  })
+  const labelCenters = resolveLabelCenters(
+    rightNodes.map((n) => n.y0 + n.h / 2),
+    LABEL_MIN_GAP, topPad + 12, VBH - bottomPad - 12
+  )
+
+  // Proportional fan from the single Income source: each ribbon's source
+  // slice is that node's cumulative-fraction-of-rightTotal remapped onto
+  // Income's own (possibly shorter, when overspent) height. When the period
+  // isn't overspent, rightTotal === leftTotal and this is an exact 1:1,
+  // edge-to-edge match — no compression.
+  let cum = 0
+  const ribbons = rightNodes.map((node) => {
+    const f0 = cum / rightTotal
+    const f1 = (cum + node.h) / rightTotal
+    cum += node.h
+    const midX = (leftX0 + NODE_W + rightX0) / 2
+    const y0a = leftY0 + f0 * leftH
+    const y1a = leftY0 + f1 * leftH
+    const y0b = node.y0
+    const y1b = node.y0 + node.h
+    const x0 = leftX0 + NODE_W
+    const x1 = rightX0
+    const d = `M ${x0} ${y0a.toFixed(1)} C ${midX} ${y0a.toFixed(1)} ${midX} ${y0b.toFixed(1)} ${x1} ${y0b.toFixed(1)} `
+      + `L ${x1} ${y1b.toFixed(1)} C ${midX} ${y1b.toFixed(1)} ${midX} ${y1a.toFixed(1)} ${x0} ${y1a.toFixed(1)} Z`
+    return { key: node.key, color: node.color, path: d }
+  })
+
+  // Fixed pixel budget for all three columns — deliberately NOT flex-1 on
+  // the svg. Absolutely-positioned label children ignore a flex parent's
+  // computed width, so a flexible middle column makes the outer columns'
+  // real available width unpredictable (labels overflowed past the card
+  // edge with flex-1 here). Every column width below is explicit, so the
+  // total is provably within the card's ~318px content box at 390px.
+  const LEFT_COL = 76
+  const SVG_COL = 108
+  const RIGHT_COL = 112
+  const COL_GAP = 6
+
+  return (
+    <Card className="p-5 mb-3">
+      <SectionLabel>Money Flow</SectionLabel>
+      <div className="flex items-stretch" style={{ gap: COL_GAP }}>
+        <div className="relative shrink-0" style={{ width: LEFT_COL, height: VBH }}>
+          {/* Absolute children ignore the flex parent's width, so each label
+              gets its own explicit width — otherwise long amounts/names can
+              silently overflow past the card edge instead of wrapping. */}
+          <div className="absolute right-0 text-right -translate-y-1/2" style={{ top: `${((leftY0 + leftH / 2) / VBH) * 100}%`, width: LEFT_COL }}>
+            <p className="text-xs font-semibold text-ink leading-tight">Income</p>
+            <p className="text-xs text-ink-2 tabular leading-tight">{c(leftTotal)}</p>
+          </div>
+        </div>
+        <svg width={SVG_COL} height={VBH} viewBox={`0 0 ${VBW} ${VBH}`} preserveAspectRatio="none" className="shrink-0 block overflow-visible">
+          <rect x={leftX0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={INK_2} />
+          {ribbons.map((r) => <path key={r.key} d={r.path} fill={r.color} opacity={0.85} />)}
+          {rightNodes.map((node) => (
+            <rect key={node.key} x={rightX0} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
+          ))}
+          {gapCents > 0 && (
+            <rect
+              x={rightX0 - 2.5} y={topPad + plotH - gapCents * scale} width={NODE_W + 5} height={gapCents * scale}
+              rx={2} fill="none" stroke={CRITICAL} strokeWidth={1.5} strokeDasharray="2 2"
+            />
+          )}
+        </svg>
+        <div className="relative shrink-0" style={{ width: RIGHT_COL, height: VBH }}>
+          {rightNodes.map((node, i) => (
+            <div key={node.key} className="absolute left-1 -translate-y-1/2" style={{ top: `${(labelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
+              <p className="text-xs font-semibold text-ink leading-tight flex items-start gap-1">
+                <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-0.5" style={{ background: node.color }} />
+                <span>{node.label}</span>
+              </p>
+              <p className="text-xs text-ink-2 tabular leading-tight pl-2.5">{c(node.amount)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      {gapCents > 0 && (
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-line">
+          <span className="w-2.5 h-2.5 rounded-full shrink-0 border-2" style={{ borderColor: CRITICAL }} />
+          <p className="text-xs font-semibold text-critical">Overspent +{c(gapCents)} — beyond what income covered this period</p>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 // ── Kept vs Spent — stacked bar (bills + funds + transfers + kept) ───────────
 // Form: one stacked bar per month, bottom→top: Bills (BILLS slate), Funds
 // (FUNDS_HUE terracotta), Transfers out (TRANSFER_OUT stone), Kept (SAVING
@@ -180,7 +347,7 @@ function KeptVsSpentChart({ months }) {
   const VBH = 176
   const leftPad = 42
   const rightPad = 6
-  const topPad = 10
+  const topPad = 20 // extra headroom above the tallest bar / income tick
   const bottomPad = 22
   const plotW = VBW - leftPad - rightPad
   const plotH = VBH - topPad - bottomPad
@@ -199,7 +366,7 @@ function KeptVsSpentChart({ months }) {
   const yScale = (v) => topPad + plotH - (v / scaleMax) * plotH
   const baselineY = yScale(0)
   const bandW = plotW / Math.max(n, 1)
-  const barW = Math.min(bandW * 0.68, 64) // capped so a 1-bar window stays a bar, not a slab
+  const barW = Math.min(bandW * 0.56, 56) // capped so a 1-bar window stays a bar, not a slab — more air between bars
 
   const last = months[months.length - 1]
   let summary
@@ -530,7 +697,14 @@ function SavingsRateCard({ months }) {
                 <text x={cx} y={baselineY - 4} textAnchor="middle" fontSize="14" fill={INK_3}>—</text>
               )}
               {pct != null && (
-                <text x={cx} y={Math.max(baselineY - barH - 6, topPad - 4)} textAnchor="middle" fontSize="10" fill={INK_2} className="tabular">
+                // Paper-colored halo (paint-order stroke) so the label always
+                // wins over the dashed average line crossing behind it,
+                // instead of the two visually merging.
+                <text
+                  x={cx} y={Math.max(baselineY - barH - 6, topPad - 4)}
+                  textAnchor="middle" fontSize="10" fontWeight="600" fill={INK_2} className="tabular"
+                  stroke={PAPER} strokeWidth="3" paintOrder="stroke" strokeLinejoin="round"
+                >
                   {Math.round(pct)}%
                 </text>
               )}
@@ -550,8 +724,10 @@ function SavingsRateCard({ months }) {
   )
 }
 
-// ── Reserve check — stat strip, the cash-flow-smoothing heart of the app.
-// Always pinned to the effective current month regardless of range. ──────────
+// ── Bills Coverage — stat strip, the cash-flow-smoothing heart of the app.
+// Renamed from "Reserve Check" (owner: "idk what the reserve check is") —
+// the copy now says outright what the Monthly Reserve is FOR. Always pinned
+// to the effective current month regardless of range. ─────────────────────
 
 function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
   if (remainingBillsCents <= 0) return null
@@ -577,18 +753,18 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
 
   return (
     <Card className="p-5 mb-3">
-      <SectionLabel action={tag && <Badge tone="neutral">{tag}</Badge>}>Reserve Check</SectionLabel>
+      <SectionLabel action={tag && <Badge tone="neutral">{tag}</Badge>}>Bills Coverage</SectionLabel>
       <div className="flex items-start gap-3">
         <div
           className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-          style={{ background: covered ? '#e4efea' : '#f8e7e4', color: covered ? SAVING : CRITICAL }}
+          style={{ background: covered ? SAVING_SOFT : '#f8e7e4', color: covered ? SAVING_TEXT : CRITICAL }}
         >
           <Icon size={14} />
         </div>
         <p className="text-sm text-ink-2 flex-1">
-          Reserve has <span className="font-semibold text-ink tabular">{c(mrBalanceCents)}</span> · {c(remainingBillsCents)} of bills left this month —{' '}
+          Set aside for bills: <span className="font-semibold text-ink tabular">{c(mrBalanceCents)}</span> · Bills left to pay: <span className="font-semibold text-ink tabular">{c(remainingBillsCents)}</span> —{' '}
           {covered
-            ? <span className="font-semibold" style={{ color: SAVING }}>covered</span>
+            ? <span className="font-semibold" style={{ color: SAVING_TEXT }}>covered ✓</span>
             : <span className="font-semibold text-critical">short by {c(shortfall)}</span>}
         </p>
       </div>
@@ -597,6 +773,9 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
           <div key={i} className="h-full" style={{ width: `${seg.pct}%`, background: seg.color }} />
         ))}
       </div>
+      <p className="text-[11px] text-ink-3 mt-2.5">
+        Your Monthly Reserve holds this month's bill money so paychecks never get raided mid-month.
+      </p>
     </Card>
   )
 }
@@ -609,6 +788,10 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
 // selected window ending at the effective current month, with a delta against
 // the same-length window immediately before it.
 
+// Bar fill uses the row's own identity color by default (matching its dot) —
+// like the donut, so the list reads as its own entities, not a rainbow of
+// blue bills. Transfers-out rows pass an explicit TRANSFER_OUT barColor
+// override (semantic — "not spending," never an entity identity).
 function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel }) {
   const pct = maxVal > 0 ? (amount / maxVal) * 100 : 0
   const showDelta = delta != null && delta !== 0
@@ -628,7 +811,59 @@ function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel 
           )}
         </span>
       </div>
-      <Bar pct={pct} color={barColor} height={7} animate={false} />
+      <Bar pct={pct} color={barColor ?? dotColor} height={7} animate={false} />
+    </div>
+  )
+}
+
+// Straight-butt-cap donut with gaps (the same treatment as the Expenses
+// category donut) — top 6 spending entities across the range + "Other",
+// identity colors matching the dots in the list below. Center shows total
+// spent (bills + funds, transfers-out excluded — not spending).
+function RangeDonut({ bills, spendFunds }) {
+  const entities = [
+    ...bills.map((b) => ({ colorId: b.line_item_id, name: b.name, amount: b.spent_cents })),
+    ...spendFunds.map((f) => ({ colorId: f.fund_id, name: f.name ?? 'Deleted fund', amount: f.spent_cents })),
+  ].filter((e) => e.amount > 0).sort((a, b) => b.amount - a.amount)
+
+  if (entities.length === 0) return null
+
+  const top = entities.slice(0, 6)
+  const otherAmount = entities.slice(6).reduce((s, e) => s + e.amount, 0)
+  const segments = top.map((e) => ({ label: e.name, amount: e.amount, color: colorForId(e.colorId) }))
+  if (otherAmount > 0) segments.push({ label: 'Other', amount: otherAmount, color: INK_3 })
+  const total = segments.reduce((s, seg) => s + seg.amount, 0)
+
+  const SIZE = 132
+  const cx = SIZE / 2, cy = SIZE / 2
+  const R = 50, SW = 16
+  const circ = 2 * Math.PI * R
+  const GAP = 3
+  let cumFrac = 0
+
+  return (
+    <div className="flex justify-center mb-4 pb-4 border-b border-line">
+      <div className="relative" style={{ width: SIZE, height: SIZE }}>
+        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+          <circle cx={cx} cy={cy} r={R} fill="none" stroke={LINE} strokeWidth={SW} />
+          {segments.map((seg, i) => {
+            const frac = seg.amount / total
+            const dash = Math.max(0, frac * circ - GAP)
+            const rot = -90 + cumFrac * 360
+            cumFrac += frac
+            return (
+              <circle key={i} cx={cx} cy={cy} r={R} fill="none"
+                stroke={seg.color} strokeWidth={SW} strokeLinecap="butt"
+                strokeDasharray={`${dash} ${circ}`}
+                transform={`rotate(${rot} ${cx} ${cy})`} />
+            )
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-lg font-bold text-ink tabular">{c(total)}</span>
+          <span className="text-[10px] text-ink-3">spent</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -674,6 +909,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
 
       {!error && !loading && !empty && (
         <>
+          <RangeDonut bills={bills} spendFunds={spendFunds} />
           {bills.length > 0 && (
             <div className="mb-4">
               <p className="text-xs font-semibold text-ink-3 mb-2">Bills</p>
@@ -682,7 +918,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
                 const delta = prev != null ? b.spent_cents - prev : null
                 return (
                   <SpendRow key={`bill-${b.line_item_id}`} name={b.name} amount={b.spent_cents}
-                    dotColor={colorForId(b.line_item_id)} barColor={BILLS} maxVal={maxSpend}
+                    dotColor={colorForId(b.line_item_id)} maxVal={maxSpend}
                     delta={delta} deltaLabel={deltaLabel} />
                 )
               })}
@@ -696,7 +932,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
                 const delta = prev != null ? f.spent_cents - prev : null
                 return (
                   <SpendRow key={`fund-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents}
-                    dotColor={colorForId(f.fund_id)} barColor={FUNDS_HUE} maxVal={maxSpend}
+                    dotColor={colorForId(f.fund_id)} maxVal={maxSpend}
                     delta={delta} deltaLabel={deltaLabel} />
                 )
               })}
@@ -862,6 +1098,8 @@ export default function OverviewPage() {
       ) : (
         <>
           <PeriodReviewCard months={monthly} rangeMonths={range} />
+
+          <MoneyFlowCard months={monthly} />
 
           <KeptVsSpentChart months={monthly} />
 

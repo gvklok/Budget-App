@@ -872,8 +872,10 @@ export default function ExpensesPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-ink tracking-tight">Expenses</h1>
         {!locked && (
+          // Ink-black — the one sanctioned black pill, reserved for buttons
+          // that LOG money, deliberately distinct from the accent language.
           <button onClick={() => setLogTx({})}
-            className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
+            className="flex items-center gap-1.5 bg-ink hover:bg-ink/90 text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
             <Receipt size={15} />Log
           </button>
         )}
