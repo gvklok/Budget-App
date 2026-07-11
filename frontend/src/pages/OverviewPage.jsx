@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, ChevronLeft, ChevronRight, Check, AlertTriangle } from 'lucide-react'
+import { LayoutDashboard, Check, AlertTriangle } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
   colorForId, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, CRITICAL,
   INK, INK_2, INK_3, LINE, areaGradientId,
 } from '../theme'
-import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, IconButton, Bar } from '../components/ui'
+import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
 
 // ── shared money/date helpers ─────────────────────────────────────────────────
 
@@ -32,6 +32,20 @@ function shiftYM(year, month, delta) {
   let y = year + Math.floor(m / 12)
   m = ((m % 12) + 12) % 12
   return { year: y, month: m + 1 }
+}
+
+// "3m" / "1y" — the same short form the range Segmented uses, for delta
+// labels and footnotes so a multi-month window never has to spell itself out.
+function rangeShortLabel(months) {
+  return months === 12 ? '1y' : `${months}m`
+}
+
+// "July 2026" for a single month; "Feb – Jul 2026" for a range — year appears
+// once unless the window crosses a year boundary.
+function rangeHeaderLabel(startY, startM, endY, endM) {
+  if (startY === endY && startM === endM) return monthFullLabel(endY, endM)
+  const startPart = startY === endY ? monthShortLabel(startY, startM) : `${monthShortLabel(startY, startM)} ${startY}`
+  return `${startPart} – ${monthShortLabel(endY, endM)} ${endY}`
 }
 
 // Standard "nice number" tick algorithm — clean rounded steps rather than raw
@@ -77,12 +91,88 @@ function topRoundedRectPath(x, y, w, h, r) {
   return `M ${x} ${y + rr} Q ${x} ${y} ${x + rr} ${y} H ${x + w - rr} Q ${x + w} ${y} ${x + w} ${y + rr} V ${y + h} H ${x} Z`
 }
 
+// ── Period review — headline summary of the selected range ────────────────────
+// Months with no activity at all (no income, no spending) are excluded from
+// the averages and the rate so a long 1y window isn't diluted by history that
+// predates the seed/real data.
+
+function Stat({ label, value, dotColor, tone }) {
+  const valueClass = tone === 'critical' ? 'text-critical' : tone === 'muted' ? 'text-ink-3 font-normal' : 'text-ink'
+  return (
+    <div>
+      <p className="text-[11px] text-ink-3 mb-0.5 flex items-center gap-1.5">
+        {dotColor && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />}
+        {label}
+      </p>
+      <p className={`text-sm font-semibold tabular ${valueClass}`}>{value}</p>
+    </div>
+  )
+}
+
+function PeriodReviewCard({ months, rangeMonths }) {
+  const active = months.filter((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
+  const n = active.length
+  const totalIncome = active.reduce((s, m) => s + m.income_cents, 0)
+  const totalKept = active.reduce((s, m) => s + m.kept_cents, 0)
+  const totalBills = active.reduce((s, m) => s + m.bills_spent_cents, 0)
+  const totalFunds = active.reduce((s, m) => s + m.funds_spent_cents, 0)
+  const totalTransfers = active.reduce((s, m) => s + m.transfers_out_cents, 0)
+  const overspentCount = active.filter((m) => m.kept_cents < 0).length
+  const avgSpent = n > 0 ? (totalBills + totalFunds) / n : 0
+  const avgKept = n > 0 ? totalKept / n : 0
+  const rate = totalIncome > 0 ? (totalKept / totalIncome) * 100 : null
+  const singleMonth = rangeMonths === 1
+
+  return (
+    <Card className="p-5 mb-3">
+      <SectionLabel>Period Review</SectionLabel>
+      {n === 0 ? (
+        <EmptyState title="No activity in this period yet." />
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <p className="text-base font-semibold text-ink leading-snug">
+              You kept <span className="tabular">{c(totalKept)}</span> of <span className="tabular">{c(totalIncome)}</span> income
+            </p>
+            {rate != null && (
+              <span className="text-2xl font-bold tabular shrink-0" style={{ color: rate < 0 ? CRITICAL : SAVING }}>
+                {Math.round(rate)}%
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-line">
+            <Stat label="Spent on bills" value={c(totalBills)} dotColor={BILLS} />
+            <Stat label="Spent from funds" value={c(totalFunds)} dotColor={FUNDS_HUE} />
+            <Stat label="Transfers out" value={c(totalTransfers)} dotColor={TRANSFER_OUT} />
+            {!singleMonth && <Stat label="Avg spent / month" value={c(avgSpent)} />}
+            {!singleMonth && <Stat label="Avg kept / month" value={c(avgKept)} />}
+            <Stat
+              label="Overspent months"
+              value={overspentCount > 0 ? String(overspentCount) : '0 — nice'}
+              tone={overspentCount > 0 ? 'critical' : 'muted'}
+            />
+          </div>
+
+          {!singleMonth && (
+            <p className="text-xs text-ink-3 mt-3">
+              {n} active month{n === 1 ? '' : 's'}{n < rangeMonths ? ` of ${rangeMonths}` : ''}
+            </p>
+          )}
+        </>
+      )}
+    </Card>
+  )
+}
+
 // ── Kept vs Spent — stacked bar (bills + funds + transfers + kept) ───────────
 // Form: one stacked bar per month, bottom→top: Bills (BILLS slate), Funds
 // (FUNDS_HUE terracotta), Transfers out (TRANSFER_OUT stone), Kept (SAVING
 // green). A dashed income tick marks where income landed, so an overspent
 // month (kept clamped to 0) visibly rises above its own income line — the
-// honest way to show a leak without a second axis.
+// honest way to show a leak without a second axis. A single-month window (1m)
+// still renders one centered, sensibly-capped bar rather than stretching to
+// fill the whole plot width.
 
 function KeptVsSpentChart({ months }) {
   const n = months.length
@@ -109,7 +199,7 @@ function KeptVsSpentChart({ months }) {
   const yScale = (v) => topPad + plotH - (v / scaleMax) * plotH
   const baselineY = yScale(0)
   const bandW = plotW / Math.max(n, 1)
-  const barW = bandW * 0.68
+  const barW = Math.min(bandW * 0.68, 64) // capped so a 1-bar window stays a bar, not a slab
 
   const last = months[months.length - 1]
   let summary
@@ -189,7 +279,7 @@ function KeptVsSpentChart({ months }) {
             <div key={`${m.year}-${m.month}`} className="group relative flex-1 h-full">
               <div
                 className={`pointer-events-none absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap rounded-xl bg-ink text-white text-[11px] px-2.5 py-2 shadow-pop ${
-                  i === 0 ? 'left-0' : i === n - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2'
+                  n === 1 ? 'left-1/2 -translate-x-1/2' : i === 0 ? 'left-0' : i === n - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2'
                 }`}
               >
                 <p className="font-semibold mb-1">{monthFullLabel(m.year, m.month)}</p>
@@ -220,9 +310,11 @@ function KeptVsSpentChart({ months }) {
 // Dotted straight line = pace from $0 to the month's planned spending total.
 // Solid stepped line = cumulative actual spending by day (transfer-out
 // exclusions already applied by the caller). A dot marks today; a plain-
-// language verdict sits underneath.
+// language verdict sits underneath. Always pinned to the effective current
+// month regardless of the page's range selector — the small month tag in the
+// header makes that scope explicit.
 
-function SpendingPaceChart({ year, month, day, plannedTotal, txns }) {
+function SpendingPaceChart({ year, month, day, plannedTotal, txns, tag }) {
   const lastDay = new Date(year, month, 0).getDate()
   const today = Math.min(Math.max(day, 1), lastDay)
 
@@ -287,7 +379,7 @@ function SpendingPaceChart({ year, month, day, plannedTotal, txns }) {
 
   return (
     <Card className="p-5 mb-3">
-      <SectionLabel>Spending Pace</SectionLabel>
+      <SectionLabel action={tag && <Badge tone="neutral">{tag}</Badge>}>Spending Pace</SectionLabel>
       <div
         ref={containerRef}
         className="relative select-none"
@@ -361,9 +453,38 @@ function SpendingPaceChart({ year, month, day, plannedTotal, txns }) {
   )
 }
 
-// ── Savings rate — compact, one small bar per month ────────────────────────
+// ── Savings rate — compact. Multi-month: one small bar per month. 1m: a big
+// stat instead of a one-bar chart, since a single bar has nothing to compare
+// itself against. ───────────────────────────────────────────────────────────
+
+function SavingsRateSingleMonth({ month }) {
+  const hasIncome = month.income_cents > 0
+  const pct = hasIncome ? (month.kept_cents / month.income_cents) * 100 : null
+  return (
+    <Card className="p-5 mb-3">
+      <SectionLabel>Savings Rate</SectionLabel>
+      {pct != null ? (
+        <div className="flex items-baseline gap-3">
+          <span className="text-4xl font-bold tabular" style={{ color: pct < 0 ? CRITICAL : SAVING }}>
+            {Math.round(pct)}%
+          </span>
+          <p className="text-sm text-ink-2">
+            Kept <span className="font-semibold text-ink tabular">{c(month.kept_cents)}</span> of{' '}
+            <span className="tabular">{c(month.income_cents)}</span> income this month.
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-ink-3">No income recorded this month.</p>
+      )}
+    </Card>
+  )
+}
 
 function SavingsRateCard({ months }) {
+  if (months.length === 1) {
+    return <SavingsRateSingleMonth month={months[0]} />
+  }
+
   const last6 = months.slice(-6)
   const withIncome = last6.filter((m) => m.income_cents > 0)
   const avgPct = withIncome.length
@@ -429,9 +550,10 @@ function SavingsRateCard({ months }) {
   )
 }
 
-// ── Reserve check — stat strip, the cash-flow-smoothing heart of the app ──────
+// ── Reserve check — stat strip, the cash-flow-smoothing heart of the app.
+// Always pinned to the effective current month regardless of range. ──────────
 
-function ReserveCheckCard({ mrBalanceCents, remainingBillsCents }) {
+function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
   if (remainingBillsCents <= 0) return null
 
   const covered = mrBalanceCents >= remainingBillsCents
@@ -455,7 +577,7 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents }) {
 
   return (
     <Card className="p-5 mb-3">
-      <SectionLabel>Reserve Check</SectionLabel>
+      <SectionLabel action={tag && <Badge tone="neutral">{tag}</Badge>}>Reserve Check</SectionLabel>
       <div className="flex items-start gap-3">
         <div
           className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
@@ -479,10 +601,13 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents }) {
   )
 }
 
-// ── Where it went — spending breakdown for the effective current month ────────
+// ── Where it went — spending breakdown, aggregated over the selected range ────
 // Identity stays as a small colored dot (colorForId); the bar fill itself
 // switches to the semantic bucket color (Bills slate, Funds terracotta,
-// Transfers stone) so the list reads as one system, not a rainbow.
+// Transfers stone) so the list reads as one system, not a rainbow. The range
+// selector replaces per-month navigation — this card always shows the
+// selected window ending at the effective current month, with a delta against
+// the same-length window immediately before it.
 
 function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel }) {
   const pct = maxVal > 0 ? (amount / maxVal) * 100 : 0
@@ -508,7 +633,7 @@ function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel 
   )
 }
 
-function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown, loading, error, onRetry }) {
+function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading, error, onRetry }) {
   const bills = breakdown?.bills ?? []
   const allFunds = breakdown?.funds ?? []
   const spendFunds = allFunds.filter((f) => f.destination_type !== 'transfer_out')
@@ -517,8 +642,11 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown
   const maxSpend = Math.max(1, ...bills.map((b) => b.spent_cents), ...spendFunds.map((f) => f.spent_cents))
   const maxTransfer = Math.max(1, ...transferFunds.map((f) => f.spent_cents))
 
-  const prevYM = shiftYM(ym.year, ym.month, -1)
-  const prevLabel = monthShortLabel(prevYM.year, prevYM.month)
+  const startYM = shiftYM(endYM.year, endYM.month, -(rangeMonths - 1))
+  const headerLabel = rangeHeaderLabel(startYM.year, startYM.month, endYM.year, endYM.month)
+  const deltaLabel = rangeMonths === 1
+    ? monthShortLabel(shiftYM(endYM.year, endYM.month, -1).year, shiftYM(endYM.year, endYM.month, -1).month)
+    : `prior ${rangeShortLabel(rangeMonths)}`
   const prevBillByName = Object.fromEntries((prevBreakdown?.bills ?? []).map((b) => [b.name, b.spent_cents]))
   const prevFundById = Object.fromEntries((prevBreakdown?.funds ?? []).map((f) => [f.fund_id, f.spent_cents]))
 
@@ -528,13 +656,7 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown
     <Card className="p-5 mb-3">
       <div className="flex items-center justify-between mb-3">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Where It Went</p>
-        <div className="flex items-center gap-1">
-          <IconButton onClick={onPrev} aria-label="Previous month"><ChevronLeft size={16} /></IconButton>
-          <span className="text-xs font-semibold text-ink-2 w-28 text-center">{monthFullLabel(ym.year, ym.month)}</span>
-          <IconButton onClick={onNext} disabled={!canNext} className={!canNext ? 'opacity-30 pointer-events-none' : ''} aria-label="Next month">
-            <ChevronRight size={16} />
-          </IconButton>
-        </div>
+        <span className="text-xs font-semibold text-ink-2">{headerLabel}</span>
       </div>
 
       {error && (
@@ -547,7 +669,7 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown
       {!error && loading && <p className="text-sm text-ink-3 py-4 text-center">Loading…</p>}
 
       {!error && !loading && empty && (
-        <EmptyState title="No spending recorded for this month." />
+        <EmptyState title="No spending recorded for this period." />
       )}
 
       {!error && !loading && !empty && (
@@ -561,7 +683,7 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown
                 return (
                   <SpendRow key={`bill-${b.line_item_id}`} name={b.name} amount={b.spent_cents}
                     dotColor={colorForId(b.line_item_id)} barColor={BILLS} maxVal={maxSpend}
-                    delta={delta} deltaLabel={prevLabel} />
+                    delta={delta} deltaLabel={deltaLabel} />
                 )
               })}
             </div>
@@ -575,7 +697,7 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown
                 return (
                   <SpendRow key={`fund-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents}
                     dotColor={colorForId(f.fund_id)} barColor={FUNDS_HUE} maxVal={maxSpend}
-                    delta={delta} deltaLabel={prevLabel} />
+                    delta={delta} deltaLabel={deltaLabel} />
                 )
               })}
             </div>
@@ -596,27 +718,32 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown
 
 // ── Page ────────────────────────────────────────────────────────────────────────
 
+const RANGE_OPTIONS = [
+  { value: 1, label: '1m' },
+  { value: 3, label: '3m' },
+  { value: 6, label: '6m' },
+  { value: 12, label: '1y' },
+]
+
 export default function OverviewPage() {
   const [range, setRange] = useState(6)
   const [monthly, setMonthly] = useState(null)
   const [mainLoading, setMainLoading] = useState(true)
   const [mainError, setMainError] = useState('')
 
-  const [breakdownYM, setBreakdownYM] = useState(null)
   const [breakdown, setBreakdown] = useState(null)
   const [prevBreakdown, setPrevBreakdown] = useState(null)
   const [breakdownLoading, setBreakdownLoading] = useState(false)
   const [breakdownError, setBreakdownError] = useState('')
 
-  // Current-month data for Spending Pace + Reserve Check — independent of the
-  // 6mo/12mo range toggle and the "Where it went" navigable month, always the
-  // effective current month.
+  // Current-month data for Spending Pace + Reserve Check + the "Where it
+  // went" window's end month — pinned to the effective current month
+  // regardless of the range selector.
   const [current, setCurrent] = useState(null)
   const [currentLoading, setCurrentLoading] = useState(true)
   const [currentError, setCurrentError] = useState('')
 
   const [refreshKey, setRefreshKey] = useState(0)
-  const breakdownInitRef = useRef(false)
 
   const loadMain = useCallback(async () => {
     setMainLoading(true)
@@ -624,11 +751,6 @@ export default function OverviewPage() {
     try {
       const monthlyData = await apiGet(`/overview/monthly?months=${range}`)
       setMonthly(monthlyData.months)
-      if (!breakdownInitRef.current && monthlyData.months.length > 0) {
-        breakdownInitRef.current = true
-        const last = monthlyData.months[monthlyData.months.length - 1]
-        setBreakdownYM({ year: last.year, month: last.month })
-      }
     } catch (err) {
       setMainError(err.message || 'Failed to load')
     } finally {
@@ -637,27 +759,6 @@ export default function OverviewPage() {
   }, [range])
 
   useEffect(() => { loadMain() }, [loadMain, refreshKey])
-
-  const loadBreakdown = useCallback(async () => {
-    if (!breakdownYM) return
-    setBreakdownLoading(true)
-    setBreakdownError('')
-    try {
-      const prevYM = shiftYM(breakdownYM.year, breakdownYM.month, -1)
-      const [data, prevData] = await Promise.all([
-        apiGet(`/overview/spending-breakdown?year=${breakdownYM.year}&month=${breakdownYM.month}`),
-        apiGet(`/overview/spending-breakdown?year=${prevYM.year}&month=${prevYM.month}`),
-      ])
-      setBreakdown(data)
-      setPrevBreakdown(prevData)
-    } catch (err) {
-      setBreakdownError(err.message || 'Failed to load')
-    } finally {
-      setBreakdownLoading(false)
-    }
-  }, [breakdownYM])
-
-  useEffect(() => { loadBreakdown() }, [loadBreakdown, refreshKey])
 
   const loadCurrent = useCallback(async () => {
     setCurrentLoading(true)
@@ -691,6 +792,32 @@ export default function OverviewPage() {
 
   useEffect(() => { loadCurrent() }, [loadCurrent, refreshKey])
 
+  // "Where it went" always ends at the effective current month (from
+  // `current`) and aggregates the selected range; it waits for `current` to
+  // resolve so it never has to fetch the effective date a second time.
+  const loadBreakdown = useCallback(async () => {
+    if (!current) return
+    setBreakdownLoading(true)
+    setBreakdownError('')
+    try {
+      const { year, month } = current
+      const startYM = shiftYM(year, month, -(range - 1))
+      const prevEnd = shiftYM(startYM.year, startYM.month, -1)
+      const [data, prevData] = await Promise.all([
+        apiGet(`/overview/spending-breakdown?year=${year}&month=${month}&months=${range}`),
+        apiGet(`/overview/spending-breakdown?year=${prevEnd.year}&month=${prevEnd.month}&months=${range}`),
+      ])
+      setBreakdown(data)
+      setPrevBreakdown(prevData)
+    } catch (err) {
+      setBreakdownError(err.message || 'Failed to load')
+    } finally {
+      setBreakdownLoading(false)
+    }
+  }, [current, range])
+
+  useEffect(() => { loadBreakdown() }, [loadBreakdown, refreshKey])
+
   useEffect(() => {
     function onRefresh() { setRefreshKey((k) => k + 1) }
     window.addEventListener('dev-refresh', onRefresh)
@@ -713,18 +840,13 @@ export default function OverviewPage() {
   }
 
   const hasActivity = monthly.some((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
-  const currentYM = monthly.length > 0 ? { year: monthly[monthly.length - 1].year, month: monthly[monthly.length - 1].month } : null
-  const canNext = !!(breakdownYM && currentYM && (breakdownYM.year < currentYM.year || (breakdownYM.year === currentYM.year && breakdownYM.month < currentYM.month)))
+  const currentTag = current ? monthShortLabel(current.year, current.month) : null
 
   return (
     <div className="px-4 pt-6 pb-6">
       <div className="flex items-center justify-between mb-5 gap-3">
         <h1 className="text-3xl font-bold text-ink tracking-tight">Overview</h1>
-        <Segmented
-          value={range}
-          onChange={setRange}
-          options={[{ value: 6, label: '6 mo' }, { value: 12, label: '12 mo' }]}
-        />
+        <Segmented value={range} onChange={setRange} options={RANGE_OPTIONS} />
       </div>
 
       {!hasActivity && (breakdown?.bills?.length ?? 0) === 0 && (breakdown?.funds?.length ?? 0) === 0 ? (
@@ -739,19 +861,21 @@ export default function OverviewPage() {
         </Card>
       ) : (
         <>
+          <PeriodReviewCard months={monthly} rangeMonths={range} />
+
           <KeptVsSpentChart months={monthly} />
 
           {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
             <SpendingPaceChart
               year={current.year} month={current.month} day={current.day}
-              plannedTotal={current.plannedTotal} txns={current.paceTxns}
+              plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
             />
           )}
 
           <SavingsRateCard months={monthly} />
 
           {!currentLoading && !currentError && current && (
-            <ReserveCheckCard mrBalanceCents={current.mrBalanceCents} remainingBillsCents={current.remainingBillsCents} />
+            <ReserveCheckCard mrBalanceCents={current.mrBalanceCents} remainingBillsCents={current.remainingBillsCents} tag={currentTag} />
           )}
 
           {currentError && (
@@ -761,12 +885,10 @@ export default function OverviewPage() {
             </Card>
           )}
 
-          {breakdownYM && (
+          {current && (
             <WhereItWentCard
-              ym={breakdownYM}
-              onPrev={() => setBreakdownYM((ym) => shiftYM(ym.year, ym.month, -1))}
-              onNext={() => canNext && setBreakdownYM((ym) => shiftYM(ym.year, ym.month, 1))}
-              canNext={canNext}
+              rangeMonths={range}
+              endYM={{ year: current.year, month: current.month }}
               breakdown={breakdown}
               prevBreakdown={prevBreakdown}
               loading={breakdownLoading}
