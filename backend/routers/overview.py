@@ -41,7 +41,7 @@ def _fund_id_from_bucket(bucket: Optional[str]) -> Optional[int]:
 def monthly(months: int = 6, db: Session = Depends(get_db)):
     month_keys = _last_n_months(db, months)
     totals = {
-        f"{y:04d}-{m:02d}": {"income_cents": 0, "spent_cents": 0, "transfers_out_cents": 0}
+        f"{y:04d}-{m:02d}": {"income_cents": 0, "bills_spent_cents": 0, "funds_spent_cents": 0, "transfers_out_cents": 0}
         for y, m in month_keys
     }
 
@@ -70,19 +70,25 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
         # "savings" always count as spending.
         if fund_id is not None and fund_id in transfer_out_ids:
             month_totals["transfers_out_cents"] += sign * e.amount_cents
+        elif fund_id is not None:
+            month_totals["funds_spent_cents"] += sign * e.amount_cents
         else:
-            month_totals["spent_cents"] += sign * e.amount_cents
+            # "mr" (bills) — and rare direct savings withdrawals — count with bills.
+            month_totals["bills_spent_cents"] += sign * e.amount_cents
 
     result = []
     for year, month in month_keys:
         t = totals[f"{year:04d}-{month:02d}"]
+        spent = t["bills_spent_cents"] + t["funds_spent_cents"]
         result.append({
             "year": year,
             "month": month,
             "income_cents": t["income_cents"],
-            "spent_cents": t["spent_cents"],
+            "spent_cents": spent,
+            "bills_spent_cents": t["bills_spent_cents"],
+            "funds_spent_cents": t["funds_spent_cents"],
             "transfers_out_cents": t["transfers_out_cents"],
-            "kept_cents": t["income_cents"] - t["spent_cents"] - t["transfers_out_cents"],
+            "kept_cents": t["income_cents"] - spent - t["transfers_out_cents"],
         })
     return {"months": result}
 
