@@ -116,6 +116,8 @@ class TransactionOut(BaseModel):
     merchant: Optional[str] = None
     line_item_id: Optional[int] = None
     fund_id: Optional[int] = None
+    line_item_name: Optional[str] = None
+    fund_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -125,6 +127,34 @@ class TransactionCreate(BaseModel):
     merchant: Optional[str] = None
     line_item_id: Optional[int] = None
     fund_id: Optional[int] = None  # set this OR line_item_id, not both
+
+
+class LedgerEntryOut(BaseModel):
+    id: int
+    date: str
+    kind: str
+    from_bucket: Optional[str] = None
+    to_bucket: Optional[str] = None
+    amount_cents: int
+    label: Optional[str] = None
+    transaction_id: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+
+class ChecklistItemOut(BaseModel):
+    id: int
+    name: str
+    is_checked: bool
+    model_config = {"from_attributes": True}
+
+
+class ChecklistItemCreate(BaseModel):
+    name: str
+
+
+class ChecklistItemUpdate(BaseModel):
+    name: Optional[str] = None
+    is_checked: Optional[bool] = None
 
 
 class TransferBody(BaseModel):

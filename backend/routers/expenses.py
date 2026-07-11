@@ -44,8 +44,8 @@ def reallocate(body: ReallocateBody, db: Session = Depends(get_db)):
         raise HTTPException(404, "Line item not found")
     if increased.type != "bill" or decreased.type != "bill":
         raise HTTPException(400, "Reallocation only applies to Bills")
-    if decreased.amount_cents - body.amount_cents <= 0:
-        raise HTTPException(400, f"{decreased.name} would go to zero or below — pick a different Bill or a smaller amount")
+    if decreased.amount_cents - body.amount_cents < 0:
+        raise HTTPException(400, f"{decreased.name} would go below zero — pick a different Bill or a smaller amount")
     decreased.amount_cents -= body.amount_cents
     plans_lib.sync_mr_target(db)
     db.commit()
@@ -123,7 +123,10 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
     _validate_type_and_fund(body.type, body.fund_id, body.new_fund_name, db)
 
     year, month = (body.year, body.month) if body.year and body.month else plans_lib.current_year_month(db)
-    plan = plans_lib.get_or_create_plan(db, year, month)
+    # U4: first touch of an unplanned month initializes it from the most recent
+    # prior plan — same as navigating to it. Creating an item must not sidestep
+    # the copy and leave a sparse plan behind.
+    plan = plans_lib.get_or_autoload_plan(db, year, month)
 
     resolved_fund_id = body.fund_id
 

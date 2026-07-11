@@ -106,12 +106,24 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
     for tx in month_txns:
         if tx.line_item_id is not None and tx.line_item_id in bill_line_item_ids:
             actual_bills_spent += tx.amount_cents
-        elif tx.fund_id is not None:
+            continue
+        # Resolve the Fund this transaction hits: either a direct fund spend, or
+        # a fund line-item transaction (bug 5: the latter was previously counted
+        # in neither spending nor transfers-out — resolve its linked fund and
+        # treat it exactly like a direct fund_id transaction).
+        fund = None
+        if tx.fund_id is not None:
             fund = fund_by_id.get(tx.fund_id)
-            if fund is not None and fund.destination_type == "transfer_out":
-                transfers_out_cents += tx.amount_cents
-            elif fund is not None:
-                actual_fund_spent += tx.amount_cents
+        elif tx.line_item_id is not None:
+            line_item = db.query(models.Expense).filter(models.Expense.id == tx.line_item_id).first()
+            if line_item is not None and line_item.type == "fund" and line_item.fund_id:
+                fund = fund_by_id.get(line_item.fund_id)
+        if fund is None:
+            continue
+        if fund.destination_type == "transfer_out":
+            transfers_out_cents += tx.amount_cents
+        else:
+            actual_fund_spent += tx.amount_cents
 
     return {
         "year": year,

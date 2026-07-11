@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 import models
+import ledger
+import plans as plans_lib
 from database import get_db
 from clock import get_current_date
 
@@ -67,6 +69,10 @@ def set_real_cash(body: BalanceBody, db: Session = Depends(get_db)):
     delta = body.balance_cents - buckets
     rc.balance_cents = body.balance_cents
     savings.balance_cents += delta
+    if delta > 0:
+        ledger.record(db, kind="adjustment", amount_cents=delta, from_bucket="external", to_bucket="savings", label="Set Real Cash")
+    elif delta < 0:
+        ledger.record(db, kind="adjustment", amount_cents=-delta, from_bucket="savings", to_bucket="external", label="Set Real Cash")
     db.commit()
     return {"ok": True}
 
@@ -78,6 +84,10 @@ def set_savings(body: BalanceBody, db: Session = Depends(get_db)):
     delta = body.balance_cents - savings.balance_cents
     savings.balance_cents = body.balance_cents
     rc.balance_cents += delta
+    if delta > 0:
+        ledger.record(db, kind="adjustment", amount_cents=delta, from_bucket="external", to_bucket="savings", label="Set Savings")
+    elif delta < 0:
+        ledger.record(db, kind="adjustment", amount_cents=-delta, from_bucket="savings", to_bucket="external", label="Set Savings")
     db.commit()
     return {"ok": True}
 
@@ -92,6 +102,10 @@ def set_mr_balance(body: BalanceBody, db: Session = Depends(get_db)):
         raise HTTPException(400, f"Not enough in Savings (would go ${new_savings / 100:.2f})")
     mr.balance_cents = body.balance_cents
     savings.balance_cents = new_savings
+    if delta > 0:
+        ledger.record(db, kind="adjustment", amount_cents=delta, from_bucket="savings", to_bucket="mr", label="Set Monthly Reserve")
+    elif delta < 0:
+        ledger.record(db, kind="adjustment", amount_cents=-delta, from_bucket="mr", to_bucket="savings", label="Set Monthly Reserve")
     db.commit()
     return {"ok": True}
 
@@ -115,6 +129,10 @@ def set_fund_balance(body: FundBalanceBody, db: Session = Depends(get_db)):
         raise HTTPException(400, f"Not enough in Savings (would go ${new_savings / 100:.2f})")
     fund.balance_cents = body.balance_cents
     savings.balance_cents = new_savings
+    if delta > 0:
+        ledger.record(db, kind="adjustment", amount_cents=delta, from_bucket="savings", to_bucket=f"fund:{fund.id}", label="Set Fund balance")
+    elif delta < 0:
+        ledger.record(db, kind="adjustment", amount_cents=-delta, from_bucket=f"fund:{fund.id}", to_bucket="savings", label="Set Fund balance")
     db.commit()
     return {"ok": True}
 
@@ -142,6 +160,7 @@ def simulate_paycheck(db: Session = Depends(get_db)):
     rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
     savings.balance_cents += monthly_cents
     rc.balance_cents += monthly_cents
+    ledger.record(db, kind="paycheck", amount_cents=monthly_cents, from_bucket="external", to_bucket="savings", label="Paycheck")
     db.commit()
     return {"ok": True, "added_cents": monthly_cents}
 
@@ -172,6 +191,14 @@ def simulate_transaction(body: SimulateTransactionBody, db: Session = Depends(ge
         destination_type=body.destination_type or "external_spend",
     )
     db.add(txn)
+    ledger.record(
+        db,
+        kind="spend",
+        amount_cents=body.amount_cents,
+        from_bucket=body.bucket,
+        to_bucket="external",
+        label=body.label or "Simulated",
+    )
     db.commit()
     return {"ok": True}
 
@@ -207,6 +234,10 @@ def set_simulated_date(body: SetSimulatedDateBody, db: Session = Depends(get_db)
         raise HTTPException(400, "date must be YYYY-MM-DD")
     clock = db.query(models.AppClock).filter(models.AppClock.id == 1).first()
     clock.simulated_date = body.date
+    # Changing the effective date can change the effective month — the MR
+    # target (Σ current-month Bills) must follow immediately, not wait for the
+    # next line-item edit.
+    plans_lib.sync_mr_target(db)
     db.commit()
     return {"ok": True, "simulated_date": clock.simulated_date}
 
@@ -215,6 +246,7 @@ def set_simulated_date(body: SetSimulatedDateBody, db: Session = Depends(get_db)
 def clear_simulated_date(db: Session = Depends(get_db)):
     clock = db.query(models.AppClock).filter(models.AppClock.id == 1).first()
     clock.simulated_date = None
+    plans_lib.sync_mr_target(db)
     db.commit()
     return {"ok": True}
 
@@ -234,10 +266,15 @@ def current_date(db: Session = Depends(get_db)):
 def reset(db: Session = Depends(get_db)):
     db.query(models.Transaction).delete()
     db.query(models.SimulatedTransaction).delete()
+    db.query(models.LedgerEntry).delete()
     db.query(models.Expense).delete()
     db.query(models.ExpenseCategory).delete()
     db.query(models.IncomeSource).delete()
     db.query(models.Fund).delete()
+    db.query(models.ChecklistItem).delete()
+    # Bug 1: stale MonthlyPlan rows (with top_off/distribute_executed_at) survived
+    # reset and suppressed the new-month banner — clear them too.
+    db.query(models.MonthlyPlan).delete()
     db.query(models.RealCash).delete()
     db.query(models.Savings).delete()
     db.query(models.MonthlyReserve).delete()

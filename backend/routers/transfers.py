@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+import ledger
 from database import get_db
 
 router = APIRouter()
@@ -37,5 +38,12 @@ def transfer(body: schemas.TransferBody, db: Session = Depends(get_db)):
 
     source.balance_cents -= body.amount_cents
     dest.balance_cents += body.amount_cents
+    ledger.record(
+        db,
+        kind="transfer",
+        amount_cents=body.amount_cents,
+        from_bucket=body.from_bucket,
+        to_bucket=body.to_bucket,
+    )
     db.commit()
     return {"ok": True}

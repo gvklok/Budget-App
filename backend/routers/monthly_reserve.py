@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 import models
 import plans as plans_lib
+import ledger
 from database import get_db
 
 router = APIRouter()
@@ -26,15 +27,19 @@ def top_off(db: Session = Depends(get_db)):
     # never whichever month happens to be open on the Expenses page.
     target = plans_lib.current_month_bills_total_cents(db)
     if target == 0:
-        raise HTTPException(400, "No bills defined — nothing to top off")
+        # Bug 4: no bills defined is a handled no-op, not a failure — return 200
+        # and mark executed so the new-month banner stops nagging.
+        _mark_top_off_executed(db)
+        return {"ok": True, "moved_cents": 0, "status": "no_bills"}
 
     mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
 
     shortfall = target - mr.balance_cents
     if shortfall <= 0:
+        # Bug 4: already funded is a handled no-op, not a failure — return 200.
         _mark_top_off_executed(db)
-        raise HTTPException(400, "Monthly Reserve is already at or above target")
+        return {"ok": True, "moved_cents": 0, "status": "already_at_target"}
 
     if savings.balance_cents < shortfall:
         raise HTTPException(
@@ -45,5 +50,6 @@ def top_off(db: Session = Depends(get_db)):
     mr.balance_cents += shortfall
     mr.target_cents = target  # keep stored value in sync
     savings.balance_cents -= shortfall
+    ledger.record(db, kind="top_off", amount_cents=shortfall, from_bucket="savings", to_bucket="mr", label="Top-off")
     _mark_top_off_executed(db)
-    return {"ok": True, "moved_cents": shortfall}
+    return {"ok": True, "moved_cents": shortfall, "status": "ok"}

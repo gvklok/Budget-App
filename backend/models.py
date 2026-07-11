@@ -90,6 +90,29 @@ class AppClock(Base):
     simulated_date = Column(String, nullable=True)  # YYYY-MM-DD or None
 
 
+class LedgerEntry(Base):
+    """Immutable, append-only record of every money movement (U-ledger).
+    'external' as a bucket means money entering/leaving the system (Real Cash
+    changes). Never updated or deleted except by dev reset."""
+    __tablename__ = "ledger_entries"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    date = Column(String, nullable=False)  # YYYY-MM-DD effective date of the event
+    kind = Column(String, nullable=False)
+    from_bucket = Column(String, nullable=True)  # "savings" | "mr" | "fund:{id}" | "external"
+    to_bucket = Column(String, nullable=True)    # same vocabulary
+    amount_cents = Column(Integer, nullable=False)  # always positive
+    label = Column(String, nullable=True)
+    transaction_id = Column(Integer, nullable=True)  # plain int ref, no FK — must survive tx deletion
+
+
+class ChecklistItem(Base):
+    __tablename__ = "checklist_items"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    is_checked = Column(Boolean, default=False, nullable=False)
+
+
 class SimulatedTransaction(Base):
     __tablename__ = "simulated_transactions"
     id = Column(Integer, primary_key=True)

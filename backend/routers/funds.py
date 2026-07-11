@@ -1,11 +1,13 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
 import schemas
 import plans as plans_lib
+import ledger
 from database import get_db
 
 router = APIRouter()
@@ -18,10 +20,57 @@ def list_funds(db: Session = Depends(get_db)):
     return db.query(models.Fund).order_by(models.Fund.id).all()
 
 
+@router.get("/{fund_id}/detail")
+def fund_detail(fund_id: int, db: Session = Depends(get_db)):
+    fund = db.query(models.Fund).filter(models.Fund.id == fund_id).first()
+    if not fund:
+        raise HTTPException(404, "Fund not found")
+
+    bucket = f"fund:{fund_id}"
+    activity = (
+        db.query(models.LedgerEntry)
+        .filter(or_(models.LedgerEntry.from_bucket == bucket, models.LedgerEntry.to_bucket == bucket))
+        .order_by(models.LedgerEntry.date.desc(), models.LedgerEntry.id.desc())
+        .all()
+    )
+
+    # Reconstruct balance_series by walking newest -> oldest from the CURRENT
+    # balance, computing the balance BEFORE each entry.
+    running = fund.balance_cents
+    points_desc = []  # [(date, balance_after_entry), ...] newest first
+    for entry in activity:
+        points_desc.append((entry.date, running))
+        if entry.to_bucket == bucket:
+            running -= entry.amount_cents
+        elif entry.from_bucket == bucket:
+            running += entry.amount_cents
+
+    points_asc = list(reversed(points_desc))
+
+    # Keep one point per date: the LAST event of that date (i.e. last in
+    # ascending order for that date).
+    balance_series = []
+    for date_str, balance_after in points_asc:
+        if balance_series and balance_series[-1]["date"] == date_str:
+            balance_series[-1]["balance_cents"] = balance_after
+        else:
+            balance_series.append({"date": date_str, "balance_cents": balance_after})
+
+    return {
+        "fund": schemas.FundOut.model_validate(fund),
+        "activity": [schemas.LedgerEntryOut.model_validate(e) for e in activity],
+        "balance_series": balance_series,
+    }
+
+
 @router.post("/", response_model=schemas.FundOut)
 def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
     if body.destination_type not in VALID_DESTINATION_TYPES:
         raise HTTPException(400, f"destination_type must be one of {sorted(VALID_DESTINATION_TYPES)}")
+    if body.balance_cents < 0:
+        # A fund can only go negative by spending (U9) — seeding one negative
+        # would silently break the invariant since no bucket covers the deficit.
+        raise HTTPException(400, "Initial balance cannot be negative")
     if body.balance_cents > 0:
         savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
         if savings.balance_cents < body.balance_cents:
@@ -36,6 +85,9 @@ def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
         allow_negative_balance=body.allow_negative_balance,
     )
     db.add(fund)
+    db.flush()
+    if body.balance_cents > 0:
+        ledger.record(db, kind="transfer", amount_cents=body.balance_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label="Initial balance")
     db.commit()
     db.refresh(fund)
     return fund
@@ -78,27 +130,40 @@ def _mark_distribute_executed(db: Session) -> None:
 def distribute(db: Session = Depends(get_db)):
     funds = db.query(models.Fund).filter(models.Fund.monthly_contribution_cents > 0).order_by(models.Fund.id).all()
     if not funds:
+        # Bug 4: no contributions is a handled no-op, not a failure — return 200.
         _mark_distribute_executed(db)
-        raise HTTPException(400, "No funds have a monthly contribution set")
+        savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+        return {
+            "funded": [],
+            "skipped": [],
+            "savings_remaining_cents": savings.balance_cents,
+            "status": "no_contributions",
+        }
 
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
     funded = []
     skipped = []
+    stopped = False  # once savings can't cover a fund, fund nothing further (U6)
 
     for fund in funds:
-        if savings.balance_cents >= fund.monthly_contribution_cents:
+        if not stopped and savings.balance_cents >= fund.monthly_contribution_cents:
             fund.balance_cents += fund.monthly_contribution_cents
             savings.balance_cents -= fund.monthly_contribution_cents
+            ledger.record(db, kind="distribute", amount_cents=fund.monthly_contribution_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label=fund.name)
             funded.append({"id": fund.id, "name": fund.name, "amount_cents": fund.monthly_contribution_cents})
         else:
+            # Bug 2: report ALL remaining unfunded funds, not just the first that
+            # savings couldn't cover — keep stop-at-first-shortfall funding, but
+            # don't break out of the reporting loop.
+            stopped = True
             skipped.append({"id": fund.id, "name": fund.name, "amount_cents": fund.monthly_contribution_cents})
-            break  # stop at first fund savings can't cover
 
     _mark_distribute_executed(db)
     return {
         "funded": funded,
         "skipped": skipped,
         "savings_remaining_cents": savings.balance_cents,
+        "status": "ok",
     }
 
 
@@ -109,6 +174,11 @@ def delete_fund(fund_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Fund not found")
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
     savings.balance_cents += fund.balance_cents
+    if fund.balance_cents > 0:
+        ledger.record(db, kind="transfer", amount_cents=fund.balance_cents, from_bucket=f"fund:{fund.id}", to_bucket="savings", label=f"Fund deleted: {fund.name}")
+    elif fund.balance_cents < 0:
+        # Savings absorbs the deficit — record the direction that actually moved.
+        ledger.record(db, kind="transfer", amount_cents=-fund.balance_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label=f"Fund deleted: {fund.name}")
     db.delete(fund)
     db.commit()
     return {"ok": True}

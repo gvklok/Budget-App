@@ -1,12 +1,36 @@
 from datetime import date as date_type
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+import ledger
 from database import get_db
 
 router = APIRouter()
+
+
+def _bucket_and_label(tx: models.Transaction, db: Session):
+    """Resolve which spendable bucket a transaction hits ('mr' for bill line
+    items, 'fund:{id}' for fund line items or direct fund spends) and the label
+    to record (merchant, falling back to the line item's name)."""
+    bucket = None
+    line_name = None
+    if tx.line_item_id is not None:
+        line_item = db.query(models.Expense).filter(models.Expense.id == tx.line_item_id).first()
+        if line_item is not None:
+            line_name = line_item.name
+            if line_item.type == "bill":
+                bucket = "mr"
+            elif line_item.type == "fund" and line_item.fund_id:
+                bucket = f"fund:{line_item.fund_id}"
+    elif tx.fund_id is not None:
+        bucket = f"fund:{tx.fund_id}"
+    label = tx.merchant or line_name
+    return bucket, label
 
 
 def _debit(tx: models.Transaction, db: Session) -> None:
@@ -69,9 +93,82 @@ def _credit(tx: models.Transaction, db: Session) -> None:
     rc.balance_cents += tx.amount_cents
 
 
+def _enrich(transactions: list[models.Transaction], db: Session) -> list[schemas.TransactionOut]:
+    """Attach line_item_name and fund_name (resolved through fund-type line
+    items too) using one query per lookup table, not per row."""
+    line_item_ids = {t.line_item_id for t in transactions if t.line_item_id is not None}
+    expenses_by_id = {}
+    if line_item_ids:
+        for e in db.query(models.Expense).filter(models.Expense.id.in_(line_item_ids)).all():
+            expenses_by_id[e.id] = e
+
+    fund_ids = {t.fund_id for t in transactions if t.fund_id is not None}
+    for e in expenses_by_id.values():
+        if e.type == "fund" and e.fund_id is not None:
+            fund_ids.add(e.fund_id)
+    funds_by_id = {}
+    if fund_ids:
+        for f in db.query(models.Fund).filter(models.Fund.id.in_(fund_ids)).all():
+            funds_by_id[f.id] = f
+
+    out = []
+    for t in transactions:
+        line_item = expenses_by_id.get(t.line_item_id) if t.line_item_id is not None else None
+        line_item_name = line_item.name if line_item else None
+
+        fund_name = None
+        if t.fund_id is not None:
+            fund = funds_by_id.get(t.fund_id)
+            fund_name = fund.name if fund else None
+        elif line_item is not None and line_item.type == "fund" and line_item.fund_id is not None:
+            fund = funds_by_id.get(line_item.fund_id)
+            fund_name = fund.name if fund else None
+
+        data = schemas.TransactionOut.model_validate(t).model_dump()
+        data["line_item_name"] = line_item_name
+        data["fund_name"] = fund_name
+        out.append(schemas.TransactionOut(**data))
+    return out
+
+
 @router.get("/", response_model=list[schemas.TransactionOut])
-def list_transactions(db: Session = Depends(get_db)):
-    return db.query(models.Transaction).order_by(models.Transaction.date.desc(), models.Transaction.id.desc()).all()
+def list_transactions(
+    fund_id: Optional[int] = None,
+    line_item_id: Optional[int] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    limit: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.Transaction)
+
+    if line_item_id is not None:
+        query = query.filter(models.Transaction.line_item_id == line_item_id)
+
+    if fund_id is not None:
+        fund_line_item_ids = [
+            e.id for e in db.query(models.Expense.id).filter(
+                models.Expense.type == "fund", models.Expense.fund_id == fund_id
+            ).all()
+        ]
+        query = query.filter(
+            or_(
+                models.Transaction.fund_id == fund_id,
+                models.Transaction.line_item_id.in_(fund_line_item_ids),
+            )
+        )
+
+    if year is not None and month is not None:
+        prefix = f"{year:04d}-{month:02d}"
+        query = query.filter(models.Transaction.date.like(f"{prefix}%"))
+
+    query = query.order_by(models.Transaction.date.desc(), models.Transaction.id.desc())
+
+    if limit is not None:
+        query = query.limit(limit)
+
+    transactions = query.all()
+    return _enrich(transactions, db)
 
 
 @router.post("/", response_model=schemas.TransactionOut)
@@ -104,6 +201,17 @@ def create_transaction(body: schemas.TransactionCreate, db: Session = Depends(ge
     db.add(tx)
     db.flush()
     _debit(tx, db)
+    bucket, label = _bucket_and_label(tx, db)
+    ledger.record(
+        db,
+        kind="spend",
+        amount_cents=tx.amount_cents,
+        from_bucket=bucket,
+        to_bucket="external",
+        label=label,
+        transaction_id=tx.id,
+        date=tx.date,
+    )
     db.commit()
     db.refresh(tx)
     return tx
@@ -115,6 +223,18 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     if not tx:
         raise HTTPException(404, "Transaction not found")
     _credit(tx, db)
+    # Append-only: never delete the original spend entry — record a reversal.
+    bucket, label = _bucket_and_label(tx, db)
+    ledger.record(
+        db,
+        kind="spend_reversal",
+        amount_cents=tx.amount_cents,
+        from_bucket="external",
+        to_bucket=bucket,
+        label=label,
+        transaction_id=tx.id,
+        date=tx.date,
+    )
     db.delete(tx)
     db.commit()
     return {"ok": True}

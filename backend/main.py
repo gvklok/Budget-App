@@ -9,7 +9,7 @@ import models
 import schemas
 import plans as plans_lib
 from database import engine, get_db, SessionLocal
-from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income, plans
+from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income, plans, ledger_read
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -33,6 +33,7 @@ app.include_router(dev.router, prefix="/dev", tags=["dev"])
 app.include_router(monthly_reserve.router, prefix="/monthly-reserve", tags=["monthly-reserve"])
 app.include_router(income.router, tags=["income"])
 app.include_router(plans.router, prefix="/plans", tags=["plans"])  # U3
+app.include_router(ledger_read.router, prefix="/ledger", tags=["ledger"])
 
 
 def _migrate() -> None:
