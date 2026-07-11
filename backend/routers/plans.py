@@ -14,7 +14,7 @@ def _plan_response(db: Session, year: int, month: int):
     if not plan:
         return {"year": year, "month": month, "planned": False, "plan_id": None, "line_items": []}
     items = db.query(models.Expense).filter(models.Expense.plan_id == plan.id).order_by(
-        models.Expense.category_id.nullslast(), models.Expense.id
+        models.Expense.category_id.nullslast(), models.Expense.sort_order, models.Expense.id
     ).all()
     return {
         "year": year,

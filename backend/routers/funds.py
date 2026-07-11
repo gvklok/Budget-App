@@ -1,7 +1,8 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_
+from pydantic import BaseModel
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 import models
@@ -17,7 +18,23 @@ VALID_DESTINATION_TYPES = {"external_spend", "transfer_out"}
 
 @router.get("/", response_model=list[schemas.FundOut])
 def list_funds(db: Session = Depends(get_db)):
-    return db.query(models.Fund).order_by(models.Fund.id).all()
+    return db.query(models.Fund).order_by(models.Fund.sort_order, models.Fund.id).all()
+
+
+class ReorderBody(BaseModel):
+    ordered_ids: list[int]
+
+
+@router.post("/reorder", response_model=list[schemas.FundOut])
+def reorder_funds(body: ReorderBody, db: Session = Depends(get_db)):
+    existing_ids = {f.id for f in db.query(models.Fund.id).all()}
+    if set(body.ordered_ids) != existing_ids:
+        raise HTTPException(400, "ordered_ids must contain exactly the full set of existing fund ids")
+    funds_by_id = {f.id: f for f in db.query(models.Fund).all()}
+    for index, fund_id in enumerate(body.ordered_ids):
+        funds_by_id[fund_id].sort_order = index
+    db.commit()
+    return db.query(models.Fund).order_by(models.Fund.sort_order, models.Fund.id).all()
 
 
 @router.get("/{fund_id}/detail")
@@ -77,12 +94,15 @@ def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
             raise HTTPException(400, "Insufficient savings to fund initial balance")
         savings.balance_cents -= body.balance_cents
 
+    max_sort_order = db.query(func.max(models.Fund.sort_order)).scalar() or 0
+
     fund = models.Fund(
         name=body.name,
         balance_cents=body.balance_cents,
         monthly_contribution_cents=body.monthly_contribution_cents,
         destination_type=body.destination_type,
         allow_negative_balance=body.allow_negative_balance,
+        sort_order=max_sort_order + 1,
     )
     db.add(fund)
     db.flush()
@@ -128,7 +148,14 @@ def _mark_distribute_executed(db: Session) -> None:
 
 @router.post("/distribute")
 def distribute(db: Session = Depends(get_db)):
-    funds = db.query(models.Fund).filter(models.Fund.monthly_contribution_cents > 0).order_by(models.Fund.id).all()
+    # Funding priority follows the user's chosen fund order (sort_order, id) —
+    # when savings can't cover everything, funds earlier in that order win.
+    funds = (
+        db.query(models.Fund)
+        .filter(models.Fund.monthly_contribution_cents > 0)
+        .order_by(models.Fund.sort_order, models.Fund.id)
+        .all()
+    )
     if not funds:
         # Bug 4: no contributions is a handled no-op, not a failure — return 200.
         _mark_distribute_executed(db)

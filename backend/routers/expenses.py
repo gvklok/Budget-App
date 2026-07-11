@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
@@ -111,7 +112,34 @@ def list_expenses(year: Optional[int] = None, month: Optional[int] = None, db: S
     return (
         db.query(models.Expense)
         .filter(models.Expense.plan_id == plan.id)
-        .order_by(models.Expense.category_id.nullslast(), models.Expense.id)
+        .order_by(models.Expense.category_id.nullslast(), models.Expense.sort_order, models.Expense.id)
+        .all()
+    )
+
+
+class ReorderItemsBody(BaseModel):
+    ordered_ids: list[int]
+
+
+@router.post("/reorder", response_model=list[schemas.ExpenseOut])
+def reorder_line_items(body: ReorderItemsBody, db: Session = Depends(get_db)):
+    if not body.ordered_ids:
+        raise HTTPException(400, "ordered_ids must not be empty")
+    items = db.query(models.Expense).filter(models.Expense.id.in_(body.ordered_ids)).all()
+    items_by_id = {item.id: item for item in items}
+    if set(items_by_id.keys()) != set(body.ordered_ids):
+        raise HTTPException(400, "ordered_ids must all reference existing line items")
+    plan_ids = {item.plan_id for item in items}
+    if len(plan_ids) > 1:
+        raise HTTPException(400, "ordered_ids must all belong to the same plan")
+    for index, item_id in enumerate(body.ordered_ids):
+        items_by_id[item_id].sort_order = index
+    db.commit()
+    plan_id = plan_ids.pop()
+    return (
+        db.query(models.Expense)
+        .filter(models.Expense.plan_id == plan_id)
+        .order_by(models.Expense.category_id.nullslast(), models.Expense.sort_order, models.Expense.id)
         .all()
     )
 
@@ -133,10 +161,12 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
     if body.type == "fund":
         if body.new_fund_name:
             # Inline fund creation
+            max_fund_sort_order = db.query(func.max(models.Fund.sort_order)).scalar() or 0
             new_fund = models.Fund(
                 name=body.new_fund_name.strip(),
                 balance_cents=0,
                 monthly_contribution_cents=body.amount_cents,
+                sort_order=max_fund_sort_order + 1,
             )
             db.add(new_fund)
             db.flush()
@@ -150,6 +180,13 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
         if not db.query(models.ExpenseCategory).filter(models.ExpenseCategory.id == body.category_id).first():
             raise HTTPException(404, "Category not found")
 
+    max_item_sort_order = (
+        db.query(func.max(models.Expense.sort_order))
+        .filter(models.Expense.plan_id == plan.id)
+        .scalar()
+        or 0
+    )
+
     expense = models.Expense(
         name=body.name,
         type=body.type,
@@ -158,6 +195,7 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
         category_id=body.category_id,
         fund_id=resolved_fund_id,
         plan_id=plan.id,
+        sort_order=max_item_sort_order + 1,
     )
     db.add(expense)
     db.flush()

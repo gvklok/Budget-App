@@ -44,6 +44,12 @@ def _migrate() -> None:
             conn.execute(text("ALTER TABLE funds ADD COLUMN destination_type TEXT NOT NULL DEFAULT 'external_spend'"))
         if "allow_negative_balance" not in fund_cols:
             conn.execute(text("ALTER TABLE funds ADD COLUMN allow_negative_balance BOOLEAN NOT NULL DEFAULT 0"))
+        if "sort_order" not in fund_cols:
+            conn.execute(text("ALTER TABLE funds ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"))
+            conn.commit()
+            # New column defaults every existing row to 0 — backfill so current
+            # (id) order is preserved instead of collapsing to a single tie.
+            conn.execute(text("UPDATE funds SET sort_order = id WHERE sort_order = 0"))
 
         # monthly_plans table additions (U6)
         plan_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(monthly_plans)"))}
@@ -67,6 +73,12 @@ def _migrate() -> None:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN type TEXT NOT NULL DEFAULT 'bill'"))
         if "fund_id" not in existing:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN fund_id INTEGER REFERENCES funds(id) ON DELETE SET NULL"))
+        if "sort_order" not in existing:
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"))
+            conn.commit()
+            # New column defaults every existing row to 0 — backfill so current
+            # (id) order is preserved instead of collapsing to a single tie.
+            conn.execute(text("UPDATE expenses SET sort_order = id WHERE sort_order = 0"))
         if "plan_id" not in existing:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN plan_id INTEGER REFERENCES monthly_plans(id) ON DELETE CASCADE"))
             conn.commit()
@@ -166,7 +178,7 @@ def get_state(db: Session = Depends(get_db)):
     real_cash = db.query(models.RealCash).first()
     savings = db.query(models.Savings).first()
     mr = db.query(models.MonthlyReserve).first()
-    all_funds = db.query(models.Fund).order_by(models.Fund.id).all()
+    all_funds = db.query(models.Fund).order_by(models.Fund.sort_order, models.Fund.id).all()
 
     fund_total = sum(f.balance_cents for f in all_funds)
     invariant_holds = (

@@ -28,6 +28,7 @@ class FundOut(BaseModel):
     monthly_contribution_cents: int
     destination_type: str
     allow_negative_balance: bool
+    sort_order: int
     model_config = {"from_attributes": True}
 
 
@@ -65,6 +66,7 @@ class ExpenseOut(BaseModel):
     category_id: Optional[int] = None
     fund_id: Optional[int] = None
     plan_id: Optional[int] = None
+    sort_order: int
     model_config = {"from_attributes": True}
 
 
