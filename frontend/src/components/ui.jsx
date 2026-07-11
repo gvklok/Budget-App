@@ -35,7 +35,7 @@ export function Ring({ pct, size = 72, stroke = 8, color, trackColor = LINE, chi
             <circle
               key={i}
               cx={size / 2} cy={size / 2} r={r} fill="none"
-              stroke={seg.color} strokeWidth={stroke} strokeLinecap="round"
+              stroke={seg.color} strokeWidth={stroke} strokeLinecap="butt"
               strokeDasharray={`${dash} ${circ}`}
               transform={`rotate(${rot} ${size / 2} ${size / 2})`}
               style={isProgress && animate ? { '--ring-circ': dash, strokeDashoffset: 0 } : undefined}
@@ -58,7 +58,7 @@ export function Bar({ pct, color, trackColor = LINE, height = 7, animate = true 
   return (
     <div className="rounded-full overflow-hidden w-full" style={{ height, background: trackColor }}>
       <div
-        className={`h-full rounded-full ${animate ? 'bar-animate' : ''}`}
+        className={`h-full ${animate ? 'bar-animate' : ''}`}
         style={{ width: `${drawn}%`, background: color }}
       />
     </div>
@@ -109,10 +109,11 @@ export function Badge({ tone = 'neutral', children, className = '' }) {
 
 // ── IconButton ────────────────────────────────────────────────────────────────
 
-export function IconButton({ children, className = '', ...rest }) {
+export function IconButton({ children, className = '', compact = false, ...rest }) {
+  const size = compact ? 'w-7 h-7' : 'w-8 h-8'
   return (
     <button
-      className={`w-8 h-8 flex items-center justify-center rounded-full text-ink-3 hover:bg-paper hover:text-ink-2 transition-colors ${className}`}
+      className={`${size} flex items-center justify-center rounded-full text-ink-3 hover:bg-paper hover:text-ink-2 transition-colors ${className}`}
       {...rest}
     >
       {children}
@@ -122,10 +123,12 @@ export function IconButton({ children, className = '', ...rest }) {
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
 
+// Solid accent — THE primary action on a screen. One button language across
+// the app: no ink-black pills.
 export function PrimaryButton({ children, className = '', ...rest }) {
   return (
     <button
-      className={`bg-ink text-white font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
+      className={`bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
       {...rest}
     >
       {children}
@@ -133,10 +136,12 @@ export function PrimaryButton({ children, className = '', ...rest }) {
   )
 }
 
+// Soft accent — a secondary action that still reads as "on brand" without
+// competing with PrimaryButton for attention.
 export function AccentButton({ children, className = '', ...rest }) {
   return (
     <button
-      className={`bg-accent text-white font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
+      className={`bg-accent-soft text-accent font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
       {...rest}
     >
       {children}

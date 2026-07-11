@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Pencil, Trash2, Plus, ArrowRightLeft, AlertTriangle } from 'lucide-react'
-import { fmt, toCents } from '../api'
-import { CHART_COLORS, SAVINGS_SWATCH, RESERVE_SWATCH } from '../theme'
+import { useNavigate } from 'react-router-dom'
+import { Pencil, Trash2, Plus, ArrowRightLeft, AlertTriangle, ChevronRight } from 'lucide-react'
+import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
+import { SAVINGS_SWATCH, RESERVE_SWATCH, colorForId } from '../theme'
 import Modal from '../components/Modal'
-import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented } from '../components/ui'
+import TransferModal from '../components/TransferModal'
+import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar } from '../components/ui'
 
 function c(cents) {
   return fmt(cents / 100)
@@ -173,115 +175,36 @@ function EditFundModal({ fund, onClose, onSave }) {
   )
 }
 
-function TransferModal({ state, onClose, onTransfer }) {
-  const buckets = [
-    { id: 'savings', label: 'Savings', balance_cents: state.savings.balance_cents },
-    { id: 'mr', label: 'Monthly Reserve', balance_cents: state.monthly_reserve.balance_cents },
-    ...state.funds.map((f) => ({ id: `fund:${f.id}`, label: f.name, balance_cents: f.balance_cents })),
-  ]
-
-  const [from, setFrom] = useState(buckets[0].id)
-  const [to, setTo] = useState(buckets[1]?.id ?? buckets[0].id)
-  const [amount, setAmount] = useState('')
-  const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const fromBucket = buckets.find((b) => b.id === from)
-  const toBuckets = buckets.filter((b) => b.id !== from)
-
-  function handleFromChange(val) {
-    setFrom(val)
-    if (to === val) setTo(buckets.find((b) => b.id !== val)?.id ?? '')
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!amount) return setError('Amount is required')
-    setSaving(true)
-    setError('')
-    try {
-      await onTransfer({ from_bucket: from, to_bucket: to, amount_cents: toCents(amount) })
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const selectClass = `${inputClass} appearance-none`
-
-  return (
-    <Modal title="Transfer" onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className={labelClass}>From</label>
-          <select value={from} onChange={(e) => handleFromChange(e.target.value)} className={selectClass}>
-            {buckets.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label} — {c(b.balance_cents)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelClass}>To</label>
-          <select value={to} onChange={(e) => setTo(e.target.value)} className={selectClass}>
-            {toBuckets.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label} — {c(b.balance_cents)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelClass}>Amount</label>
-          <p className="text-xs text-ink-3 mb-1.5">
-            Available: {fromBucket ? c(fromBucket.balance_cents) : '—'}
-          </p>
-          <input
-            autoFocus
-            type="number"
-            step="0.01"
-            min="0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0.00"
-            className={inputClass}
-          />
-        </div>
-        {error && <p className="text-sm text-critical">{error}</p>}
-        <PrimaryButton type="submit" disabled={saving} className="w-full">
-          {saving ? 'Transferring…' : 'Transfer'}
-        </PrimaryButton>
-      </form>
-    </Modal>
-  )
-}
-
+// Honesty over neatness: every bucket appears in the written legend — negative
+// in red, zero shown plainly — even though the stacked bar itself can only
+// render positive segments (a negative or zero width makes no visual sense).
 function RealCashBreakdown({ savings, monthly_reserve, funds, total }) {
-  if (total <= 0) return null
-
-  const segments = [
+  const all = [
     { label: 'Savings', amount: savings.balance_cents, color: SAVINGS_SWATCH },
     { label: 'Monthly Reserve', amount: monthly_reserve.balance_cents, color: RESERVE_SWATCH },
-    ...funds.map((f, i) => ({ label: f.name, amount: f.balance_cents, color: CHART_COLORS[i % CHART_COLORS.length] })),
-  ].filter((seg) => seg.amount > 0)
+    ...funds.map((f) => ({ label: f.name, amount: f.balance_cents, color: colorForId(f.id) })),
+  ]
+  if (all.length === 0) return null
+  const positive = all.filter((seg) => seg.amount > 0)
 
   return (
-    <div className="mt-4 pt-4 border-t border-white/10">
-      <div className="h-2 rounded-full bg-white/10 overflow-hidden flex gap-[2px]">
-        {segments.map((seg) => (
-          <div key={seg.label} className="h-full" style={{ width: `${(seg.amount / total) * 100}%`, background: seg.color }} />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3">
-        {segments.map((seg) => (
-          <span key={seg.label} className="flex items-center gap-1.5 text-xs text-white/70">
-            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: seg.color }} />
-            {seg.label}
-            <span className="text-white/40 tabular">{c(seg.amount)}</span>
-          </span>
+    <div className="mt-4 pt-4 border-t border-line">
+      {total > 0 && positive.length > 0 && (
+        <div className="h-2 rounded-full bg-paper overflow-hidden flex gap-[2px]">
+          {positive.map((seg) => (
+            <div key={seg.label} className="h-full" style={{ width: `${(seg.amount / total) * 100}%`, background: seg.color }} />
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-3">
+        {all.map((seg) => (
+          <div key={seg.label} className="flex items-start gap-1.5 text-xs">
+            <span className="w-2 h-2 rounded-full shrink-0 mt-0.5" style={{ background: seg.color }} />
+            <span className="text-ink-2 flex-1 min-w-0">{seg.label}</span>
+            <span className={`tabular font-medium shrink-0 ${seg.amount < 0 ? 'text-critical' : 'text-ink-3'}`}>
+              {c(seg.amount)}
+            </span>
+          </div>
         ))}
       </div>
     </div>
@@ -291,6 +214,7 @@ function RealCashBreakdown({ savings, monthly_reserve, funds, total }) {
 function MonthlyReserveCard({ mr, savings, onUpdate }) {
   const [toppingOff, setToppingOff] = useState(false)
   const [topOffError, setTopOffError] = useState('')
+  const [topOffNote, setTopOffNote] = useState('')
 
   const shortfall = mr.target_cents > 0 ? Math.max(0, mr.target_cents - mr.balance_cents) : 0
   const atTarget = mr.target_cents > 0 && mr.balance_cents >= mr.target_cents
@@ -298,52 +222,61 @@ function MonthlyReserveCard({ mr, savings, onUpdate }) {
   async function handleTopOff() {
     setToppingOff(true)
     setTopOffError('')
+    setTopOffNote('')
     try {
-      const r = await fetch('/api/monthly-reserve/top-off', { method: 'POST' })
-      if (!r.ok) {
-        const err = await r.json()
-        setTopOffError(err.detail || 'Top-off failed')
-      } else {
-        onUpdate()
+      const data = await apiPost('/monthly-reserve/top-off')
+      if (data.status === 'already_at_target') {
+        setTopOffNote('Reserve already at target')
+      } else if (data.status === 'no_bills') {
+        setTopOffNote('No Bills configured yet')
       }
+      onUpdate()
+    } catch (err) {
+      setTopOffError(err.message || 'Top-off failed')
     } finally {
       setToppingOff(false)
     }
   }
 
+  const pct = mr.target_cents > 0 ? Math.min(100, (mr.balance_cents / mr.target_cents) * 100) : 0
+
   return (
-    <Card className="p-5 mb-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-ink-3 mb-1">Monthly Reserve</p>
-          <p className="text-2xl font-bold text-ink tabular">{c(mr.balance_cents)}</p>
-          {mr.target_cents > 0 ? (
-            <p className="text-xs text-ink-3 mt-1">remaining of {c(mr.target_cents)} bill target</p>
-          ) : (
-            <p className="text-xs text-ink-3 mt-1">No Bills configured yet</p>
-          )}
-        </div>
-        <div className="shrink-0">
-          {shortfall > 0 && (
-            <button
-              onClick={handleTopOff}
-              disabled={toppingOff || savings.balance_cents < shortfall}
-              className="text-xs font-semibold bg-ink text-white rounded-full px-4 py-2 disabled:opacity-40 active:scale-[0.98] transition-transform whitespace-nowrap"
-            >
-              {toppingOff ? 'Topping off…' : `Top Off ${c(shortfall)}`}
-            </button>
-          )}
-          {atTarget && <Badge tone="good">Funded</Badge>}
-        </div>
+    <Card className="p-4 flex flex-col">
+      <div className="flex items-center justify-between gap-1.5">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Monthly Reserve</p>
+        {atTarget && <Badge tone="good">Funded</Badge>}
       </div>
-      {topOffError && <p className="mt-2 text-xs text-critical text-right">{topOffError}</p>}
+      <p className="text-xl font-bold text-ink mt-1 tabular">{c(mr.balance_cents)}</p>
+      {mr.target_cents > 0 ? (
+        <>
+          <p className="text-[11px] text-ink-3 mt-1">of {c(mr.target_cents)} target</p>
+          <div className="mt-2">
+            <Bar pct={pct} color={RESERVE_SWATCH} height={5} />
+          </div>
+        </>
+      ) : (
+        <p className="text-[11px] text-ink-3 mt-1">No Bills configured yet</p>
+      )}
+      {shortfall > 0 && (
+        <button
+          onClick={handleTopOff}
+          disabled={toppingOff || savings.balance_cents < shortfall}
+          className="mt-2.5 w-full text-xs font-semibold bg-accent text-white rounded-full py-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
+        >
+          {toppingOff ? 'Topping off…' : `Top Off ${c(shortfall)}`}
+        </button>
+      )}
+      {topOffError && <p className="mt-2 text-[11px] text-critical">{topOffError}</p>}
+      {topOffNote && <p className="mt-2 text-[11px] text-ink-3">{topOffNote}</p>}
     </Card>
   )
 }
 
 export default function FundsPage() {
+  const navigate = useNavigate()
   const [state, setState] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
   const [editFund, setEditFund] = useState(null)
@@ -351,10 +284,16 @@ export default function FundsPage() {
   const [distributeResult, setDistributeResult] = useState(null)
 
   const load = useCallback(async () => {
-    const r = await fetch('/api/state')
-    const data = await r.json()
-    setState(data)
-    setLoading(false)
+    setLoading(true)
+    setLoadError('')
+    try {
+      const data = await apiGet('/state')
+      setState(data)
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -365,34 +304,18 @@ export default function FundsPage() {
   }, [load])
 
   async function handleCreate(data) {
-    const r = await fetch('/api/funds/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (!r.ok) {
-      const err = await r.json()
-      throw new Error(err.detail || 'Failed to create fund')
-    }
+    await apiPost('/funds/', data)
     await load()
   }
 
   async function handleUpdate(id, data) {
-    const r = await fetch(`/api/funds/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (!r.ok) {
-      const err = await r.json()
-      throw new Error(err.detail || 'Failed to update fund')
-    }
+    await apiPatch(`/funds/${id}`, data)
     await load()
   }
 
   async function handleDelete(fund) {
     if (!confirm(`Delete "${fund.name}"? Its balance (${c(fund.balance_cents)}) will return to Savings.`)) return
-    await fetch(`/api/funds/${fund.id}`, { method: 'DELETE' })
+    await apiDel(`/funds/${fund.id}`)
     await load()
   }
 
@@ -400,30 +323,30 @@ export default function FundsPage() {
     setDistributing(true)
     setDistributeResult(null)
     try {
-      const r = await fetch('/api/funds/distribute', { method: 'POST' })
-      const data = await r.json()
-      if (!r.ok) {
-        setDistributeResult({ error: data.detail || 'Distribute failed' })
-      } else {
-        setDistributeResult(data)
-        await load()
-      }
+      const data = await apiPost('/funds/distribute')
+      setDistributeResult(data)
+      await load()
+    } catch (err) {
+      setDistributeResult({ error: err.message || 'Distribute failed' })
     } finally {
       setDistributing(false)
     }
   }
 
   async function handleTransfer(data) {
-    const r = await fetch('/api/transfers/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (!r.ok) {
-      const err = await r.json()
-      throw new Error(err.detail || 'Transfer failed')
-    }
+    await apiPost('/transfers/', data)
     await load()
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center h-64 px-4">
+        <Card className="p-6 text-center max-w-sm">
+          <p className="text-sm text-critical mb-4">{loadError}</p>
+          <PrimaryButton onClick={load}>Retry</PrimaryButton>
+        </Card>
+      </div>
+    )
   }
 
   if (loading || !state) {
@@ -445,23 +368,33 @@ export default function FundsPage() {
         </button>
       </div>
 
-      {/* Real Cash */}
-      <Card ink className="p-5 mb-3">
-        <p className="text-xs uppercase tracking-wide text-white/50">Real Cash</p>
-        <p className="text-4xl font-bold mt-1 tabular">{c(real_cash.balance_cents)}</p>
-        <p className="text-xs text-white/40 mt-2">Total in your bank account(s)</p>
+      {/* Real Cash — ranks #1 through size, not darkness */}
+      <Card
+        className="p-5 mb-3"
+        style={{ background: 'linear-gradient(180deg, #eef6f2 0%, #ffffff 60%)' }}
+      >
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Real Cash</p>
+        <p className="hero-figure text-5xl font-bold text-ink mt-1.5">{c(real_cash.balance_cents)}</p>
+        <p className="text-xs text-ink-3 mt-2">Total across your bank account(s)</p>
         <RealCashBreakdown savings={savings} monthly_reserve={monthly_reserve} funds={funds} total={real_cash.balance_cents} />
       </Card>
 
-      {/* Savings */}
-      <Card className="p-4 mb-3">
-        <p className="text-xs uppercase tracking-wide text-ink-3 mb-1">Savings</p>
-        <p className="text-2xl font-bold text-ink tabular">{c(savings.balance_cents)}</p>
-        <p className="text-xs text-ink-3 mt-1">Default resting place for all money</p>
-      </Card>
-
-      {/* Monthly Reserve */}
-      <MonthlyReserveCard mr={monthly_reserve} savings={savings} onUpdate={load} />
+      {/* Savings + Monthly Reserve — compact two-up */}
+      <div className="grid grid-cols-2 gap-3 mb-3 items-stretch">
+        <Card className="p-4 flex flex-col">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Savings</p>
+          <p className="hero-figure text-xl font-bold text-ink mt-1">{c(savings.balance_cents)}</p>
+          <p className="text-[11px] text-ink-3 mt-1">Default resting place</p>
+          {/* Decorative rest-state bar — Savings has no target/ceiling to track
+              progress against, but a quiet full bar keeps this card's rhythm
+              matched to Monthly Reserve's, instead of trailing off into blank
+              space below the microcopy. */}
+          <div className="mt-auto pt-3">
+            <div className="h-[5px] rounded-full" style={{ background: SAVINGS_SWATCH, opacity: 0.3 }} />
+          </div>
+        </Card>
+        <MonthlyReserveCard mr={monthly_reserve} savings={savings} onUpdate={load} />
+      </div>
 
       {/* Funds */}
       <SectionLabel
@@ -493,6 +426,9 @@ export default function FundsPage() {
         <div className={`mb-3 px-4 py-3 rounded-2xl text-xs ${distributeResult.error ? 'bg-critical-soft text-critical' : 'bg-paper text-ink-2'}`}>
           {distributeResult.error ? distributeResult.error : (
             <>
+              {distributeResult.status === 'no_contributions' && (
+                <p>No funds have a monthly contribution set.</p>
+              )}
               {distributeResult.funded.length > 0 && (
                 <p>Funded: {distributeResult.funded.map((f) => `${f.name} (${c(f.amount_cents)})`).join(', ')}</p>
               )}
@@ -508,33 +444,52 @@ export default function FundsPage() {
         <EmptyState title="No funds yet — add one above" />
       ) : (
         <div className="space-y-2.5">
-          {funds.map((fund, i) => {
-            const color = CHART_COLORS[i % CHART_COLORS.length]
+          {funds.map((fund) => {
+            const color = colorForId(fund.id)
             return (
-              <Card key={fund.id} className="p-4">
+              <Card
+                key={fund.id}
+                className="p-4 cursor-pointer active:scale-[0.99] transition-transform"
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/funds/${fund.id}`)}
+                onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/funds/${fund.id}`) }}
+              >
+                {/* Line 1: identity + balance */}
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5 flex-1 min-w-0">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        {fund.balance_cents < 0 && <AlertTriangle size={13} className="text-critical shrink-0" />}
-                        <p className="font-semibold text-ink truncate">{fund.name}</p>
-                        {fund.destination_type === 'transfer_out' && <Badge tone="accent">Transfer Out</Badge>}
-                        {fund.balance_cents < 0 && <Badge tone="critical">Recovering</Badge>}
-                      </div>
-                      <p className="text-xs text-ink-3 mt-0.5">
-                        {fund.monthly_contribution_cents > 0
-                          ? `${c(fund.monthly_contribution_cents)} / month`
-                          : 'No contribution set'}
-                      </p>
-                    </div>
+                    {fund.balance_cents < 0 && <AlertTriangle size={13} className="text-critical shrink-0" />}
+                    <p className="font-semibold text-ink">{fund.name}</p>
                   </div>
                   <p className={`text-lg font-bold shrink-0 tabular ${fund.balance_cents < 0 ? 'text-critical' : 'text-ink'}`}>{c(fund.balance_cents)}</p>
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <IconButton onClick={() => setEditFund(fund)}><Pencil size={14} /></IconButton>
-                    <IconButton onClick={() => handleDelete(fund)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={14} /></IconButton>
+                </div>
+
+                {/* Line 2: contribution + badges, actions */}
+                <div className="flex items-center justify-between gap-2 mt-1.5 pl-5">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    <span className="text-xs text-ink-3 whitespace-nowrap">
+                      {fund.monthly_contribution_cents > 0
+                        ? `${c(fund.monthly_contribution_cents)}/mo`
+                        : 'No contribution set'}
+                    </span>
+                    {fund.destination_type === 'transfer_out' && <Badge tone="accent">Transfer Out</Badge>}
+                    {fund.balance_cents < 0 && <Badge tone="critical">Recovering</Badge>}
+                  </div>
+                  <div className="flex items-center shrink-0">
+                    <IconButton onClick={(e) => { e.stopPropagation(); setEditFund(fund) }}><Pencil size={13} /></IconButton>
+                    <IconButton onClick={(e) => { e.stopPropagation(); handleDelete(fund) }} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={13} /></IconButton>
+                    <ChevronRight size={15} className="text-ink-3 ml-0.5" />
                   </div>
                 </div>
+
+                {fund.balance_cents < 0 && (
+                  <p className="text-xs text-ink-3 mt-1 pl-5">
+                    {fund.monthly_contribution_cents > 0
+                      ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
+                      : 'No contribution set — will not recover automatically'}
+                  </p>
+                )}
               </Card>
             )
           })}

@@ -34,6 +34,14 @@ input[type="number"]::-webkit-outer-spin-button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Headline money moments — Real Cash, a Fund's balance — read as THE number
+   on the screen: tabular figures so digits don't jitter, tight tracking so a
+   big bold number doesn't feel loose. */
+.hero-figure {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
 @keyframes ring-draw {
   from { stroke-dashoffset: var(--ring-circ); }
 }

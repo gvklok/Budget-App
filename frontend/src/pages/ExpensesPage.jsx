@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle } from 'lucide-react'
-import { fmt, toCents } from '../api'
-import { CHART_COLORS, LINE, statusColor } from '../theme'
+import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
+import { LINE, CRITICAL, ACCENT, CALM, statusColor, colorForId } from '../theme'
 import Modal from '../components/Modal'
 import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented } from '../components/ui'
 
@@ -18,6 +18,14 @@ function shiftMonth({ year, month }, delta) {
   if (m < 1) { m = 12; y -= 1 }
   if (m > 12) { m = 1; y += 1 }
   return { year: y, month: m }
+}
+
+// Bills are supposed to be spent to plan — 100% is normal, not a warning, so
+// the on-plan fill stays a calm, light sage rather than a heavy dark bar.
+// Only overspending a Bill is a signal. Funds keep the shared statusColor
+// (which has a warn zone) since they're discretionary.
+function billStatusColor(pct) {
+  return pct > 100 ? CRITICAL : CALM
 }
 
 const inputClass =
@@ -50,7 +58,7 @@ function DonutChart({ segments }) {
             cumFrac += frac
             return (
               <circle key={i} cx={cx} cy={cy} r={R} fill="none"
-                stroke={seg.color} strokeWidth={SW} strokeLinecap="round"
+                stroke={seg.color} strokeWidth={SW} strokeLinecap="butt"
                 strokeDasharray={`${dash} ${circ}`}
                 transform={`rotate(${rot} ${cx} ${cy})`} />
             )
@@ -479,51 +487,55 @@ function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDele
 
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
-function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx, negative, recoveryNote }) {
+function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
   const pct = budgetCents > 0 ? (spentCents / budgetCents) * 100 : 0
-  const color = statusColor(pct)
+  const color = colorOverride ?? statusColor(pct)
 
   return (
     <div>
-      <div className="flex items-center gap-2.5 px-4 py-3.5">
-        <button onClick={() => setExpanded((v) => !v)}
-          className="shrink-0 w-5 h-5 flex items-center justify-center text-ink-3 hover:text-ink-2">
-          {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        </button>
+      <div className="px-4 py-3.5">
+        <div className="flex items-start gap-2.5">
+          <button onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center text-ink-3 hover:text-ink-2">
+            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-sm font-medium text-ink truncate flex items-center gap-1.5">
-              {negative && <AlertTriangle size={12} className="text-critical shrink-0" />}
-              {name}
-              {negative && <Badge tone="critical">Recovering</Badge>}
-            </p>
-            <p className="text-sm tabular shrink-0">
-              <span className={`font-semibold ${spentCents === 0 ? 'text-ink-3' : over ? 'text-critical' : 'text-ink'}`}>
-                {spentCents === 0 ? '—' : c(spentCents)}
-              </span>
-              <span className="text-ink-3"> / {c(budgetCents)}</span>
-            </p>
-          </div>
-          {subtitle && <p className="text-xs text-ink-3 truncate mt-0.5">{subtitle}</p>}
-          {recoveryNote && <p className="text-xs text-critical truncate mt-0.5">{recoveryNote}</p>}
-          {budgetCents > 0 && (
-            <div className="mt-2 flex items-center gap-2">
-              <Bar pct={pct} color={color} height={6} />
-              <span className={`text-[11px] w-16 text-right shrink-0 tabular ${over ? 'text-critical font-semibold' : 'text-ink-3'}`}>
-                {over ? `−${c(Math.abs(remaining))}` : `${c(remaining)} left`}
-              </span>
+          <div className="flex-1 min-w-0">
+            {/* Name gets its own row, full width — nothing squeezes it to an ellipsis */}
+            <div className="flex items-center justify-between gap-1.5">
+              <p className="min-w-0 text-sm font-medium text-ink flex items-center gap-1.5">
+                {negative && <AlertTriangle size={12} className="text-critical shrink-0" />}
+                <span className="truncate">{name}</span>
+              </p>
+              <div className="flex items-center shrink-0">
+                {onLogTx && <IconButton compact onClick={onLogTx} title="Log transaction"><Receipt size={12} /></IconButton>}
+                {onEdit && <IconButton compact onClick={onEdit}><Pencil size={12} /></IconButton>}
+                {onDelete && <IconButton compact onClick={onDelete} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={12} /></IconButton>}
+              </div>
             </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-0.5 shrink-0">
-          {onLogTx && <IconButton onClick={onLogTx} title="Log transaction"><Receipt size={13} /></IconButton>}
-          {onEdit && <IconButton onClick={onEdit}><Pencil size={13} /></IconButton>}
-          {onDelete && <IconButton onClick={onDelete} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={13} /></IconButton>}
+            {negative && <Badge tone="critical" className="mt-1">Recovering</Badge>}
+            {subtitle && <p className="text-xs text-ink-3 mt-0.5">{subtitle}</p>}
+            {recoveryNote && <p className="text-xs text-critical mt-0.5">{recoveryNote}</p>}
+            {budgetCents > 0 && (
+              <div className="mt-2">
+                <div className="flex items-baseline justify-between gap-2 mb-1.5">
+                  <span className="text-xs tabular">
+                    <span className={`font-semibold ${spentCents === 0 ? 'text-ink-3' : over ? 'text-critical' : 'text-ink'}`}>
+                      {spentCents === 0 ? '—' : c(spentCents)}
+                    </span>
+                    <span className="text-ink-3"> / {c(budgetCents)}</span>
+                  </span>
+                  <span className={`text-xs shrink-0 tabular ${over ? 'text-critical font-semibold' : 'text-ink-3'}`}>
+                    {over ? `over by ${c(Math.abs(remaining))}` : `${c(remaining)} left`}
+                  </span>
+                </div>
+                <Bar pct={pct} color={color} height={6} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {expanded && (
@@ -558,7 +570,7 @@ function GroupSummary({ label, planned, spent }) {
       <p className="text-xs font-semibold uppercase tracking-wide text-ink-2 truncate">{label}</p>
       {spent > 0 && (
         <div className="flex-1 max-w-[120px]">
-          <Bar pct={pct} color={statusColor(pct)} height={5} animate={false} />
+          <Bar pct={pct} color={billStatusColor(pct)} height={5} animate={false} />
         </div>
       )}
       <span className="text-xs font-semibold text-ink-2 tabular shrink-0 ml-auto">
@@ -591,7 +603,9 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
             {bills.map((b) => {
               const itemTxns = txnsByItemId[b.id] ?? []
               const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
+              const billPct = b.amount_cents > 0 ? (spent / b.amount_cents) * 100 : 0
               return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
+                color={billStatusColor(billPct)}
                 onEdit={onEdit && (() => onEdit(b))} onDelete={onDelete && (() => onDelete(b))}
                 onLogTx={onLogTx && (() => onLogTx(b.id))} onDeleteTx={onDeleteTx} />
             })}
@@ -650,38 +664,49 @@ export default function ExpensesPage() {
   const [logTx, setLogTx] = useState(null)
   const [reallocatePrompt, setReallocatePrompt] = useState(null) // U5: { itemId, itemName, delta, isNew, oldAmount? }
   const [unlockedMonth, setUnlockedMonth] = useState(null) // U8: { year, month } currently unlocked for editing this session
+  const [loadError, setLoadError] = useState('')
 
   // Resolve the effective "today" once on mount, then default the viewed month to it
   // (unless the URL already names one).
-  useEffect(() => {
-    fetch('/api/dev/current-date').then((r) => r.json()).then((d) => {
+  const loadEffectiveDate = useCallback(async () => {
+    try {
+      const d = await apiGet('/dev/current-date')
       setEffectiveDate(d.effective_date)
       if (!selected) {
         const [y, m] = d.effective_date.split('-').map(Number)
         setSelected({ year: y, month: m })
       }
-    })
-  }, [])
+      setLoadError('')
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load')
+    }
+  }, [selected])
+
+  useEffect(() => { loadEffectiveDate() }, [])
 
   const load = useCallback(async () => {
     if (!selected) return
-    const [srcRes, sumRes, planRes, catRes, fundsRes, txRes, clockRes] = await Promise.all([
-      fetch('/api/income-sources'),
-      fetch(`/api/monthly-summary?year=${selected.year}&month=${selected.month}`),
-      fetch(`/api/plans/${selected.year}/${selected.month}`),
-      fetch('/api/line-items/categories'),
-      fetch('/api/funds/'),
-      fetch('/api/transactions/'),
-      fetch('/api/dev/current-date'),
-    ])
-    setIncomeSources(await srcRes.json())
-    setSummary(await sumRes.json())
-    const plan = await planRes.json()
-    setLineItems(plan.line_items)
-    setCategories(await catRes.json())
-    setFunds(await fundsRes.json())
-    setTransactions(await txRes.json())
-    setEffectiveDate((await clockRes.json()).effective_date)
+    try {
+      const [srcData, sumData, plan, catData, fundsData, txData, clock] = await Promise.all([
+        apiGet('/income-sources'),
+        apiGet(`/monthly-summary?year=${selected.year}&month=${selected.month}`),
+        apiGet(`/plans/${selected.year}/${selected.month}`),
+        apiGet('/line-items/categories'),
+        apiGet('/funds/'),
+        apiGet('/transactions/'),
+        apiGet('/dev/current-date'),
+      ])
+      setIncomeSources(srcData)
+      setSummary(sumData)
+      setLineItems(plan.line_items)
+      setCategories(catData)
+      setFunds(fundsData)
+      setTransactions(txData)
+      setEffectiveDate(clock.effective_date)
+      setLoadError('')
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load')
+    }
   }, [selected])
 
   useEffect(() => { load() }, [load])
@@ -694,23 +719,11 @@ export default function ExpensesPage() {
     return () => window.removeEventListener('dev-refresh', load)
   }, [load])
 
-  async function post(url, data) {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Failed') }
-    return r.json()
-  }
-  async function patch(url, data) {
-    const r = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Failed') }
-    return r.json()
-  }
-  async function del(url) { await fetch(url, { method: 'DELETE' }) }
-
-  async function handleCreateSource(data) { await post('/api/income-sources', data); await load() }
-  async function handleUpdateSource(id, data) { await patch(`/api/income-sources/${id}`, data); await load() }
-  async function handleDeleteSource(s) { if (!confirm(`Delete "${s.name}"?`)) return; await del(`/api/income-sources/${s.id}`); await load() }
+  async function handleCreateSource(data) { await apiPost('/income-sources', data); await load() }
+  async function handleUpdateSource(id, data) { await apiPatch(`/income-sources/${id}`, data); await load() }
+  async function handleDeleteSource(s) { if (!confirm(`Delete "${s.name}"?`)) return; await apiDel(`/income-sources/${s.id}`); await load() }
   async function handleCreateItem(data) {
-    const created = await post('/api/line-items/', { ...data, year: selected.year, month: selected.month })
+    const created = await apiPost('/line-items/', { ...data, year: selected.year, month: selected.month })
     await load()
     // U5: adding a new Bill to the CURRENT month always prompts for source labeling
     if (isCurrentMonth && created.type === 'bill' && created.amount_cents > 0) {
@@ -719,7 +732,7 @@ export default function ExpensesPage() {
   }
   async function handleUpdateItem(id, data) {
     const before = lineItems.find((i) => i.id === id)
-    const updated = await patch(`/api/line-items/${id}`, data)
+    const updated = await apiPatch(`/line-items/${id}`, data)
     await load()
     // U5: only a Bill INCREASE in the CURRENT month prompts — decreases, Fund
     // edits, and edits to other months are silent.
@@ -731,17 +744,17 @@ export default function ExpensesPage() {
       })
     }
   }
-  async function handleDeleteItem(item) { if (!confirm(`Delete "${item.name}"?`)) return; await del(`/api/line-items/${item.id}`); await load() }
-  async function handleCreateCat(data) { await post('/api/line-items/categories', data); await load() }
-  async function handleUpdateCat(id, data) { await patch(`/api/line-items/categories/${id}`, data); await load() }
-  async function handleDeleteCat(cat) { if (!confirm(`Delete "${cat.name}"? Bills become uncategorized.`)) return; await del(`/api/line-items/categories/${cat.id}`); await load() }
-  async function handleUpdateFundContrib(id, data) { await patch(`/api/funds/${id}`, data); await load() }
-  async function handleLogTx(data) { await post('/api/transactions/', data); await load() }
-  async function handleDeleteTx(tx) { if (!confirm('Delete this transaction?')) return; await del(`/api/transactions/${tx.id}`); await load() }
+  async function handleDeleteItem(item) { if (!confirm(`Delete "${item.name}"?`)) return; await apiDel(`/line-items/${item.id}`); await load() }
+  async function handleCreateCat(data) { await apiPost('/line-items/categories', data); await load() }
+  async function handleUpdateCat(id, data) { await apiPatch(`/line-items/categories/${id}`, data); await load() }
+  async function handleDeleteCat(cat) { if (!confirm(`Delete "${cat.name}"? Bills become uncategorized.`)) return; await apiDel(`/line-items/categories/${cat.id}`); await load() }
+  async function handleUpdateFundContrib(id, data) { await apiPatch(`/funds/${id}`, data); await load() }
+  async function handleLogTx(data) { await apiPost('/transactions/', data); await load() }
+  async function handleDeleteTx(tx) { if (!confirm('Delete this transaction?')) return; await apiDel(`/transactions/${tx.id}`); await load() }
 
   // U5: resolve the source-labeling prompt
   async function handleReallocate(decreasedLineItemId) {
-    await post('/api/line-items/reallocate', {
+    await apiPost('/line-items/reallocate', {
       increased_line_item_id: reallocatePrompt.itemId,
       decreased_line_item_id: decreasedLineItemId,
       amount_cents: reallocatePrompt.delta,
@@ -750,18 +763,29 @@ export default function ExpensesPage() {
     setReallocatePrompt(null)
   }
   async function handleTransferForPrompt() {
-    await post('/api/transfers/', { from_bucket: 'savings', to_bucket: 'mr', amount_cents: reallocatePrompt.delta })
+    await apiPost('/transfers/', { from_bucket: 'savings', to_bucket: 'mr', amount_cents: reallocatePrompt.delta })
     await load()
     setReallocatePrompt(null)
   }
   async function handleCancelPrompt() {
     if (reallocatePrompt.isNew) {
-      await del(`/api/line-items/${reallocatePrompt.itemId}`)
+      await apiDel(`/line-items/${reallocatePrompt.itemId}`)
     } else {
-      await patch(`/api/line-items/${reallocatePrompt.itemId}`, { amount_cents: reallocatePrompt.oldAmount })
+      await apiPatch(`/line-items/${reallocatePrompt.itemId}`, { amount_cents: reallocatePrompt.oldAmount })
     }
     await load()
     setReallocatePrompt(null)
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center h-64 px-4">
+        <Card className="p-6 text-center max-w-sm">
+          <p className="text-sm text-critical mb-4">{loadError}</p>
+          <PrimaryButton onClick={selected ? load : loadEffectiveDate}>Retry</PrimaryButton>
+        </Card>
+      </div>
+    )
   }
 
   if (!selected) {
@@ -803,6 +827,11 @@ export default function ExpensesPage() {
       grouped[b.category_id].push(b)
     } else { uncategorized.push(b) }
   }
+  // A page-level Bills "Total" is only informative when it aggregates more
+  // than one group — with exactly one populated group of >1 bills, that
+  // group's own Subtotal already shows the identical number.
+  const populatedBillGroupCount = Object.values(grouped).filter((g) => g.length > 0).length + (uncategorized.length > 0 ? 1 : 0)
+  const billTotalRedundant = populatedBillGroupCount === 1 && bills.length > 1
 
   // Totals
   // U1: transfer-out Funds (401k, Roth, HSA, ...) don't count as spending — the
@@ -822,12 +851,11 @@ export default function ExpensesPage() {
 
   // Donut chart segments
   const chartSegments = []
-  let colorIdx = 0
   for (const cat of categories) {
     const catBills = grouped[cat.id] ?? []
     const planned = catBills.reduce((s, b) => s + b.amount_cents, 0)
     const spent = catBills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
-    if (planned > 0) chartSegments.push({ label: cat.name, color: CHART_COLORS[colorIdx++ % CHART_COLORS.length], planned, spent })
+    if (planned > 0) chartSegments.push({ label: cat.name, color: colorForId(cat.id), planned, spent })
   }
   if (uncategorized.length > 0) {
     const planned = uncategorized.reduce((s, b) => s + b.amount_cents, 0)
@@ -837,7 +865,7 @@ export default function ExpensesPage() {
   for (const f of funds) {
     if (f.monthly_contribution_cents > 0 && f.destination_type !== 'transfer_out') {
       const spent = (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0)
-      chartSegments.push({ label: f.name, color: CHART_COLORS[colorIdx++ % CHART_COLORS.length], planned: f.monthly_contribution_cents, spent })
+      chartSegments.push({ label: f.name, color: colorForId(f.id), planned: f.monthly_contribution_cents, spent })
     }
   }
 
@@ -851,7 +879,7 @@ export default function ExpensesPage() {
         <h1 className="text-3xl font-bold text-ink tracking-tight">Expenses</h1>
         {!locked && (
           <button onClick={() => setLogTx({})}
-            className="flex items-center gap-1.5 bg-ink text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
+            className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
             <Receipt size={15} />Log
           </button>
         )}
@@ -924,7 +952,7 @@ export default function ExpensesPage() {
           <div className="grid grid-cols-2 gap-3">
             {totalBillPlanned > 0 && (
               <div className="flex flex-col items-center gap-2.5 text-center">
-                <Ring pct={billPct} size={76} stroke={8} color={statusColor(billPct)}>
+                <Ring pct={billPct} size={76} stroke={8} color={billStatusColor(billPct)}>
                   <span className="text-base font-bold text-ink tabular">{Math.round(billPct)}%</span>
                 </Ring>
                 <div>
@@ -1047,12 +1075,14 @@ export default function ExpensesPage() {
                     onEdit={locked ? undefined : setEditItem} onDelete={locked ? undefined : handleDeleteItem}
                     onLogTx={locked ? undefined : (id) => setLogTx({ lineItemId: id })} onDeleteTx={locked ? undefined : handleDeleteTx} />
                 )}
-                <div className="flex items-center px-4 py-3">
-                  <p className="flex-1 text-sm font-bold text-ink">Total</p>
-                  <span className={`text-sm font-bold tabular ${(totalBillPlanned - totalBillSpent) < 0 ? 'text-critical' : 'text-ink'}`}>
-                    {totalBillSpent === 0 ? '—' : c(totalBillSpent)}<span className="text-ink-3 font-normal"> / {c(totalBillPlanned)}</span>
-                  </span>
-                </div>
+                {!billTotalRedundant && (
+                  <div className="flex items-center px-4 py-3">
+                    <p className="flex-1 text-sm font-bold text-ink">Total</p>
+                    <span className={`text-sm font-bold tabular ${(totalBillPlanned - totalBillSpent) < 0 ? 'text-critical' : 'text-ink'}`}>
+                      {totalBillSpent === 0 ? '—' : c(totalBillSpent)}<span className="text-ink-3 font-normal"> / {c(totalBillPlanned)}</span>
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -1086,9 +1116,14 @@ export default function ExpensesPage() {
                       ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
                       : 'No contribution set — will not recover automatically'
                   }
+                  // Transfer-out funds hitting their target is SUCCESS (money moved to an
+                  // account you own), never danger — so they never wear the warn/critical
+                  // statusColor zones a discretionary Fund would at the same percentage.
+                  const isTransferOut = fund.destination_type === 'transfer_out'
                   return <ItemRow key={fund.id} name={fund.name}
                     subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
                     budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
+                    color={isTransferOut ? ACCENT : undefined}
                     onEdit={locked ? undefined : () => setEditFundContrib(fund)}
                     onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
                     onDeleteTx={locked ? undefined : handleDeleteTx} />
