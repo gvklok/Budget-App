@@ -94,7 +94,11 @@ export function SectionLabel({ children, action }) {
 const BADGE_TONES = {
   neutral: 'bg-paper text-ink-2',
   accent: 'bg-accent-soft text-accent',
-  good: 'bg-good-soft text-good',
+  good: 'bg-good-soft text-good', // alias of `saving` — the app's one green
+  saving: 'bg-saving-soft text-saving',
+  bills: 'bg-bills-soft text-bills',
+  funds: 'bg-funds-soft text-funds',
+  transfer: 'bg-transfer-soft text-transfer',
   warn: 'bg-warn-soft text-warn',
   critical: 'bg-critical-soft text-critical',
 }

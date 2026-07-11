@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
-import { LINE, CRITICAL, ACCENT, CALM, statusColor, colorForId } from '../theme'
+import { LINE, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId } from '../theme'
 import Modal from '../components/Modal'
 import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented } from '../components/ui'
 
@@ -18,14 +18,6 @@ function shiftMonth({ year, month }, delta) {
   if (m < 1) { m = 12; y -= 1 }
   if (m > 12) { m = 1; y += 1 }
   return { year: y, month: m }
-}
-
-// Bills are supposed to be spent to plan — 100% is normal, not a warning, so
-// the on-plan fill stays a calm, light sage rather than a heavy dark bar.
-// Only overspending a Bill is a signal. Funds keep the shared statusColor
-// (which has a warn zone) since they're discretionary.
-function billStatusColor(pct) {
-  return pct > 100 ? CRITICAL : CALM
 }
 
 const inputClass =
@@ -105,22 +97,24 @@ function AllocationBar({ income, bills, funds, net }) {
   const fundsPct = rawFunds * scale
   const netPct = rawNet * scale
 
+  const netColor = net >= 0 ? SAVING : CRITICAL
+
   return (
     <div className="space-y-3">
       <div className="h-3 rounded-full bg-paper overflow-hidden flex gap-[2px]">
-        {billsPct > 0 && <div className="h-full bg-ink-3" style={{ width: `${billsPct}%` }} />}
-        {fundsPct > 0 && <div className="h-full bg-accent" style={{ width: `${fundsPct}%` }} />}
-        {netPct > 0 && <div className={`h-full ${net >= 0 ? 'bg-good' : 'bg-critical'}`} style={{ width: `${netPct}%` }} />}
+        {billsPct > 0 && <div className="h-full" style={{ width: `${billsPct}%`, background: BILLS }} />}
+        {fundsPct > 0 && <div className="h-full" style={{ width: `${fundsPct}%`, background: FUNDS_HUE }} />}
+        {netPct > 0 && <div className="h-full" style={{ width: `${netPct}%`, background: netColor }} />}
       </div>
       <div className="flex items-center justify-between text-xs">
         <span className="flex items-center gap-1.5 text-ink-2">
-          <span className="w-2 h-2 rounded-full bg-ink-3 shrink-0" />Bills <span className="text-ink-3 tabular">{c(bills)}</span>
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: BILLS }} />Bills <span className="text-ink-3 tabular">{c(bills)}</span>
         </span>
         <span className="flex items-center gap-1.5 text-ink-2">
-          <span className="w-2 h-2 rounded-full bg-accent shrink-0" />Funds <span className="text-ink-3 tabular">{c(funds)}</span>
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: FUNDS_HUE }} />Funds <span className="text-ink-3 tabular">{c(funds)}</span>
         </span>
         <span className="flex items-center gap-1.5 text-ink-2">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${net >= 0 ? 'bg-good' : 'bg-critical'}`} />
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: netColor }} />
           {net >= 0 ? 'Savings' : 'Short'} <span className="text-ink-3 tabular">{c(Math.abs(net))}</span>
         </span>
       </div>
@@ -492,7 +486,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
   const pct = budgetCents > 0 ? (spentCents / budgetCents) * 100 : 0
-  const color = colorOverride ?? statusColor(pct)
+  const color = colorOverride ?? fundStatusColor(pct)
 
   return (
     <div>
@@ -963,7 +957,7 @@ export default function ExpensesPage() {
             )}
             {totalFundPlanned > 0 && (
               <div className="flex flex-col items-center gap-2.5 text-center">
-                <Ring pct={fundPct} size={76} stroke={8} color={statusColor(fundPct)}>
+                <Ring pct={fundPct} size={76} stroke={8} color={fundStatusColor(fundPct)}>
                   <span className="text-base font-bold text-ink tabular">{Math.round(fundPct)}%</span>
                 </Ring>
                 <div>
@@ -980,7 +974,7 @@ export default function ExpensesPage() {
                 <p className="text-xs font-semibold text-ink-2">Transfers out</p>
                 <p className="text-[11px] text-ink-3">Moved to accounts you own — not spending</p>
               </div>
-              <span className="text-sm font-semibold text-accent tabular">{c(transfersOutTotal)}</span>
+              <span className="text-sm font-semibold tabular" style={{ color: TRANSFER_OUT }}>{c(transfersOutTotal)}</span>
             </div>
           )}
 
@@ -1117,13 +1111,14 @@ export default function ExpensesPage() {
                       : 'No contribution set — will not recover automatically'
                   }
                   // Transfer-out funds hitting their target is SUCCESS (money moved to an
-                  // account you own), never danger — so they never wear the warn/critical
-                  // statusColor zones a discretionary Fund would at the same percentage.
+                  // account you own), never danger — so they always wear the neutral
+                  // TRANSFER_OUT stone rather than the warn/critical fundStatusColor
+                  // zones a discretionary Fund would at the same percentage.
                   const isTransferOut = fund.destination_type === 'transfer_out'
                   return <ItemRow key={fund.id} name={fund.name}
                     subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
                     budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
-                    color={isTransferOut ? ACCENT : undefined}
+                    color={isTransferOut ? TRANSFER_OUT : undefined}
                     onEdit={locked ? undefined : () => setEditFundContrib(fund)}
                     onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
                     onDeleteTx={locked ? undefined : handleDeleteTx} />

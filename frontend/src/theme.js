@@ -12,17 +12,48 @@ export const LINE_STRONG = '#ddd5c4'
 export const ACCENT = '#0f5c52'
 export const ACCENT_SOFT = '#e4efea'
 
-export const GOOD = '#1f8a4c'
+// ── Semantic money-concept colors ──────────────────────────────────────────
+// Every color that represents a money CONCEPT (not a UI affordance like a
+// button) does exactly one of these four jobs, app-wide. A hue is never
+// reused for a different concept — that's what made the old palette read as
+// "everything is a shade of green." See CLAUDE.md's money model: three
+// buckets (Savings, Monthly Reserve, Funds) plus the honest transfer-out /
+// critical states.
+//
+//   SAVING       money kept/saved — the Savings bucket, "% saved" chips,
+//                +contribution amounts, savings-rate visuals. The ONLY green
+//                in the app.
+//   BILLS        Bills AND Monthly Reserve (bills route to MR — one concept,
+//                one hue) — the Bills ring/bars, the MR card, bills-spent
+//                chart segments.
+//   FUNDS_HUE    fund AGGREGATES — the Funds ring, fund progress bars,
+//                funds-spent chart segments. Individual funds keep their
+//                per-id colorForId identity in lists/legends/donuts; this
+//                hue is only for the semantic/aggregate reading.
+//   TRANSFER_OUT money moved to another account you own (401k, Roth, HSA) —
+//                visibly NOT spending, and never wears warn/critical.
+//   CRITICAL     overspend and negative balances only — the one true alarm.
+export const SAVING = ACCENT // '#0f5c52' — the existing deep green accent family
+export const BILLS = '#3e6c8c' // slate-blue
+export const FUNDS_HUE = '#c1652f' // warm terracotta
+export const TRANSFER_OUT = '#9c9484' // neutral stone
+
+// GOOD is a deliberate alias of SAVING, not a second green — the app has
+// exactly one green and it always means "kept/saved."
+export const GOOD = SAVING
 export const WARN = '#a8791f'
 export const CRITICAL = '#b23b2e'
 
-// Calm "on-plan" fill for Bills/Funds sitting at or under their budget — 100%
-// spent on a Bill is normal, not a warning, so it must never read as heavy or
-// alarming. A light-but-present sage keeps a filled bar legible as "done"
-// without the wall-of-black-bars weight of a near-ink fill. Overspend still
-// escalates to CRITICAL; this is only ever the calm state.
-export const CALM = '#a8bb92'
-export const CALM_SOFT = '#eef2e7'
+// On-plan fills for Bills/Funds sitting at or under their budget — 100%
+// spent is normal, not a warning, so it must never read as heavy or
+// alarming. Overspend still escalates to CRITICAL; these are only ever the
+// calm, in-plan state, one hue per concept (see semantic colors above).
+export function billStatusColor(pct) {
+  return pct > 100 ? CRITICAL : BILLS
+}
+export function fundStatusColor(pct) {
+  return pct > 100 ? CRITICAL : FUNDS_HUE
+}
 
 // Fixed-order categorical palette for chart segments (fund/category identity).
 // A curated 7-hue "muted-rich" family — sage, dusty blue, terracotta, teal,
@@ -66,22 +97,12 @@ export function colorForId(id) {
   return CHART_COLORS[Math.abs(hash) % CHART_COLORS.length]
 }
 
-export function statusColor(pct) {
-  if (pct > 100) return CRITICAL
-  if (pct >= 85) return WARN
-  return GOOD
-}
-
-export function statusSoft(pct) {
-  if (pct > 100) return '#f8e7e4'
-  if (pct >= 85) return '#fbf1de'
-  return '#e7f4ec'
-}
-
 // Dedicated swatches for Savings/Monthly Reserve in the Real Cash breakdown —
-// kept out of CHART_COLORS so they never collide with a Fund's assigned color.
-export const SAVINGS_SWATCH = '#9c9484'
-export const RESERVE_SWATCH = '#3e7c8c'
+// kept out of CHART_COLORS so they never collide with a Fund's assigned
+// color. These now just alias the semantic concept colors above: Savings is
+// SAVING green, Monthly Reserve is BILLS slate (bills route to MR).
+export const SAVINGS_SWATCH = SAVING
+export const RESERVE_SWATCH = BILLS
 
 // Adds a `<linearGradient>` def (top color → transparent) and returns the
 // fill url() to reference it — the shared "soft area under a line" treatment

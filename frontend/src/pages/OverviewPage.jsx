@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, ChevronLeft, ChevronRight } from 'lucide-react'
+import { LayoutDashboard, ChevronLeft, ChevronRight, Check, AlertTriangle } from 'lucide-react'
 import { apiGet, fmt } from '../api'
-import { colorForId, CHART_COLORS, SAVINGS_SWATCH, RESERVE_SWATCH, GOOD, CRITICAL, ACCENT, INK, CALM, INK_3, LINE } from '../theme'
+import {
+  colorForId, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, CRITICAL,
+  INK, INK_2, INK_3, LINE, areaGradientId,
+} from '../theme'
 import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, IconButton, Bar } from '../components/ui'
 
 // ── shared money/date helpers ─────────────────────────────────────────────────
@@ -66,16 +69,6 @@ function niceTicks(min, max, count = 4) {
   return ticks
 }
 
-const FUNDS_TOTAL_COLOR = CHART_COLORS[2] // violet — stable, distinct from savings/reserve swatches
-
-// ── Kept vs Spent — stacked bar (spent + transfers out + kept), the headline ──
-// Form: one stacked bar per month (spent bottom, transfers middle, kept top),
-// bar height = spent + transfers + max(kept, 0). A dashed income tick marks
-// where income landed, so an overspent month (kept clamped to 0) visibly rises
-// above its own income line — the honest way to show a leak without a second axis.
-// Real SVG plot (own margins) so ticks/bars can never escape the card, unlike the
-// old absolutely-positioned div stack.
-
 // Path for a rect with only its top two corners rounded — used for the topmost
 // segment of each stack so straight seams stay flat everywhere else.
 function topRoundedRectPath(x, y, w, h, r) {
@@ -84,14 +77,15 @@ function topRoundedRectPath(x, y, w, h, r) {
   return `M ${x} ${y + rr} Q ${x} ${y} ${x + rr} ${y} H ${x + w - rr} Q ${x + w} ${y} ${x + w} ${y + rr} V ${y + h} H ${x} Z`
 }
 
+// ── Kept vs Spent — stacked bar (bills + funds + transfers + kept) ───────────
+// Form: one stacked bar per month, bottom→top: Bills (BILLS slate), Funds
+// (FUNDS_HUE terracotta), Transfers out (TRANSFER_OUT stone), Kept (SAVING
+// green). A dashed income tick marks where income landed, so an overspent
+// month (kept clamped to 0) visibly rises above its own income line — the
+// honest way to show a leak without a second axis.
+
 function KeptVsSpentChart({ months }) {
   const n = months.length
-  // viewBox sized close to the real mobile card width (390 viewport − page
-  // padding − card padding) so the SVG's own aspect ratio roughly matches its
-  // rendered box. A large mismatch here (the old 640×214) makes the browser's
-  // default "meet" scaling shrink content to fit the narrower dimension and
-  // center it — which reads as dead space above the plot and eye-strain-tiny
-  // text. preserveAspectRatio="none" below removes the letterboxing outright.
   const VBW = 330
   const VBH = 176
   const leftPad = 42
@@ -102,14 +96,11 @@ function KeptVsSpentChart({ months }) {
   const plotH = VBH - topPad - bottomPad
   const GAP = 1.5 // px seam between stacked segments
 
-  // Max must cover both the tallest stack AND the tallest income tick, so an
-  // overspent bar rising above its own income line never gets clipped, and a
-  // high-income/low-spend month never pushes the scale past what the bars need.
   const maxTotal = Math.max(
     1,
     ...months.map((m) => Math.max(
       m.income_cents,
-      m.spent_cents + m.transfers_out_cents + Math.max(m.kept_cents, 0)
+      m.bills_spent_cents + m.funds_spent_cents + m.transfers_out_cents + Math.max(m.kept_cents, 0)
     ))
   )
   const ticks = niceTicks(0, maxTotal, 4)
@@ -122,10 +113,10 @@ function KeptVsSpentChart({ months }) {
 
   const last = months[months.length - 1]
   let summary
-  if (!last || (last.income_cents === 0 && last.spent_cents === 0 && last.transfers_out_cents === 0)) {
+  if (!last || (last.income_cents === 0 && last.bills_spent_cents === 0 && last.funds_spent_cents === 0 && last.transfers_out_cents === 0)) {
     summary = 'No activity yet this month.'
   } else if (last.income_cents === 0) {
-    summary = `Spent ${c(last.spent_cents)} with no income recorded this month.`
+    summary = `Spent ${c(last.bills_spent_cents + last.funds_spent_cents)} with no income recorded this month.`
   } else if (last.kept_cents < 0) {
     summary = `Overspent by ${c(-last.kept_cents)} against ${c(last.income_cents)} income this month.`
   } else {
@@ -149,23 +140,25 @@ function KeptVsSpentChart({ months }) {
           {months.map((m, i) => {
             const cx = leftPad + (i + 0.5) * bandW
             const x = cx - barW / 2
-            const spentH = (m.spent_cents / scaleMax) * plotH
+            const billsH = (m.bills_spent_cents / scaleMax) * plotH
+            const fundsH = (m.funds_spent_cents / scaleMax) * plotH
             const transferH = (m.transfers_out_cents / scaleMax) * plotH
             const keptH = (Math.max(m.kept_cents, 0) / scaleMax) * plotH
 
             const segs = []
-            if (spentH > 0) segs.push({ h: spentH, fill: CRITICAL, opacity: 0.88 })
-            if (transferH > 0) segs.push({ h: transferH, fill: ACCENT, opacity: 1 })
-            if (keptH > 0) segs.push({ h: keptH, fill: GOOD, opacity: 1 })
+            if (billsH > 0) segs.push({ h: billsH, fill: BILLS })
+            if (fundsH > 0) segs.push({ h: fundsH, fill: FUNDS_HUE })
+            if (transferH > 0) segs.push({ h: transferH, fill: TRANSFER_OUT })
+            if (keptH > 0) segs.push({ h: keptH, fill: SAVING })
 
             let cursor = baselineY
             const rects = segs.map((seg, si) => {
               const topY = cursor - seg.h
               const isTop = si === segs.length - 1
               const node = isTop ? (
-                <path key={si} d={topRoundedRectPath(x, topY, barW, seg.h, 2)} fill={seg.fill} fillOpacity={seg.opacity} />
+                <path key={si} d={topRoundedRectPath(x, topY, barW, seg.h, 2)} fill={seg.fill} />
               ) : (
-                <rect key={si} x={x} y={topY} width={barW} height={seg.h} fill={seg.fill} fillOpacity={seg.opacity} />
+                <rect key={si} x={x} y={topY} width={barW} height={seg.h} fill={seg.fill} />
               )
               cursor = topY - GAP
               return node
@@ -201,7 +194,8 @@ function KeptVsSpentChart({ months }) {
               >
                 <p className="font-semibold mb-1">{monthFullLabel(m.year, m.month)}</p>
                 <p>Income: <span className="tabular">{c(m.income_cents)}</span></p>
-                <p>Spent: <span className="tabular">{c(m.spent_cents)}</span></p>
+                <p>Bills: <span className="tabular">{c(m.bills_spent_cents)}</span></p>
+                <p>Funds: <span className="tabular">{c(m.funds_spent_cents)}</span></p>
                 <p>Transfers out: <span className="tabular">{c(m.transfers_out_cents)}</span></p>
                 <p>Kept: <span className="tabular">{c(m.kept_cents)}</span></p>
               </div>
@@ -212,82 +206,100 @@ function KeptVsSpentChart({ months }) {
 
       {/* legend */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-2 pt-3 border-t border-line">
-        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: CRITICAL }} />Spent</span>
-        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: ACCENT }} />Transfers out</span>
-        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: GOOD }} />Kept</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: BILLS }} />Bills</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: FUNDS_HUE }} />Funds</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: TRANSFER_OUT }} />Transfers out</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: SAVING }} />Kept</span>
       </div>
       <p className="text-sm text-ink-2 mt-3">{summary}</p>
     </Card>
   )
 }
 
-// ── Balance trends — multi-line, step-after (balances change discretely) ──────
+// ── Spending Pace — current month only, Copilot-style ─────────────────────────
+// Dotted straight line = pace from $0 to the month's planned spending total.
+// Solid stepped line = cumulative actual spending by day (transfer-out
+// exclusions already applied by the caller). A dot marks today; a plain-
+// language verdict sits underneath.
 
-function BalanceTrendsChart({ series }) {
-  const dates = series.real_cash.map((p) => p.date)
-  const n = dates.length
+function SpendingPaceChart({ year, month, day, plannedTotal, txns }) {
+  const lastDay = new Date(year, month, 0).getDate()
+  const today = Math.min(Math.max(day, 1), lastDay)
 
-  if (n < 2) {
-    return <EmptyState title="Not enough history yet — balance trends will appear as time passes." />
+  const dailyTotals = {}
+  for (const tx of txns) {
+    dailyTotals[tx.date] = (dailyTotals[tx.date] ?? 0) + tx.amount_cents
   }
+  const cumByDay = [0]
+  let running = 0
+  for (let d = 1; d <= today; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    running += dailyTotals[dateStr] ?? 0
+    cumByDay.push(running)
+  }
+  const actualToday = running
+  const paceToday = Math.round((plannedTotal * today) / lastDay)
+  const diff = actualToday - paceToday
+  const overPace = diff > 0
 
-  // See KeptVsSpentChart above for why this viewBox is sized close to the
-  // real mobile card width rather than an arbitrary round number.
   const VBW = 330
-  const VBH = 184
+  const VBH = 190
   const leftPad = 46
   const rightPad = 8
-  const topPad = 10
-  const bottomPad = 12
+  const topPad = 12
+  const bottomPad = 22
   const plotW = VBW - leftPad - rightPad
   const plotH = VBH - topPad - bottomPad
 
-  const allValues = [
-    ...series.savings.map((p) => p.balance_cents),
-    ...series.mr.map((p) => p.balance_cents),
-    ...series.funds_total.map((p) => p.balance_cents),
-    ...series.real_cash.map((p) => p.balance_cents),
-  ]
-  const rawMin = Math.min(0, ...allValues)
-  const rawMax = Math.max(0, ...allValues)
-  let ticks = niceTicks(rawMin, rawMax, 4)
-  if (ticks.length > 4) {
-    // Keep at most 4 gridlines — resample evenly across the computed range.
-    const step = Math.ceil((ticks.length - 1) / 3)
-    ticks = ticks.filter((_, i) => i % step === 0 || i === ticks.length - 1)
+  const maxVal = Math.max(1, plannedTotal, actualToday)
+  const ticks = niceTicks(0, maxVal, 4)
+  const scaleMax = Math.max(ticks[ticks.length - 1], maxVal)
+
+  const xScale = (d) => leftPad + (d / lastDay) * plotW
+  const yScale = (v) => topPad + plotH - (v / scaleMax) * plotH
+  const baselineY = yScale(0)
+
+  const paceLine = `M ${xScale(0).toFixed(1)} ${yScale(0).toFixed(1)} L ${xScale(lastDay).toFixed(1)} ${yScale(plannedTotal).toFixed(1)}`
+
+  let actualPath = `M ${xScale(0).toFixed(1)} ${yScale(cumByDay[0]).toFixed(1)}`
+  for (let d = 1; d <= today; d++) {
+    actualPath += ` L ${xScale(d).toFixed(1)} ${yScale(cumByDay[d - 1]).toFixed(1)} L ${xScale(d).toFixed(1)} ${yScale(cumByDay[d]).toFixed(1)}`
   }
-  const min = ticks[0]
-  const max = ticks[ticks.length - 1]
-  const range = max - min || 1
+  const areaPath = `${actualPath} L ${xScale(today).toFixed(1)} ${baselineY.toFixed(1)} L ${xScale(0).toFixed(1)} ${baselineY.toFixed(1)} Z`
 
-  const xScale = (i) => leftPad + ((i + 0.5) / n) * plotW
-  const yScale = (v) => topPad + plotH - ((v - min) / range) * plotH
+  const gradId = areaGradientId('pace')
+  const todayX = xScale(today)
+  const todayY = yScale(actualToday)
 
-  function stepPath(points) {
-    let d = `M ${points[0].x} ${points[0].y}`
-    for (let i = 1; i < points.length; i++) {
-      d += ` H ${points[i].x} V ${points[i].y}`
-    }
-    return d
+  // Hover: nearest day by pointer x.
+  const containerRef = useRef(null)
+  const [hoverDay, setHoverDay] = useState(null)
+  function handleMove(clientX) {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const relX = ((clientX - rect.left) / rect.width) * VBW
+    const d = Math.round(((relX - leftPad) / plotW) * lastDay)
+    setHoverDay(Math.min(Math.max(d, 0), today))
   }
-
-  const lines = [
-    { key: 'savings', label: 'Savings', color: SAVINGS_SWATCH, width: 1.5, data: series.savings },
-    { key: 'mr', label: 'Monthly Reserve', color: RESERVE_SWATCH, width: 1.5, data: series.mr },
-    { key: 'funds_total', label: 'Funds total', color: FUNDS_TOTAL_COLOR, width: 1.5, data: series.funds_total },
-    { key: 'real_cash', label: 'Real Cash', color: INK, width: 2.5, data: series.real_cash },
-  ]
-
-  const hasNegative = min < 0
-  const bottomY = topPad + plotH
+  const hoverX = hoverDay != null ? xScale(hoverDay) : null
+  const hoverActual = hoverDay != null ? cumByDay[hoverDay] : null
+  const hoverPace = hoverDay != null ? Math.round((plannedTotal * hoverDay) / lastDay) : null
 
   return (
     <Card className="p-5 mb-3">
-      <SectionLabel>Balance Trends</SectionLabel>
-      <div className="relative">
+      <SectionLabel>Spending Pace</SectionLabel>
+      <div
+        ref={containerRef}
+        className="relative select-none"
+        onMouseMove={(e) => handleMove(e.clientX)}
+        onMouseLeave={() => setHoverDay(null)}
+        onTouchStart={(e) => handleMove(e.touches[0].clientX)}
+        onTouchMove={(e) => handleMove(e.touches[0].clientX)}
+        onTouchEnd={() => setHoverDay(null)}
+      >
         <svg viewBox={`0 0 ${VBW} ${VBH}`} width="100%" height={VBH} preserveAspectRatio="none" className="block overflow-visible">
           <defs>
-            <linearGradient id="overview-real-cash-grad" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={INK} stopOpacity="0.12" />
               <stop offset="100%" stopColor={INK} stopOpacity="0" />
             </linearGradient>
@@ -295,71 +307,172 @@ function BalanceTrendsChart({ series }) {
           {ticks.map((t) => (
             <g key={t}>
               <line x1={leftPad} x2={VBW - rightPad} y1={yScale(t)} y2={yScale(t)} stroke={LINE} strokeWidth={1} />
-              <text x={leftPad - 8} y={yScale(t)} dy="0.32em" textAnchor="end" fontSize="11" fill={INK_3} className="tabular">
+              <text x={leftPad - 6} y={yScale(t)} dy="0.32em" textAnchor="end" fontSize="11" fill={INK_3} className="tabular">
                 {fmtTick(t)}
               </text>
             </g>
           ))}
-          {hasNegative && (
-            <line
-              x1={leftPad} x2={VBW - rightPad} y1={yScale(0)} y2={yScale(0)}
-              stroke={INK_3} strokeWidth={1} strokeDasharray="4 3"
-            />
+
+          <path d={areaPath} fill={`url(#${gradId})`} stroke="none" />
+          <path d={paceLine} fill="none" stroke={INK_3} strokeWidth={1.5} strokeDasharray="4 3" strokeLinecap="round" />
+          <path d={actualPath} fill="none" stroke={INK} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          <circle cx={todayX} cy={todayY} r={4} fill={INK} stroke="#ffffff" strokeWidth={2} />
+
+          {hoverDay != null && (
+            <>
+              <line x1={hoverX} x2={hoverX} y1={topPad} y2={topPad + plotH} stroke={LINE} strokeWidth={1} strokeDasharray="2 2" />
+              <circle cx={hoverX} cy={yScale(hoverActual)} r={3.5} fill={INK} stroke="#ffffff" strokeWidth={1.5} />
+            </>
           )}
-          {lines.map((line) => {
-            const pts = line.data.map((p, i) => ({ x: xScale(i), y: yScale(p.balance_cents) }))
-            const lastPt = pts[pts.length - 1]
-            const isRealCash = line.key === 'real_cash'
-            const areaPath = isRealCash
-              ? `${stepPath(pts)} L ${pts[pts.length - 1].x.toFixed(1)} ${bottomY} L ${pts[0].x.toFixed(1)} ${bottomY} Z`
-              : null
-            return (
-              <g key={line.key}>
-                {areaPath && <path d={areaPath} fill="url(#overview-real-cash-grad)" stroke="none" />}
-                <path
-                  d={stepPath(pts)}
-                  fill="none"
-                  stroke={line.color}
-                  strokeWidth={line.width}
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                />
-                {isRealCash && <circle cx={lastPt.x} cy={lastPt.y} r={3} fill={line.color} />}
-              </g>
-            )
-          })}
+
+          <text x={leftPad} y={VBH - 6} textAnchor="start" fontSize="11" fill={INK_3}>1</text>
+          <text x={VBW - rightPad} y={VBH - 6} textAnchor="end" fontSize="11" fill={INK_3}>{lastDay}</text>
         </svg>
 
-        {/* hover overlay: per-index column, CSS-only crosshair + tooltip */}
-        <div className="absolute top-0 flex" style={{ left: `${(leftPad / VBW) * 100}%`, width: `${(plotW / VBW) * 100}%`, height: VBH }}>
-          {dates.map((date, i) => (
-            <div key={date} className="group relative flex-1 h-full">
-              <div className="absolute inset-y-0 left-1/2 w-px bg-ink/15 opacity-0 group-hover:opacity-100 pointer-events-none" />
-              <div
-                className={`pointer-events-none absolute top-2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap rounded-xl bg-ink text-white text-[11px] px-2.5 py-2 shadow-pop ${
-                  i < n / 2 ? 'left-1/2' : 'right-1/2'
-                }`}
-              >
-                <p className="font-semibold mb-1">{new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
-                {lines.map((line) => (
-                  <p key={line.key} className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: line.color }} />
-                    {line.label}: <span className="tabular">{c(line.data[i].balance_cents)}</span>
-                  </p>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        {hoverDay != null && (
+          <div
+            className="pointer-events-none absolute top-1 opacity-100 z-10 whitespace-nowrap rounded-xl bg-ink text-white text-[11px] px-2.5 py-2 shadow-pop"
+            style={{ left: `${Math.min(Math.max((hoverX / VBW) * 100, 8), 78)}%` }}
+          >
+            <p className="font-semibold mb-1">Day {hoverDay}</p>
+            <p>Actual: <span className="tabular">{c(hoverActual)}</span></p>
+            <p>Pace: <span className="tabular">{c(hoverPace)}</span></p>
+          </div>
+        )}
       </div>
 
       {/* legend */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-2 pt-3 border-t border-line">
-        {lines.map((line) => (
-          <span key={line.key} className="flex items-center gap-1.5 text-xs text-ink-2">
-            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: line.color }} />
-            {line.label}
-          </span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2">
+          <span className="w-3 h-0 border-t-2 border-dashed" style={{ borderColor: INK_3 }} />Pace
+        </span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2">
+          <span className="w-3 h-0.5 rounded-full" style={{ background: INK }} />Actual spending
+        </span>
+      </div>
+
+      <p className="text-sm text-ink-2 mt-3">
+        Day {today} — <span className="font-semibold text-ink tabular">{c(actualToday)}</span> spent ·{' '}
+        <span className={overPace ? 'text-critical font-semibold' : 'text-ink-2'}>
+          {c(Math.abs(diff))} {overPace ? 'over pace' : 'under pace'}
+        </span>
+      </p>
+    </Card>
+  )
+}
+
+// ── Savings rate — compact, one small bar per month ────────────────────────
+
+function SavingsRateCard({ months }) {
+  const last6 = months.slice(-6)
+  const withIncome = last6.filter((m) => m.income_cents > 0)
+  const avgPct = withIncome.length
+    ? withIncome.reduce((s, m) => s + (m.kept_cents / m.income_cents) * 100, 0) / withIncome.length
+    : null
+
+  const VBW = 330
+  const VBH = 128
+  const leftPad = 8
+  const rightPad = 8
+  const topPad = 24
+  const bottomPad = 20
+  const plotW = VBW - leftPad - rightPad
+  const plotH = VBH - topPad - bottomPad
+  const n = last6.length
+  const bandW = plotW / Math.max(n, 1)
+  const barW = Math.min(30, bandW * 0.5)
+  const baselineY = topPad + plotH
+
+  return (
+    <Card className="p-5 mb-3">
+      <SectionLabel>Savings Rate</SectionLabel>
+      <svg viewBox={`0 0 ${VBW} ${VBH}`} width="100%" height={VBH} preserveAspectRatio="none" className="block overflow-visible">
+        {avgPct != null && (
+          <line
+            x1={leftPad} x2={VBW - rightPad}
+            y1={topPad + plotH - (Math.min(Math.max(avgPct, 0), 100) / 100) * plotH}
+            y2={topPad + plotH - (Math.min(Math.max(avgPct, 0), 100) / 100) * plotH}
+            stroke={INK_3} strokeWidth={1} strokeDasharray="3 2"
+          />
+        )}
+        {last6.map((m, i) => {
+          const cx = leftPad + (i + 0.5) * bandW
+          const hasIncome = m.income_cents > 0
+          const pct = hasIncome ? (m.kept_cents / m.income_cents) * 100 : null
+          const barColor = pct != null && pct < 0 ? CRITICAL : SAVING
+          const barH = pct != null ? (Math.min(Math.max(pct, 0), 100) / 100) * plotH : 0
+          return (
+            <g key={`${m.year}-${m.month}`}>
+              {pct != null ? (
+                <path d={topRoundedRectPath(cx - barW / 2, baselineY - barH, barW, Math.max(barH, 2), 3)} fill={barColor} />
+              ) : (
+                <text x={cx} y={baselineY - 4} textAnchor="middle" fontSize="14" fill={INK_3}>—</text>
+              )}
+              {pct != null && (
+                <text x={cx} y={Math.max(baselineY - barH - 6, topPad - 4)} textAnchor="middle" fontSize="10" fill={INK_2} className="tabular">
+                  {Math.round(pct)}%
+                </text>
+              )}
+              <text x={cx} y={VBH - 4} textAnchor="middle" fontSize="11" fill={INK_3}>
+                {monthShortLabel(m.year, m.month)}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <p className="text-sm text-ink-2 mt-1">
+        {avgPct != null
+          ? <>You keep ~<span className="font-semibold text-ink tabular">{Math.round(avgPct)}%</span> of income on average.</>
+          : 'Not enough income history yet.'}
+      </p>
+    </Card>
+  )
+}
+
+// ── Reserve check — stat strip, the cash-flow-smoothing heart of the app ──────
+
+function ReserveCheckCard({ mrBalanceCents, remainingBillsCents }) {
+  if (remainingBillsCents <= 0) return null
+
+  const covered = mrBalanceCents >= remainingBillsCents
+  const shortfall = covered ? 0 : remainingBillsCents - mrBalanceCents
+  const Icon = covered ? Check : AlertTriangle
+
+  let segments
+  if (covered) {
+    const reservedPct = mrBalanceCents > 0 ? (remainingBillsCents / mrBalanceCents) * 100 : 100
+    segments = [
+      { pct: reservedPct, color: BILLS },
+      { pct: Math.max(0, 100 - reservedPct), color: SAVING },
+    ]
+  } else {
+    const coveredPct = (mrBalanceCents / remainingBillsCents) * 100
+    segments = [
+      { pct: Math.max(0, coveredPct), color: BILLS },
+      { pct: Math.max(0, 100 - coveredPct), color: CRITICAL },
+    ]
+  }
+
+  return (
+    <Card className="p-5 mb-3">
+      <SectionLabel>Reserve Check</SectionLabel>
+      <div className="flex items-start gap-3">
+        <div
+          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+          style={{ background: covered ? '#e4efea' : '#f8e7e4', color: covered ? SAVING : CRITICAL }}
+        >
+          <Icon size={14} />
+        </div>
+        <p className="text-sm text-ink-2 flex-1">
+          Reserve has <span className="font-semibold text-ink tabular">{c(mrBalanceCents)}</span> · {c(remainingBillsCents)} of bills left this month —{' '}
+          {covered
+            ? <span className="font-semibold" style={{ color: SAVING }}>covered</span>
+            : <span className="font-semibold text-critical">short by {c(shortfall)}</span>}
+        </p>
+      </div>
+      <div className="h-2 rounded-full bg-paper overflow-hidden flex gap-[2px] mt-3">
+        {segments.map((seg, i) => seg.pct > 0.5 && (
+          <div key={i} className="h-full" style={{ width: `${seg.pct}%`, background: seg.color }} />
         ))}
       </div>
     </Card>
@@ -367,12 +480,13 @@ function BalanceTrendsChart({ series }) {
 }
 
 // ── Where it went — spending breakdown for the effective current month ────────
+// Identity stays as a small colored dot (colorForId); the bar fill itself
+// switches to the semantic bucket color (Bills slate, Funds terracotta,
+// Transfers stone) so the list reads as one system, not a rainbow.
 
-// Identity stays as a small colored dot (colorForId); the bar fill itself is one
-// calm, neutral tone per section so the list reads as a single system rather than
-// a rainbow — the owner's explicit complaint about the old per-entity bar colors.
-function SpendRow({ name, amount, dotColor, barColor, maxVal }) {
+function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel }) {
   const pct = maxVal > 0 ? (amount / maxVal) * 100 : 0
+  const showDelta = delta != null && delta !== 0
   return (
     <div className="mb-3 last:mb-0">
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -380,18 +494,21 @@ function SpendRow({ name, amount, dotColor, barColor, maxVal }) {
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: dotColor }} />
           <span className="truncate">{name}</span>
         </span>
-        <span className="text-sm text-ink-2 tabular shrink-0">{c(amount)}</span>
+        <span className="flex items-baseline gap-1.5 shrink-0">
+          <span className="text-sm text-ink-2 tabular">{c(amount)}</span>
+          {showDelta && (
+            <span className={`text-[11px] tabular ${delta > 0 ? 'text-critical' : 'text-ink-3'}`}>
+              {delta > 0 ? '+' : '−'}{c(Math.abs(delta))} vs {deltaLabel}
+            </span>
+          )}
+        </span>
       </div>
       <Bar pct={pct} color={barColor} height={7} animate={false} />
     </div>
   )
 }
 
-const BILL_BAR_COLOR = CALM // one calm, light tone for all bills — never the heavy near-black
-const FUND_BAR_COLOR = ACCENT // one calm tone for all funds
-const TRANSFER_BAR_COLOR = INK_3 // lightest of the three — visually "quietest," not spending
-
-function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, loading, error, onRetry }) {
+function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, prevBreakdown, loading, error, onRetry }) {
   const bills = breakdown?.bills ?? []
   const allFunds = breakdown?.funds ?? []
   const spendFunds = allFunds.filter((f) => f.destination_type !== 'transfer_out')
@@ -399,6 +516,11 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, loading, erro
 
   const maxSpend = Math.max(1, ...bills.map((b) => b.spent_cents), ...spendFunds.map((f) => f.spent_cents))
   const maxTransfer = Math.max(1, ...transferFunds.map((f) => f.spent_cents))
+
+  const prevYM = shiftYM(ym.year, ym.month, -1)
+  const prevLabel = monthShortLabel(prevYM.year, prevYM.month)
+  const prevBillByName = Object.fromEntries((prevBreakdown?.bills ?? []).map((b) => [b.name, b.spent_cents]))
+  const prevFundById = Object.fromEntries((prevBreakdown?.funds ?? []).map((f) => [f.fund_id, f.spent_cents]))
 
   const empty = !loading && !error && bills.length === 0 && spendFunds.length === 0 && transferFunds.length === 0
 
@@ -433,24 +555,36 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, loading, erro
           {bills.length > 0 && (
             <div className="mb-4">
               <p className="text-xs font-semibold text-ink-3 mb-2">Bills</p>
-              {bills.map((b) => (
-                <SpendRow key={`bill-${b.line_item_id}`} name={b.name} amount={b.spent_cents} dotColor={colorForId(b.line_item_id)} barColor={BILL_BAR_COLOR} maxVal={maxSpend} />
-              ))}
+              {bills.map((b) => {
+                const prev = prevBillByName[b.name]
+                const delta = prev != null ? b.spent_cents - prev : null
+                return (
+                  <SpendRow key={`bill-${b.line_item_id}`} name={b.name} amount={b.spent_cents}
+                    dotColor={colorForId(b.line_item_id)} barColor={BILLS} maxVal={maxSpend}
+                    delta={delta} deltaLabel={prevLabel} />
+                )
+              })}
             </div>
           )}
           {spendFunds.length > 0 && (
             <div className={transferFunds.length > 0 || bills.length > 0 ? 'mb-4' : ''}>
               <p className="text-xs font-semibold text-ink-3 mb-2">Funds</p>
-              {spendFunds.map((f) => (
-                <SpendRow key={`fund-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents} dotColor={colorForId(f.fund_id)} barColor={FUND_BAR_COLOR} maxVal={maxSpend} />
-              ))}
+              {spendFunds.map((f) => {
+                const prev = prevFundById[f.fund_id]
+                const delta = prev != null ? f.spent_cents - prev : null
+                return (
+                  <SpendRow key={`fund-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents}
+                    dotColor={colorForId(f.fund_id)} barColor={FUNDS_HUE} maxVal={maxSpend}
+                    delta={delta} deltaLabel={prevLabel} />
+                )
+              })}
             </div>
           )}
           {transferFunds.length > 0 && (
             <div className="pt-3 border-t border-line opacity-70">
               <p className="text-xs font-semibold text-ink-3 mb-2">Transfers out — not spending</p>
               {transferFunds.map((f) => (
-                <SpendRow key={`transfer-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents} dotColor={colorForId(f.fund_id)} barColor={TRANSFER_BAR_COLOR} maxVal={maxTransfer} />
+                <SpendRow key={`transfer-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents} dotColor={colorForId(f.fund_id)} barColor={TRANSFER_OUT} maxVal={maxTransfer} />
               ))}
             </div>
           )}
@@ -465,14 +599,21 @@ function WhereItWentCard({ ym, onPrev, onNext, canNext, breakdown, loading, erro
 export default function OverviewPage() {
   const [range, setRange] = useState(6)
   const [monthly, setMonthly] = useState(null)
-  const [series, setSeries] = useState(null)
   const [mainLoading, setMainLoading] = useState(true)
   const [mainError, setMainError] = useState('')
 
   const [breakdownYM, setBreakdownYM] = useState(null)
   const [breakdown, setBreakdown] = useState(null)
+  const [prevBreakdown, setPrevBreakdown] = useState(null)
   const [breakdownLoading, setBreakdownLoading] = useState(false)
   const [breakdownError, setBreakdownError] = useState('')
+
+  // Current-month data for Spending Pace + Reserve Check — independent of the
+  // 6mo/12mo range toggle and the "Where it went" navigable month, always the
+  // effective current month.
+  const [current, setCurrent] = useState(null)
+  const [currentLoading, setCurrentLoading] = useState(true)
+  const [currentError, setCurrentError] = useState('')
 
   const [refreshKey, setRefreshKey] = useState(0)
   const breakdownInitRef = useRef(false)
@@ -481,12 +622,8 @@ export default function OverviewPage() {
     setMainLoading(true)
     setMainError('')
     try {
-      const [monthlyData, seriesData] = await Promise.all([
-        apiGet(`/overview/monthly?months=${range}`),
-        apiGet(`/overview/balance-series?months=${range}`),
-      ])
+      const monthlyData = await apiGet(`/overview/monthly?months=${range}`)
       setMonthly(monthlyData.months)
-      setSeries(seriesData.series)
       if (!breakdownInitRef.current && monthlyData.months.length > 0) {
         breakdownInitRef.current = true
         const last = monthlyData.months[monthlyData.months.length - 1]
@@ -506,8 +643,13 @@ export default function OverviewPage() {
     setBreakdownLoading(true)
     setBreakdownError('')
     try {
-      const data = await apiGet(`/overview/spending-breakdown?year=${breakdownYM.year}&month=${breakdownYM.month}`)
+      const prevYM = shiftYM(breakdownYM.year, breakdownYM.month, -1)
+      const [data, prevData] = await Promise.all([
+        apiGet(`/overview/spending-breakdown?year=${breakdownYM.year}&month=${breakdownYM.month}`),
+        apiGet(`/overview/spending-breakdown?year=${prevYM.year}&month=${prevYM.month}`),
+      ])
       setBreakdown(data)
+      setPrevBreakdown(prevData)
     } catch (err) {
       setBreakdownError(err.message || 'Failed to load')
     } finally {
@@ -516,6 +658,38 @@ export default function OverviewPage() {
   }, [breakdownYM])
 
   useEffect(() => { loadBreakdown() }, [loadBreakdown, refreshKey])
+
+  const loadCurrent = useCallback(async () => {
+    setCurrentLoading(true)
+    setCurrentError('')
+    try {
+      const clock = await apiGet('/dev/current-date')
+      const [y, m, d] = clock.effective_date.split('-').map(Number)
+      const [summary, state, txns, funds, curBreakdown] = await Promise.all([
+        apiGet(`/monthly-summary?year=${y}&month=${m}`),
+        apiGet('/state'),
+        apiGet(`/transactions/?year=${y}&month=${m}`),
+        apiGet('/funds/'),
+        apiGet(`/overview/spending-breakdown?year=${y}&month=${m}`),
+      ])
+      const transferFundNames = new Set(funds.filter((f) => f.destination_type === 'transfer_out').map((f) => f.name))
+      const paceTxns = txns.filter((tx) => !(tx.fund_name && transferFundNames.has(tx.fund_name)))
+      const actualBillsSpent = (curBreakdown.bills ?? []).reduce((s, b) => s + b.spent_cents, 0)
+      setCurrent({
+        year: y, month: m, day: d,
+        plannedTotal: summary.expected_bills_total_cents + summary.expected_fund_contributions_total_cents,
+        paceTxns,
+        mrBalanceCents: state.monthly_reserve.balance_cents,
+        remainingBillsCents: summary.expected_bills_total_cents - actualBillsSpent,
+      })
+    } catch (err) {
+      setCurrentError(err.message || 'Failed to load')
+    } finally {
+      setCurrentLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadCurrent() }, [loadCurrent, refreshKey])
 
   useEffect(() => {
     function onRefresh() { setRefreshKey((k) => k + 1) }
@@ -534,11 +708,11 @@ export default function OverviewPage() {
     )
   }
 
-  if (mainLoading || !monthly || !series) {
+  if (mainLoading || !monthly) {
     return <div className="flex items-center justify-center h-64 text-ink-3">Loading…</div>
   }
 
-  const hasActivity = monthly.some((m) => m.income_cents !== 0 || m.spent_cents !== 0 || m.transfers_out_cents !== 0)
+  const hasActivity = monthly.some((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
   const currentYM = monthly.length > 0 ? { year: monthly[monthly.length - 1].year, month: monthly[monthly.length - 1].month } : null
   const canNext = !!(breakdownYM && currentYM && (breakdownYM.year < currentYM.year || (breakdownYM.year === currentYM.year && breakdownYM.month < currentYM.month)))
 
@@ -566,7 +740,27 @@ export default function OverviewPage() {
       ) : (
         <>
           <KeptVsSpentChart months={monthly} />
-          <BalanceTrendsChart series={series} />
+
+          {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
+            <SpendingPaceChart
+              year={current.year} month={current.month} day={current.day}
+              plannedTotal={current.plannedTotal} txns={current.paceTxns}
+            />
+          )}
+
+          <SavingsRateCard months={monthly} />
+
+          {!currentLoading && !currentError && current && (
+            <ReserveCheckCard mrBalanceCents={current.mrBalanceCents} remainingBillsCents={current.remainingBillsCents} />
+          )}
+
+          {currentError && (
+            <Card className="p-4 mb-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-critical">{currentError}</p>
+              <button onClick={loadCurrent} className="text-xs font-semibold text-accent shrink-0">Retry</button>
+            </Card>
+          )}
+
           {breakdownYM && (
             <WhereItWentCard
               ym={breakdownYM}
@@ -574,6 +768,7 @@ export default function OverviewPage() {
               onNext={() => canNext && setBreakdownYM((ym) => shiftYM(ym.year, ym.month, 1))}
               canNext={canNext}
               breakdown={breakdown}
+              prevBreakdown={prevBreakdown}
               loading={breakdownLoading}
               error={breakdownError}
               onRetry={loadBreakdown}

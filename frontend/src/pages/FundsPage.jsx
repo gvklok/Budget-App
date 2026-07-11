@@ -244,7 +244,7 @@ function MonthlyReserveCard({ mr, savings, onUpdate }) {
     <Card className="p-4 flex flex-col">
       <div className="flex items-center justify-between gap-1.5">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Monthly Reserve</p>
-        {atTarget && <Badge tone="good">Funded</Badge>}
+        {atTarget && <Badge tone="bills">Funded</Badge>}
       </div>
       <p className="text-xl font-bold text-ink mt-1 tabular">{c(mr.balance_cents)}</p>
       {mr.target_cents > 0 ? (
@@ -404,7 +404,7 @@ export default function FundsPage() {
               <button
                 onClick={handleDistribute}
                 disabled={distributing}
-                className="text-xs font-semibold text-good disabled:opacity-40"
+                className="text-xs font-semibold text-accent disabled:opacity-40"
               >
                 {distributing ? 'Distributing…' : 'Distribute'}
               </button>
@@ -473,7 +473,7 @@ export default function FundsPage() {
                         ? `${c(fund.monthly_contribution_cents)}/mo`
                         : 'No contribution set'}
                     </span>
-                    {fund.destination_type === 'transfer_out' && <Badge tone="accent">Transfer Out</Badge>}
+                    {fund.destination_type === 'transfer_out' && <Badge tone="transfer">Transfer Out</Badge>}
                     {fund.balance_cents < 0 && <Badge tone="critical">Recovering</Badge>}
                   </div>
                   <div className="flex items-center shrink-0">

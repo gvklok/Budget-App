@@ -505,7 +505,7 @@ export default function FundDetailPage() {
         )}
 
         <div className="flex flex-wrap gap-1.5 mt-3">
-          {fund.destination_type === 'transfer_out' && <Badge tone="accent">Transfer Out</Badge>}
+          {fund.destination_type === 'transfer_out' && <Badge tone="transfer">Transfer Out</Badge>}
           {fund.allow_negative_balance && <Badge tone="neutral">Allows negative</Badge>}
         </div>
 

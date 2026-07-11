@@ -20,9 +20,29 @@ export default {
           soft: '#e4efea',
           hover: '#0c4a42',
         },
+        // Semantic money-concept colors (see theme.js for the full rationale)
+        // — one hue per concept, app-wide. `good` is a deliberate alias of
+        // `saving`: the app has exactly one green and it always means
+        // "kept/saved."
+        saving: {
+          DEFAULT: '#0f5c52',
+          soft: '#e4efea',
+        },
         good: {
-          DEFAULT: '#1f8a4c',
-          soft: '#e7f4ec',
+          DEFAULT: '#0f5c52',
+          soft: '#e4efea',
+        },
+        bills: {
+          DEFAULT: '#3e6c8c',
+          soft: '#e6edf1',
+        },
+        funds: {
+          DEFAULT: '#c1652f',
+          soft: '#f6e8de',
+        },
+        transfer: {
+          DEFAULT: '#9c9484',
+          soft: '#efece4',
         },
         warn: {
           DEFAULT: '#a8791f',
