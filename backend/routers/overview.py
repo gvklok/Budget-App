@@ -13,10 +13,11 @@ router = APIRouter()
 MAX_MONTHS = 24
 
 
-def _last_n_months(db: Session, months: int) -> list[tuple[int, int]]:
-    """(year, month) pairs ascending, ending at the effective current month."""
+def _last_n_months(db: Session, months: int, end: Optional[tuple[int, int]] = None) -> list[tuple[int, int]]:
+    """(year, month) pairs ascending, ending at `end` (default: the effective
+    current month)."""
     months = max(1, min(months, MAX_MONTHS))
-    year, month = plans_lib.current_year_month(db)
+    year, month = end if end else plans_lib.current_year_month(db)
     out = []
     for _ in range(months):
         out.append((year, month))
@@ -97,15 +98,24 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
 def spending_breakdown(
     year: Optional[int] = None,
     month: Optional[int] = None,
+    months: int = 1,
     db: Session = Depends(get_db),
 ):
     if year is None or month is None:
         year, month = plans_lib.current_year_month(db)
-    prefix = f"{year:04d}-{month:02d}"
+
+    # months > 1 aggregates the window of `months` ending at (year, month).
+    # The months are contiguous, so a simple date-string range covers them.
+    window = _last_n_months(db, months, end=(year, month))
+    start_prefix = f"{window[0][0]:04d}-{window[0][1]:02d}"
+    end_prefix = f"{window[-1][0]:04d}-{window[-1][1]:02d}"
 
     transactions = (
         db.query(models.Transaction)
-        .filter(models.Transaction.date.like(f"{prefix}%"))
+        .filter(
+            models.Transaction.date >= f"{start_prefix}-01",
+            models.Transaction.date <= f"{end_prefix}-31",
+        )
         .all()
     )
 
@@ -131,14 +141,23 @@ def spending_breakdown(
         for f in db.query(models.Fund).filter(models.Fund.id.in_(fund_totals)).all():
             funds_by_id[f.id] = f
 
-    bills = sorted(
-        (
+    # Bills are month-scoped line items, so the "same" bill (Rent) has a
+    # different id in every month's plan — a multi-month window must merge by
+    # name (keeping one representative id so the frontend's stable entity
+    # colors still work). Single-month keeps pure id grouping.
+    if months > 1:
+        merged: dict[str, dict] = {}
+        for lid, total in bill_totals.items():
+            name = expenses_by_id[lid].name
+            row = merged.setdefault(name, {"line_item_id": lid, "name": name, "spent_cents": 0})
+            row["spent_cents"] += total
+        bill_rows = merged.values()
+    else:
+        bill_rows = (
             {"line_item_id": lid, "name": expenses_by_id[lid].name, "spent_cents": total}
             for lid, total in bill_totals.items()
-        ),
-        key=lambda b: b["spent_cents"],
-        reverse=True,
-    )
+        )
+    bills = sorted(bill_rows, key=lambda b: b["spent_cents"], reverse=True)
     funds = sorted(
         (
             {
