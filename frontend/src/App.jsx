@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import DevOverlay from './components/DevOverlay'
 import FundsPage from './pages/FundsPage'
+import FundDetailPage from './pages/FundDetailPage'
 import ExpensesPage from './pages/ExpensesPage'
 import OverviewPage from './pages/OverviewPage'
 import ChecklistPage from './pages/ChecklistPage'
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/funds" replace />} />
         <Route element={<Layout />}>
           <Route path="/funds" element={<FundsPage />} />
+          <Route path="/funds/:id" element={<FundDetailPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/checklist" element={<ChecklistPage />} />

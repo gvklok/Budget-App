@@ -1,32 +1,20 @@
 import { useState, useEffect } from 'react'
-import { fmt, toCents } from '../api'
+import { fmt, toCents, apiGet, apiPost } from '../api'
 
-async function fetchState() {
-  const r = await fetch('/api/state')
-  return r.json()
+function fetchState() {
+  return apiGet('/state')
 }
 
-async function fetchSimTxns() {
-  const r = await fetch('/api/dev/simulated-transactions')
-  return r.json()
+function fetchSimTxns() {
+  return apiGet('/dev/simulated-transactions')
 }
 
-async function fetchCurrentDate() {
-  const r = await fetch('/api/dev/current-date')
-  return r.json()
+function fetchCurrentDate() {
+  return apiGet('/dev/current-date')
 }
 
-async function devPost(path, body) {
-  const r = await fetch(`/api/dev/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(err.detail || 'Request failed')
-  }
-  return r.json()
+function devPost(path, body) {
+  return apiPost(`/dev/${path}`, body)
 }
 
 function c(cents) {
@@ -318,12 +306,18 @@ export default function DevOverlay() {
   const [paycheckCount, setPaycheckCount] = useState(0)
   const [paycheckError, setPaycheckError] = useState('')
   const [simulating, setSimulating] = useState(false)
+  const [loadError, setLoadError] = useState('')
 
   async function load() {
-    const [s, txns, clock] = await Promise.all([fetchState(), fetchSimTxns(), fetchCurrentDate()])
-    setState(s)
-    setSimTxns(txns)
-    setClockInfo(clock)
+    setLoadError('')
+    try {
+      const [s, txns, clock] = await Promise.all([fetchState(), fetchSimTxns(), fetchCurrentDate()])
+      setState(s)
+      setSimTxns(txns)
+      setClockInfo(clock)
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load')
+    }
   }
 
   function close() {
@@ -390,7 +384,17 @@ export default function DevOverlay() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 pb-6 space-y-5">
-              {!state ? (
+              {loadError ? (
+                <div className="text-center py-12">
+                  <p className="text-critical text-sm mb-3">{loadError}</p>
+                  <button
+                    onClick={load}
+                    className="text-sm bg-accent text-white rounded-lg px-4 py-2 font-medium"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : !state ? (
                 <p className="text-slate-400 text-sm text-center py-12">Loading…</p>
               ) : (
                 <>

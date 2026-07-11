@@ -3,21 +3,39 @@ const BASE = '/api'
 async function req(method, path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(err.detail || 'Request failed')
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
   }
-  return res.status === 204 ? null : res.json()
+  if (res.status === 204) return null
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
+}
+
+export function apiGet(path) {
+  return req('GET', path)
+}
+
+export function apiPost(path, body) {
+  return req('POST', path, body)
+}
+
+export function apiPatch(path, body) {
+  return req('PATCH', path, body)
+}
+
+export function apiDel(path) {
+  return req('DELETE', path)
 }
 
 export const api = {
   funds: {
-    create: (data) => req('POST', '/funds/', data),
-    update: (id, data) => req('PATCH', `/funds/${id}`, data),
-    delete: (id) => req('DELETE', `/funds/${id}`),
+    create: (data) => apiPost('/funds/', data),
+    update: (id, data) => apiPatch(`/funds/${id}`, data),
+    delete: (id) => apiDel(`/funds/${id}`),
   },
 }
 
