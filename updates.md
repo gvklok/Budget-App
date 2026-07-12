@@ -459,3 +459,17 @@ unchanged.
   test-writer (haiku); orchestration rules in `CLAUDE.md`.
 - README data-model section rewritten to match `PROJECT.md` (it described a
   pre-build model).
+## Changelog addendum — UI iteration series (2026-07-11)
+
+Committed as separate judgment points on `fableFun`:
+- Semantic color language: green=saved (only), earthy brown=Bills+Monthly
+  Reserve, blue=Funds, stone=transfers-out, red=trouble. Rows use per-entity
+  identity colors; aggregates use the semantic hue.
+- Overview rebuilt as an insights page: Period Review (1m/3m/6m/1y),
+  This Month (Spending Pace vs plan, Bills Coverage), Over This Period
+  (Money Flow sankey, Kept vs Spent, Savings Rate, Where It Went with
+  vs-prior-period deltas + range donut). Balance Trends removed as unhelpful.
+- User-controlled ordering of funds and bills (backend sort_order + reorder
+  endpoints; distribute funds in the user's priority order).
+- Dark mode: CSS-variable tokens, warm charcoal palette, System/Light/Dark
+  toggle on Settings.
