@@ -117,7 +117,7 @@ function AddItemRow({ onAdd }) {
         <button
           type="submit"
           disabled={saving}
-          className="text-xs font-semibold text-accent disabled:opacity-40 shrink-0"
+          className="text-xs font-semibold text-accent-ink disabled:opacity-40 shrink-0"
         >
           {saving ? 'Adding…' : 'Add'}
         </button>
@@ -246,7 +246,7 @@ export default function ChecklistPage() {
               <button
                 onClick={handleReset}
                 disabled={resetting}
-                className="text-xs font-semibold text-ink-2 border border-line bg-white rounded-full px-3 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
+                className="text-xs font-semibold text-ink-2 border border-line bg-card rounded-full px-3 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
               >
                 {resetting ? 'Resetting…' : 'Reset all?'}
               </button>
@@ -255,7 +255,7 @@ export default function ChecklistPage() {
           ) : (
             <button
               onClick={() => setConfirmReset(true)}
-              className="flex items-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-white rounded-full px-3.5 py-2 active:scale-[0.98] transition-transform shrink-0"
+              className="flex items-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-card rounded-full px-3.5 py-2 active:scale-[0.98] transition-transform shrink-0"
             >
               <RotateCcw size={14} />
               Reset

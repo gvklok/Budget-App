@@ -248,7 +248,7 @@ function SimulateSpend({ state, onDone }) {
         className="w-full border border-white/10 bg-white/5 rounded-lg px-2.5 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-white/30"
       >
         {buckets.map((b) => (
-          <option key={b.id} value={b.id} className="bg-ink">
+          <option key={b.id} value={b.id} className="bg-devpanel">
             {b.label} — {c(b.balance_cents)}
           </option>
         ))}
@@ -363,9 +363,13 @@ export default function DevOverlay() {
 
   return (
     <>
+      {/* Dev Panel is a deliberately permanent dark "console" surface,
+          independent of the app's light/dark mode — `devpanel`/`devcritical`
+          are fixed tokens (not redefined under .dark), so this stays exactly
+          the same regardless of the site theme. */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-24 right-4 z-50 bg-ink text-white text-[11px] font-bold tracking-wide px-3.5 py-2 rounded-full shadow-pop border border-white/10"
+        className="fixed bottom-24 right-4 z-50 bg-devpanel text-white text-[11px] font-bold tracking-wide px-3.5 py-2 rounded-full shadow-pop border border-white/10"
       >
         DEV
       </button>
@@ -374,7 +378,7 @@ export default function DevOverlay() {
         <div className="fixed inset-0 z-40 flex flex-col justify-end items-center px-4">
           <div className="absolute inset-0 bg-black/50" onClick={close} />
 
-          <div className="relative bg-ink rounded-[28px] shadow-pop flex flex-col max-h-[85vh] w-full max-w-sm mx-auto mb-4 border border-white/10">
+          <div className="relative bg-devpanel rounded-[28px] shadow-pop flex flex-col max-h-[85vh] w-full max-w-sm mx-auto mb-4 border border-white/10">
             <div className="flex justify-center pt-3 pb-1 shrink-0">
               <div className="w-10 h-1 rounded-full bg-white/15" />
             </div>
@@ -503,7 +507,7 @@ export default function DevOverlay() {
                   <button
                     onClick={handleReset}
                     disabled={resetting}
-                    className="w-full bg-critical text-white rounded-xl py-3 font-semibold disabled:opacity-40"
+                    className="w-full bg-devcritical hover:bg-devcritical-hover text-white rounded-xl py-3 font-semibold disabled:opacity-40"
                   >
                     {resetting ? 'Resetting…' : 'Reset All Data'}
                   </button>

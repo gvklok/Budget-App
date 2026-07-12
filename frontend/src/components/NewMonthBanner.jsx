@@ -70,8 +70,8 @@ export default function NewMonthBanner() {
 
   return (
     <div className="sticky top-0 z-30 px-4 pt-3">
-      <div className="bg-ink/90 backdrop-blur-md text-white rounded-2xl px-4 py-3 shadow-pop flex items-center gap-3">
-        <Sparkles size={16} className="text-accent shrink-0" />
+      <div className="bg-ink/90 backdrop-blur-md text-on-ink rounded-2xl px-4 py-3 shadow-pop flex items-center gap-3">
+        <Sparkles size={16} className="text-accent-ink shrink-0" />
         <div className="flex-1 min-w-0">
           {summary ? (
             <p className="text-xs font-semibold leading-snug">{summary}</p>
@@ -89,7 +89,7 @@ export default function NewMonthBanner() {
             {running ? 'Running…' : 'Run both'}
           </button>
         )}
-        <button onClick={() => setDismissed(true)} className="text-white/50 hover:text-white shrink-0">
+        <button onClick={() => setDismissed(true)} className="text-on-ink/50 hover:text-on-ink shrink-0">
           <X size={14} />
         </button>
       </div>

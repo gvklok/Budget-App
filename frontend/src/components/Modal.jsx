@@ -13,9 +13,11 @@ export default function Modal({ title, onClose, children }) {
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       onClick={onClose}
     >
-      <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" />
+      {/* `scrim` is a fixed dark veil independent of `ink` (which inverts to
+          off-white in dark mode) — the backdrop must stay dark in both modes. */}
+      <div className="absolute inset-0 bg-scrim backdrop-blur-sm" />
       <div
-        className="relative w-full sm:max-w-md bg-card rounded-t-[28px] sm:rounded-[28px] shadow-pop z-10 max-h-[90vh] flex flex-col rise-in"
+        className="relative w-full sm:max-w-md bg-card border border-line rounded-t-[28px] sm:rounded-[28px] shadow-pop z-10 max-h-[90vh] flex flex-col rise-in"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center pt-3 sm:hidden">

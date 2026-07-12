@@ -8,7 +8,7 @@ function c(cents) {
 }
 
 const inputClass =
-  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-white'
+  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-card'
 const labelClass = 'block text-sm font-medium text-ink-2 mb-1.5'
 
 // Shared by FundsPage (generic transfer between any two buckets) and

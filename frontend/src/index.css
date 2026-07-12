@@ -2,6 +2,149 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens — CSS custom properties ───────────────────────────────────
+   Single source of truth for color, consumed by tailwind.config.js (so class
+   names never change between modes) AND by theme.js (so SVG fill/stroke and
+   inline styles pick up the same values). Dark values are a deliberately
+   re-designed warm-dark palette (not an automatic invert) — see CLAUDE.md /
+   dark-mode task notes for the rationale and dataviz-validator results.
+
+   Values are stored as bare "R G B" channel triplets (not hex) — the format
+   Tailwind's `rgb(var(--x) / <alpha-value>)` opacity-modifier pattern
+   requires (see tailwind.config.js's `withOpacity` helper). A hex custom
+   property can't support `bg-ink/90`-style utilities at all: Tailwind can't
+   parse a runtime var() into channels at build time, so it silently drops
+   the class. theme.js wraps these the same way (`rgb(var(--x))`) for SVG
+   fill/stroke — the space-separated rgb() syntax is standard CSS Color 4. */
+:root {
+  --paper: 246 244 239;
+  --card: 255 255 255;
+  --line: 234 229 217;
+  --line-strong: 221 213 196;
+  --ink: 23 20 15;
+  --ink-2: 92 87 74;
+  --ink-3: 156 148 132;
+  /* Text/icon color for content drawn ON TOP of an `ink`-colored surface
+     (the sanctioned black pill/card/tooltip). Opposite polarity of `ink` by
+     design, so the pairing always resolves to a readable surface: white on
+     near-black here; dark-ink on off-white once .dark flips `ink`. */
+  --on-ink: 255 255 255;
+  /* Modal/backdrop scrim — always a dark veil regardless of mode (never tied
+     to `ink`, which inverts to off-white in dark mode). Full rgba(), not a
+     channel triplet — used directly as a background-color, never through
+     the opacity-modifier system. */
+  --scrim: rgba(23, 20, 15, 0.3);
+
+  --accent: 15 92 82;
+  --accent-hover: 12 74 66;
+  --accent-soft: 228 239 234;
+  /* Text-safe step for `text-accent`/`border-accent` standalone uses (not a
+     solid accent-filled button) — same value as DEFAULT in light mode; the
+     two diverge in dark mode (see .dark below) for the same reason
+     saving/bills already carry a separate `-ink` step. */
+  --accent-ink: 15 92 82;
+
+  --saving: 47 138 92;
+  --saving-ink: 40 107 73;
+  --saving-soft: 231 243 237;
+
+  --bills: 156 101 34;
+  --bills-ink: 138 86 24;
+  --bills-soft: 241 232 220;
+
+  --funds: 47 95 158;
+  --funds-ink: 47 95 158;
+  --funds-soft: 230 237 246;
+
+  --transfer: 156 148 132;
+  --transfer-soft: 239 236 228;
+
+  --warn: 168 121 31;
+  --warn-soft: 251 241 222;
+
+  --critical: 178 59 46;
+  --critical-soft: 248 231 228;
+
+  --chart-1: 95 138 63; /* sage */
+  --chart-2: 90 130 194; /* periwinkle */
+  --chart-3: 193 101 47; /* terracotta */
+  --chart-4: 15 143 121; /* teal */
+  --chart-5: 184 134 43; /* ochre */
+  --chart-6: 194 90 118; /* rose */
+  --chart-7: 122 79 138; /* plum */
+
+  --shadow-card: 0 1px 2px rgba(23, 20, 15, 0.04), 0 8px 24px -12px rgba(23, 20, 15, 0.10);
+  --shadow-pop: 0 12px 32px -8px rgba(23, 20, 15, 0.20);
+
+  /* Dev Panel — a deliberately permanent dark "console" surface, independent
+     of the app's light/dark mode (a debug tool, not a themed screen). Not
+     redefined under .dark, so it never changes. Plain hex (not a channel
+     triplet) — nothing applies an opacity modifier to these. */
+  --devpanel: #17140f;
+  --devcritical: #b23b2e;
+  --devcritical-hover: #9c3226;
+
+  color-scheme: light;
+}
+
+.dark {
+  --paper: 25 23 19;
+  --card: 35 32 27;
+  --line: 53 49 42;
+  --line-strong: 66 61 51;
+  --ink: 240 237 230;
+  --ink-2: 179 171 156;
+  --ink-3: 122 115 100;
+  --on-ink: 23 20 15;
+  --scrim: rgba(0, 0, 0, 0.55);
+
+  /* Solid-fill button background (paired with white text) — tuned darker
+     than accent-ink so white text on top still clears ~5:1. */
+  --accent: 26 125 104;
+  --accent-hover: 34 143 120;
+  --accent-soft: 23 50 44;
+  /* Brighter step for accent AS TEXT/border (standalone, not a solid fill) —
+     the darker DEFAULT above reads muddy as foreground text on a dark card. */
+  --accent-ink: 43 171 147;
+
+  --saving: 69 168 115;
+  --saving-ink: 126 203 158;
+  --saving-soft: 28 51 39;
+
+  --bills: 201 145 80;
+  --bills-ink: 224 181 127;
+  --bills-soft: 51 38 25;
+
+  --funds: 74 127 201;
+  --funds-ink: 111 159 224;
+  --funds-soft: 24 38 54;
+
+  --transfer: 179 170 152;
+  --transfer-soft: 43 39 33;
+
+  --warn: 209 163 74;
+  --warn-soft: 51 40 19;
+
+  --critical: 224 104 90;
+  --critical-soft: 58 32 28;
+
+  --chart-1: 106 156 74;
+  --chart-2: 102 144 209;
+  --chart-3: 201 111 63;
+  --chart-4: 23 168 136;
+  --chart-5: 184 134 47;
+  --chart-6: 201 111 143;
+  --chart-7: 143 95 163;
+
+  /* Shadows barely read on dark surfaces — swap for a stronger, cooler-black
+     veil (cards additionally lean on `border-line` for definition, per the
+     sweep) rather than the same soft ink-tinted shadow used on paper. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
 }

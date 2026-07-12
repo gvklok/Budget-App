@@ -70,7 +70,7 @@ export function Bar({ pct, color, trackColor = LINE, height = 7, animate = true 
 export function Card({ children, className = '', ink = false, as: As = 'div', ...rest }) {
   return (
     <As
-      className={`rounded-3xl shadow-card ${ink ? 'bg-ink text-white' : 'bg-card border border-line'} ${className}`}
+      className={`rounded-3xl shadow-card ${ink ? 'bg-ink text-on-ink' : 'bg-card border border-line'} ${className}`}
       {...rest}
     >
       {children}
@@ -106,7 +106,7 @@ export function GroupDivider({ children }) {
 
 const BADGE_TONES = {
   neutral: 'bg-paper text-ink-2',
-  accent: 'bg-accent-soft text-accent',
+  accent: 'bg-accent-soft text-accent-ink',
   // alias of `saving` — the app's one green. `-ink` is the darker text-safe
   // step (>=4.5:1 on the soft chip background), never the lighter fill hue.
   good: 'bg-good-soft text-good-ink',
@@ -115,7 +115,7 @@ const BADGE_TONES = {
   // background) — same pattern as good/saving above; DEFAULT is reserved
   // for fills/marks, never small text.
   bills: 'bg-bills-soft text-bills-ink',
-  funds: 'bg-funds-soft text-funds',
+  funds: 'bg-funds-soft text-funds-ink',
   transfer: 'bg-transfer-soft text-transfer',
   warn: 'bg-warn-soft text-warn',
   critical: 'bg-critical-soft text-critical',
@@ -150,9 +150,11 @@ export function IconButton({ children, className = '', compact = false, ...rest 
 // black pill reserved for buttons that LOG money (Expenses "Log", Fund
 // "Log spend"), so they read as a distinct, weightier action against the
 // accent language everywhere else. Never flip the default to ink.
+// `text-on-ink` (not `text-white`) — in dark mode `ink` inverts to a light
+// pill, so its label must invert too (dark text) to stay the standout.
 const PRIMARY_BUTTON_VARIANTS = {
   accent: 'bg-accent hover:bg-accent-hover text-white',
-  ink: 'bg-ink hover:bg-ink/90 text-white',
+  ink: 'bg-ink hover:bg-ink/90 text-on-ink',
 }
 
 export function PrimaryButton({ children, className = '', variant = 'accent', ...rest }) {
@@ -171,7 +173,7 @@ export function PrimaryButton({ children, className = '', variant = 'accent', ..
 export function AccentButton({ children, className = '', ...rest }) {
   return (
     <button
-      className={`bg-accent-soft text-accent font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
+      className={`bg-accent-soft text-accent-ink font-semibold rounded-2xl py-3 px-4 disabled:opacity-40 active:scale-[0.98] transition-transform ${className}`}
       {...rest}
     >
       {children}
@@ -200,7 +202,7 @@ export function Segmented({ options, value, onChange }) {
           key={opt.value}
           onClick={() => onChange(opt.value)}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-            value === opt.value ? 'bg-white text-ink shadow-sm' : 'text-ink-3'
+            value === opt.value ? 'bg-card text-ink shadow-sm' : 'text-ink-3'
           }`}
         >
           {opt.icon}{opt.label}

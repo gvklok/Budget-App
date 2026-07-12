@@ -12,7 +12,7 @@ function c(cents) {
 }
 
 const inputClass =
-  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-white'
+  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-card'
 const labelClass = 'block text-sm font-medium text-ink-2 mb-1.5'
 
 // U1: External Spend (money leaves your net worth) vs Transfer Out (moves to
@@ -42,7 +42,7 @@ function DestinationTypeField({ value, onChange }) {
 // useful for discretionary Funds that should just "catch up" next month.
 function AllowNegativeField({ checked, onChange }) {
   return (
-    <label className="flex items-start gap-3 p-3.5 rounded-2xl border border-line bg-white cursor-pointer">
+    <label className="flex items-start gap-3 p-3.5 rounded-2xl border border-line bg-card cursor-pointer">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5" />
       <div>
         <p className="text-sm font-medium text-ink">Allow this Fund to go negative</p>
@@ -431,7 +431,7 @@ export default function FundsPage() {
         <h1 className="text-3xl font-bold text-ink tracking-tight">Funds</h1>
         <button
           onClick={() => setShowTransfer(true)}
-          className="flex items-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-white rounded-full px-3.5 py-2 active:scale-[0.98] transition-transform"
+          className="flex items-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-card rounded-full px-3.5 py-2 active:scale-[0.98] transition-transform"
         >
           <ArrowRightLeft size={14} />
           Transfer
@@ -482,7 +482,7 @@ export default function FundsPage() {
                 <button
                   onClick={handleDistribute}
                   disabled={distributing}
-                  className="text-xs font-semibold text-accent disabled:opacity-40"
+                  className="text-xs font-semibold text-accent-ink disabled:opacity-40"
                 >
                   {distributing ? 'Distributing…' : 'Distribute'}
                 </button>

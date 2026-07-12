@@ -1,24 +1,44 @@
+// Wraps a CSS custom property (stored as a bare "R G B" channel triplet — see
+// index.css) so Tailwind's opacity modifiers work (`bg-ink/90`, `text-x/50`,
+// ...). This is Tailwind's documented pattern for CSS-variable-based colors;
+// without it, `/NN` utilities on a var()-based color are silently dropped at
+// build time (Tailwind can't resolve a runtime var() into channels itself).
+function withOpacity(variable) {
+  return ({ opacityValue }) =>
+    opacityValue === undefined ? `rgb(var(${variable}))` : `rgb(var(${variable}) / ${opacityValue})`
+}
+
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
       colors: {
         ink: {
-          DEFAULT: '#17140f',
-          2: '#5c574a',
-          3: '#9c9484',
+          DEFAULT: withOpacity('--ink'),
+          2: withOpacity('--ink-2'),
+          3: withOpacity('--ink-3'),
         },
-        paper: '#f6f4ef',
-        card: '#ffffff',
+        // Text/icon color for content drawn on top of an `ink`-colored
+        // surface (bg-ink pills/cards/tooltips) — see index.css for the
+        // rationale. Opposite polarity of `ink`, so it always stays readable.
+        'on-ink': withOpacity('--on-ink'),
+        paper: withOpacity('--paper'),
+        card: withOpacity('--card'),
         line: {
-          DEFAULT: '#eae5d9',
-          strong: '#ddd5c4',
+          DEFAULT: withOpacity('--line'),
+          strong: withOpacity('--line-strong'),
         },
+        // Full rgba() already — not a channel triplet, so no withOpacity.
+        scrim: 'var(--scrim)',
         accent: {
-          DEFAULT: '#0f5c52',
-          soft: '#e4efea',
-          hover: '#0c4a42',
+          DEFAULT: withOpacity('--accent'),
+          soft: withOpacity('--accent-soft'),
+          hover: withOpacity('--accent-hover'),
+          // Text/border-safe step for standalone `text-accent`/`border-accent`
+          // uses — diverges from DEFAULT in dark mode (see index.css).
+          ink: withOpacity('--accent-ink'),
         },
         // Semantic money-concept colors (see theme.js for the full rationale)
         // — one hue per concept, app-wide. `good` is a deliberate alias of
@@ -29,48 +49,70 @@ export default {
         // `soft` background (>=4.5:1) — use it wherever saving/good renders
         // as small TEXT (chips, amounts), reserve DEFAULT for fills/marks.
         saving: {
-          DEFAULT: '#2f8a5c',
-          soft: '#e7f3ed',
-          ink: '#286b49',
+          DEFAULT: withOpacity('--saving'),
+          soft: withOpacity('--saving-soft'),
+          ink: withOpacity('--saving-ink'),
         },
         good: {
-          DEFAULT: '#2f8a5c',
-          soft: '#e7f3ed',
-          ink: '#286b49',
+          DEFAULT: withOpacity('--saving'),
+          soft: withOpacity('--saving-soft'),
+          ink: withOpacity('--saving-ink'),
         },
         // Bills: earthy clay/umber (obligation, sober). `ink` is the darker
         // text-safe step for small text on the `soft` chip background — the
         // DEFAULT hue only clears ~4:1 there, short of 4.5:1 for small text.
         bills: {
-          DEFAULT: '#9c6522',
-          soft: '#f1e8dc',
-          ink: '#8a5618',
+          DEFAULT: withOpacity('--bills'),
+          soft: withOpacity('--bills-soft'),
+          ink: withOpacity('--bills-ink'),
         },
-        // Funds: dusty-confident blue (fun money). DEFAULT clears 4.5:1+ on
-        // white/paper/soft already, so no separate `ink` step is needed.
+        // Funds: dusty-confident blue (fun money). `ink` text-safe step
+        // matches DEFAULT in light mode (already clears 4.5:1+) but diverges
+        // in dark mode, same pattern as saving/bills.
         funds: {
-          DEFAULT: '#2f5f9e',
-          soft: '#e6edf6',
+          DEFAULT: withOpacity('--funds'),
+          soft: withOpacity('--funds-soft'),
+          ink: withOpacity('--funds-ink'),
         },
         transfer: {
-          DEFAULT: '#9c9484',
-          soft: '#efece4',
+          DEFAULT: withOpacity('--transfer'),
+          soft: withOpacity('--transfer-soft'),
         },
         warn: {
-          DEFAULT: '#a8791f',
-          soft: '#fbf1de',
+          DEFAULT: withOpacity('--warn'),
+          soft: withOpacity('--warn-soft'),
         },
         critical: {
-          DEFAULT: '#b23b2e',
-          soft: '#f8e7e4',
+          DEFAULT: withOpacity('--critical'),
+          soft: withOpacity('--critical-soft'),
+        },
+        // Fixed-order categorical chart palette — identity slots. See
+        // theme.js CHART_COLORS for the ordering rationale.
+        chart: {
+          1: withOpacity('--chart-1'),
+          2: withOpacity('--chart-2'),
+          3: withOpacity('--chart-3'),
+          4: withOpacity('--chart-4'),
+          5: withOpacity('--chart-5'),
+          6: withOpacity('--chart-6'),
+          7: withOpacity('--chart-7'),
+        },
+        // Dev Panel — permanently dark "console" surface, independent of
+        // light/dark mode (see index.css — not redefined under .dark). Plain
+        // hex custom properties (no opacity modifier is ever applied to
+        // these), so no withOpacity wrapper needed.
+        devpanel: 'var(--devpanel)',
+        devcritical: {
+          DEFAULT: 'var(--devcritical)',
+          hover: 'var(--devcritical-hover)',
         },
       },
       fontFamily: {
         sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
       boxShadow: {
-        card: '0 1px 2px rgba(23, 20, 15, 0.04), 0 8px 24px -12px rgba(23, 20, 15, 0.10)',
-        pop: '0 12px 32px -8px rgba(23, 20, 15, 0.20)',
+        card: 'var(--shadow-card)',
+        pop: 'var(--shadow-pop)',
       },
       borderRadius: {
         '4xl': '2rem',

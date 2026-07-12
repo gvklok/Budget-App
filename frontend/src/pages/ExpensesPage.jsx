@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
-import { LINE, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId } from '../theme'
+import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId } from '../theme'
 import Modal from '../components/Modal'
 import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented } from '../components/ui'
 
@@ -21,7 +21,7 @@ function shiftMonth({ year, month }, delta) {
 }
 
 const inputClass =
-  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-white'
+  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-card'
 const labelClass = 'block text-sm font-medium text-ink-2 mb-1.5'
 
 // ── Donut Ring Chart — category breakdown ──────────────────────────────────────
@@ -364,7 +364,7 @@ function SourceLabelModal({ prompt, bills, onCancel, onReallocate, onTransfer })
 
   const optionClass = (active) =>
     `flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer transition-colors ${
-      active ? 'border-accent bg-accent-soft' : 'border-line bg-white'
+      active ? 'border-accent bg-accent-soft' : 'border-line bg-card'
     }`
 
   return (
@@ -405,7 +405,7 @@ function SourceLabelModal({ prompt, bills, onCancel, onReallocate, onTransfer })
 
         <div className="flex gap-2">
           <button onClick={onCancel} disabled={saving}
-            className="flex-1 border border-line bg-white text-ink-2 font-semibold rounded-2xl py-3 disabled:opacity-40">
+            className="flex-1 border border-line bg-card text-ink-2 font-semibold rounded-2xl py-3 disabled:opacity-40">
             Cancel
           </button>
           <PrimaryButton onClick={handleConfirm} disabled={saving || (choice === 'reduce' && otherBills.length === 0)} className="flex-1">
@@ -967,7 +967,7 @@ export default function ExpensesPage() {
   if (uncategorized.length > 0) {
     const planned = uncategorized.reduce((s, b) => s + b.amount_cents, 0)
     const spent = uncategorized.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
-    if (planned > 0) chartSegments.push({ label: 'Uncategorized', color: '#9c9484', planned, spent })
+    if (planned > 0) chartSegments.push({ label: 'Uncategorized', color: INK_3, planned, spent })
   }
   for (const f of funds) {
     if (f.monthly_contribution_cents > 0 && f.destination_type !== 'transfer_out') {
@@ -988,7 +988,7 @@ export default function ExpensesPage() {
           // Ink-black — the one sanctioned black pill, reserved for buttons
           // that LOG money, deliberately distinct from the accent language.
           <button onClick={() => setLogTx({})}
-            className="flex items-center gap-1.5 bg-ink hover:bg-ink/90 text-white text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
+            className="flex items-center gap-1.5 bg-ink hover:bg-ink/90 text-on-ink text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
             <Receipt size={15} />Log
           </button>
         )}
@@ -1002,7 +1002,7 @@ export default function ExpensesPage() {
         {!isCurrentMonth && (
           <button
             onClick={() => setSelected({ year: effYear, month: effMonth })}
-            className="text-xs font-semibold text-accent ml-1"
+            className="text-xs font-semibold text-accent-ink ml-1"
           >
             Today
           </button>
@@ -1017,7 +1017,7 @@ export default function ExpensesPage() {
             <div className="flex items-center gap-2 bg-paper border border-line rounded-full px-3 py-1.5">
               <Badge tone="neutral">Read only</Badge>
               <button onClick={() => setUnlockedMonth({ year: currentYear, month: currentMonth })}
-                className="text-xs font-semibold text-accent">
+                className="text-xs font-semibold text-accent-ink">
                 Edit
               </button>
             </div>
@@ -1117,7 +1117,7 @@ export default function ExpensesPage() {
         {incomeOpen && (
           incomeSources.length === 0 ? (
             <EmptyState title="No income sources yet" action={
-              !locked && <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-accent">Add income source →</button>
+              !locked && <button onClick={() => setShowAddSource(true)} className="text-sm font-semibold text-accent-ink">Add income source →</button>
             } />
           ) : (
             <div className="space-y-2">
@@ -1164,7 +1164,7 @@ export default function ExpensesPage() {
             ) : (
               <div className="flex items-center gap-2">
                 <button onClick={() => setShowCatManager(true)}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-white rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
+                  className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-card rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
                   <Tag size={12} />Categories
                 </button>
                 {bills.length > 1 && (

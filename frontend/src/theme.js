@@ -1,16 +1,33 @@
-// Design tokens as raw hex — for contexts Tailwind classes can't reach
-// (SVG stroke/fill, canvas, inline gradients). Keep in sync with tailwind.config.js.
+// Design tokens as CSS-variable-backed color strings — for contexts Tailwind
+// classes can't reach (SVG stroke/fill, canvas, inline gradients). Every
+// value here resolves a custom property defined in index.css (:root for
+// light, .dark for dark) — that file is the single source of truth for the
+// actual RGB values; this file just names the concepts. Modern browsers
+// resolve CSS custom properties inside SVG presentation attributes
+// (fill="rgb(var(--x))"), so passing these straight into SVG props/inline
+// styles repaints correctly when the `.dark` class toggles — no JS
+// re-render needed. The index.css custom properties are bare "R G B"
+// channel triplets (Tailwind's opacity-modifier convention — see
+// tailwind.config.js), so every export here wraps its variable in `rgb()`;
+// never reference the bare `var(--x)` form directly, it isn't a valid color
+// on its own. Keep in sync with tailwind.config.js, which points the
+// matching Tailwind color tokens at the same variables.
+function rgbVar(name) {
+  return `rgb(var(${name}))`
+}
 
-export const INK = '#17140f'
-export const INK_2 = '#5c574a'
-export const INK_3 = '#9c9484'
-export const PAPER = '#f6f4ef'
-export const CARD = '#ffffff'
-export const LINE = '#eae5d9'
-export const LINE_STRONG = '#ddd5c4'
+export const INK = rgbVar('--ink')
+export const INK_2 = rgbVar('--ink-2')
+export const INK_3 = rgbVar('--ink-3')
+export const ON_INK = rgbVar('--on-ink') // readable-on-ink-surface text/icon color — see index.css
+export const PAPER = rgbVar('--paper')
+export const CARD = rgbVar('--card')
+export const LINE = rgbVar('--line')
+export const LINE_STRONG = rgbVar('--line-strong')
 
-export const ACCENT = '#0f5c52'
-export const ACCENT_SOFT = '#e4efea'
+export const ACCENT = rgbVar('--accent') // solid-fill use (buttons) — paired with white/on-ink text
+export const ACCENT_SOFT = rgbVar('--accent-soft')
+export const ACCENT_INK = rgbVar('--accent-ink') // text/border-safe step — standalone text-accent/border-accent
 
 // ── Semantic money-concept colors ──────────────────────────────────────────
 // Every color that represents a money CONCEPT (not a UI affordance like a
@@ -45,32 +62,37 @@ export const ACCENT_SOFT = '#e4efea'
 // #ffffff, 3.89:1 on #f6f4ef. Small/thin TEXT rendered in the SAVING family
 // (chips, "+$150.00" amounts, "covered") uses SAVING_TEXT instead — a
 // darker step of the same hue that clears 4.5:1 text contrast on white,
-// paper, AND the saving-soft chip background.
-export const SAVING = '#2f8a5c' // green — mark/fill use (bars, swatches, dots, large stat text)
-export const SAVING_TEXT = '#286b49' // darker text-safe variant — small text, chips, contribution amounts
-export const SAVING_SOFT = '#e7f3ed' // light tint for chip/badge backgrounds
+// paper, AND the saving-soft chip background. Dark-mode values are a
+// separately re-tuned palette (brighter marks, brighter -TEXT step) —
+// dataviz-validator-checked against both dark surfaces (#191713 / #23201b);
+// see index.css .dark block for the numbers.
+export const SAVING = rgbVar('--saving') // green — mark/fill use (bars, swatches, dots, large stat text)
+export const SAVING_TEXT = rgbVar('--saving-ink') // text-safe variant — small text, chips, contribution amounts
+export const SAVING_SOFT = rgbVar('--saving-soft') // tint for chip/badge backgrounds
 // BILLS: warm clay/umber — mark/fill use (bars, rings, MR card, chart
 // segments). Chroma/lightness/contrast validated (dataviz validator) against
-// both #ffffff and #f6f4ef surfaces. BILLS_TEXT is a darker step of the same
-// hue for small TEXT uses (the "Funded" badge) — clears 4.5:1 on white,
-// paper, AND bills-soft where BILLS itself only clears ~4:1 (too tight for
-// small semibold text).
-export const BILLS = '#9c6522' // clay/umber — mark/fill use
-export const BILLS_TEXT = '#8a5618' // darker text-safe variant — small text (badges)
+// both light and dark surfaces. BILLS_TEXT is the text-safe step of the same
+// hue for small TEXT uses (the "Funded" badge).
+export const BILLS = rgbVar('--bills') // clay/umber — mark/fill use
+export const BILLS_TEXT = rgbVar('--bills-ink') // text-safe variant — small text (badges)
 // FUNDS_HUE: dusty-confident blue — mark/fill use. Kept visually distinct
 // from CHART_COLORS' own dusty-blue identity slot (nudged lighter/more
 // periwinkle, see below) so a blue fund's identity dot is never confusable
 // with this semantic aggregate hue when the two sit adjacent (Expenses fund
-// rows, Overview donut/legend).
-export const FUNDS_HUE = '#2f5f9e' // dusty-confident blue — mark/fill use
-export const TRANSFER_OUT = '#9c9484' // neutral stone
+// rows, Overview donut/legend). FUNDS_TEXT is the text-safe step for small
+// TEXT uses (e.g. a "funds" Badge) — equals FUNDS_HUE in light mode (already
+// clears 4.5:1there) but diverges in dark mode.
+export const FUNDS_HUE = rgbVar('--funds') // dusty-confident blue — mark/fill use
+export const FUNDS_TEXT = rgbVar('--funds-ink') // text-safe variant — small text (badges)
+export const TRANSFER_OUT = rgbVar('--transfer') // neutral stone
 
 // GOOD is a deliberate alias of SAVING, not a second green — the app has
 // exactly one green and it always means "kept/saved."
 export const GOOD = SAVING
 export const GOOD_TEXT = SAVING_TEXT
-export const WARN = '#a8791f'
-export const CRITICAL = '#b23b2e'
+export const WARN = rgbVar('--warn')
+export const CRITICAL = rgbVar('--critical')
+export const CRITICAL_SOFT = rgbVar('--critical-soft')
 
 // On-plan fills for Bills/Funds sitting at or under their budget — 100%
 // spent is normal, not a warning, so it must never read as heavy or
@@ -102,14 +124,19 @@ export function fundStatusColor(pct) {
 // FUNDS_HUE above (ΔE ~14, re-validated) specifically so a blue fund's
 // identity dot never reads as "the same blue" as the Funds aggregate hue
 // when they sit side by side.
+//
+// Dark-mode values are a separately brightened/re-saturated 7-hue set (not
+// an auto-invert), re-run through the same validator against both dark
+// surfaces (#191713 / #23201b): lightness band + chroma floor pass all 7 on
+// both, worst adjacent CVD ΔE 25.2 (plum↔rose), all 7 clear 3:1 contrast.
 export const CHART_COLORS = [
-  '#5f8a3f', // sage
-  '#5a82c2', // periwinkle blue (identity) — distinct from FUNDS_HUE's deeper dusty blue
-  '#c1652f', // terracotta
-  '#0f8f79', // teal
-  '#b8862b', // ochre
-  '#c25a76', // rose
-  '#7a4f8a', // plum
+  rgbVar('--chart-1'), // sage
+  rgbVar('--chart-2'), // periwinkle blue (identity) — distinct from FUNDS_HUE's deeper dusty blue
+  rgbVar('--chart-3'), // terracotta
+  rgbVar('--chart-4'), // teal
+  rgbVar('--chart-5'), // ochre
+  rgbVar('--chart-6'), // rose
+  rgbVar('--chart-7'), // plum
 ]
 
 // Deterministic entity color — same id always maps to the same CHART_COLORS

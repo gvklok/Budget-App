@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { LayoutDashboard, Check, AlertTriangle } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
-  colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, SAVING_SOFT, TRANSFER_OUT, CRITICAL,
-  INK, INK_2, INK_3, LINE, PAPER, areaGradientId,
+  colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, SAVING_SOFT, TRANSFER_OUT, CRITICAL, CRITICAL_SOFT,
+  INK, INK_2, INK_3, LINE, PAPER, CARD, areaGradientId,
 } from '../theme'
 import { Card, SectionLabel, GroupDivider, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
 
@@ -432,7 +432,7 @@ function KeptVsSpentChart({ months }) {
                 {incomeY != null && (
                   <line
                     x1={x - 4} x2={x + barW + 4} y1={incomeY} y2={incomeY}
-                    stroke="#5c574a" strokeWidth={1} strokeDasharray="3 2"
+                    stroke={INK_2} strokeWidth={1} strokeDasharray="3 2"
                   />
                 )}
                 {rects}
@@ -449,7 +449,7 @@ function KeptVsSpentChart({ months }) {
           {months.map((m, i) => (
             <div key={`${m.year}-${m.month}`} className="group relative flex-1 h-full">
               <div
-                className={`pointer-events-none absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap rounded-xl bg-ink text-white text-[11px] px-2.5 py-2 shadow-pop ${
+                className={`pointer-events-none absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap rounded-xl bg-ink text-on-ink text-[11px] px-2.5 py-2 shadow-pop ${
                   n === 1 ? 'left-1/2 -translate-x-1/2' : i === 0 ? 'left-0' : i === n - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2'
                 }`}
               >
@@ -579,12 +579,12 @@ function SpendingPaceChart({ year, month, day, plannedTotal, txns, tag }) {
           <path d={areaPath} fill={`url(#${gradId})`} stroke="none" />
           <path d={paceLine} fill="none" stroke={INK_3} strokeWidth={1.5} strokeDasharray="4 3" strokeLinecap="round" />
           <path d={actualPath} fill="none" stroke={INK} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-          <circle cx={todayX} cy={todayY} r={4} fill={INK} stroke="#ffffff" strokeWidth={2} />
+          <circle cx={todayX} cy={todayY} r={4} fill={INK} stroke={CARD} strokeWidth={2} />
 
           {hoverDay != null && (
             <>
               <line x1={hoverX} x2={hoverX} y1={topPad} y2={topPad + plotH} stroke={LINE} strokeWidth={1} strokeDasharray="2 2" />
-              <circle cx={hoverX} cy={yScale(hoverActual)} r={3.5} fill={INK} stroke="#ffffff" strokeWidth={1.5} />
+              <circle cx={hoverX} cy={yScale(hoverActual)} r={3.5} fill={INK} stroke={CARD} strokeWidth={1.5} />
             </>
           )}
 
@@ -594,7 +594,7 @@ function SpendingPaceChart({ year, month, day, plannedTotal, txns, tag }) {
 
         {hoverDay != null && (
           <div
-            className="pointer-events-none absolute top-1 opacity-100 z-10 whitespace-nowrap rounded-xl bg-ink text-white text-[11px] px-2.5 py-2 shadow-pop"
+            className="pointer-events-none absolute top-1 opacity-100 z-10 whitespace-nowrap rounded-xl bg-ink text-on-ink text-[11px] px-2.5 py-2 shadow-pop"
             style={{ left: `${Math.min(Math.max((hoverX / VBW) * 100, 8), 78)}%` }}
           >
             <p className="font-semibold mb-1">Day {hoverDay}</p>
@@ -761,7 +761,7 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
       <div className="flex items-start gap-3">
         <div
           className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-          style={{ background: covered ? SAVING_SOFT : '#f8e7e4', color: covered ? SAVING_TEXT : CRITICAL }}
+          style={{ background: covered ? SAVING_SOFT : CRITICAL_SOFT, color: covered ? SAVING_TEXT : CRITICAL }}
         >
           <Icon size={14} />
         </div>
@@ -1091,7 +1091,7 @@ export default function OverviewPage() {
 
       {!hasActivity && (breakdown?.bills?.length ?? 0) === 0 && (breakdown?.funds?.length ?? 0) === 0 ? (
         <Card className="p-8 flex flex-col items-center text-center gap-2">
-          <div className="w-12 h-12 rounded-full bg-accent-soft text-accent flex items-center justify-center mb-1">
+          <div className="w-12 h-12 rounded-full bg-accent-soft text-accent-ink flex items-center justify-center mb-1">
             <LayoutDashboard size={20} />
           </div>
           <p className="text-ink font-semibold">Analytics will show up here</p>
@@ -1121,7 +1121,7 @@ export default function OverviewPage() {
           {currentError && (
             <Card className="p-4 mb-3 flex items-center justify-between gap-3">
               <p className="text-xs text-critical">{currentError}</p>
-              <button onClick={loadCurrent} className="text-xs font-semibold text-accent shrink-0">Retry</button>
+              <button onClick={loadCurrent} className="text-xs font-semibold text-accent-ink shrink-0">Retry</button>
             </Card>
           )}
 

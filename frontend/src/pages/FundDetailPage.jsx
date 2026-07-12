@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useId } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ChevronLeft, ArrowRightLeft, ShoppingBag, AlertTriangle,
@@ -15,7 +15,7 @@ function c(cents) {
 }
 
 const inputClass =
-  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-white'
+  'w-full border border-line rounded-2xl px-3.5 py-2.5 text-ink outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/40 transition-shadow bg-card'
 const labelClass = 'block text-sm font-medium text-ink-2 mb-1.5'
 
 function refreshDevOverlay() {
@@ -89,6 +89,10 @@ function monthAbbrev(t) {
 function BalanceChart({ series, color, currentBalanceCents }) {
   const containerRef = useRef(null)
   const [hoverIdx, setHoverIdx] = useState(null)
+  // Seeded by a stable React id, not the color — `color` is a `var(--x)`
+  // CSS-variable string (theme.js), which isn't safe to splice into an SVG
+  // id/url() fragment. Hook called unconditionally, above the early return.
+  const gradId = areaGradientId(useId().replace(/:/g, ''))
 
   if (!series || series.length < 2) {
     return (
@@ -165,7 +169,6 @@ function BalanceChart({ series, color, currentBalanceCents }) {
   const hover = hoverIdx != null ? points[hoverIdx] : null
   const hoverX = hover ? x(hover.t) : 0
   const hoverY = hover ? y(hover.v) : 0
-  const gradId = areaGradientId(color.replace('#', ''))
 
   return (
     <div
@@ -229,14 +232,14 @@ function BalanceChart({ series, color, currentBalanceCents }) {
       </svg>
       {hover && (
         <div
-          className="pointer-events-none absolute bg-ink text-white text-[11px] rounded-lg px-2 py-1 shadow-pop whitespace-nowrap -translate-x-1/2"
+          className="pointer-events-none absolute bg-ink text-on-ink text-[11px] rounded-lg px-2 py-1 shadow-pop whitespace-nowrap -translate-x-1/2"
           style={{
             left: `${(hoverX / VIEW_W) * 100}%`,
             top: Math.max(0, hoverY - 34),
           }}
         >
           <span className="font-semibold">{c(hover.v)}</span>
-          <span className="text-white/60 ml-1.5">{shortDate(hover.date)}</span>
+          <span className="text-on-ink/60 ml-1.5">{shortDate(hover.date)}</span>
         </div>
       )}
     </div>
@@ -520,7 +523,7 @@ export default function FundDetailPage() {
       <div className="flex items-center gap-2.5 mb-3">
         <button
           onClick={() => setShowTransfer(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-white rounded-2xl py-2.5 active:scale-[0.98] transition-transform"
+          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-card rounded-2xl py-2.5 active:scale-[0.98] transition-transform"
         >
           <ArrowRightLeft size={14} />
           Transfer
@@ -529,7 +532,7 @@ export default function FundDetailPage() {
             that LOG money, deliberately distinct from the accent language. */}
         <button
           onClick={() => setShowLogSpend(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-ink hover:bg-ink/90 rounded-2xl py-2.5 active:scale-[0.98] transition-transform"
+          className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-on-ink bg-ink hover:bg-ink/90 rounded-2xl py-2.5 active:scale-[0.98] transition-transform"
         >
           <ShoppingBag size={14} />
           Log spend
