@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { LayoutDashboard, ChevronDown, ChevronUp } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
-  colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
+  entityColor, colorForName, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
   INK, INK_2, INK_3, LINE, PAPER, CARD, areaGradientId,
 } from '../theme'
 import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
@@ -727,12 +727,13 @@ function SavingsRateContent({ months }) {
 }
 
 // ── Where it went — spending breakdown, aggregated over the selected range ────
-// Identity stays as a small colored dot (colorForId); the bar fill itself
-// switches to the semantic bucket color (Bills umber, Funds blue,
-// Transfers stone) so the list reads as one system, not a rainbow. The range
-// selector replaces per-month navigation — this card always shows the
-// selected window ending at the effective current month, with a delta against
-// the same-length window immediately before it.
+// Identity color (entityColor for Funds, billColor for Bills — custom color
+// if set, else the stable id/name-hash fallback) drives both the dot AND the
+// bar fill by default; Transfers-out rows pass an explicit TRANSFER_OUT
+// barColor override instead (semantic — "not spending," never an identity).
+// The range selector replaces per-month navigation — this card always shows
+// the selected window ending at the effective current month, with a delta
+// against the same-length window immediately before it.
 
 // Bar fill uses the row's own identity color by default (matching its dot) —
 // like the donut, so the list reads as its own entities, not a rainbow of
@@ -766,17 +767,17 @@ function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel 
 // category donut) — top 6 spending entities across the range + "Other",
 // identity colors matching the dots in the list below. Center shows total
 // spent (bills + funds, transfers-out excluded — not spending).
-function RangeDonut({ bills, spendFunds }) {
+function RangeDonut({ bills, spendFunds, billColorByName, fundColorById }) {
   const entities = [
-    ...bills.map((b) => ({ colorId: b.line_item_id, name: b.name, amount: b.spent_cents })),
-    ...spendFunds.map((f) => ({ colorId: f.fund_id, name: f.name ?? 'Deleted fund', amount: f.spent_cents })),
+    ...bills.map((b) => ({ name: b.name, amount: b.spent_cents, color: billColorByName[b.name] || colorForName(b.name) })),
+    ...spendFunds.map((f) => ({ name: f.name ?? 'Deleted fund', amount: f.spent_cents, color: entityColor({ id: f.fund_id, color: fundColorById[f.fund_id] }) })),
   ].filter((e) => e.amount > 0).sort((a, b) => b.amount - a.amount)
 
   if (entities.length === 0) return null
 
   const top = entities.slice(0, 6)
   const otherAmount = entities.slice(6).reduce((s, e) => s + e.amount, 0)
-  const segments = top.map((e) => ({ label: e.name, amount: e.amount, color: colorForId(e.colorId) }))
+  const segments = top.map((e) => ({ label: e.name, amount: e.amount, color: e.color }))
   if (otherAmount > 0) segments.push({ label: 'Other', amount: otherAmount, color: INK_3 })
   const total = segments.reduce((s, seg) => s + seg.amount, 0)
 
@@ -814,7 +815,7 @@ function RangeDonut({ bills, spendFunds }) {
   )
 }
 
-function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading, error, onRetry }) {
+function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading, error, onRetry, billColorByName, fundColorById }) {
   const bills = breakdown?.bills ?? []
   const allFunds = breakdown?.funds ?? []
   const spendFunds = allFunds.filter((f) => f.destination_type !== 'transfer_out')
@@ -855,7 +856,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
 
       {!error && !loading && !empty && (
         <>
-          <RangeDonut bills={bills} spendFunds={spendFunds} />
+          <RangeDonut bills={bills} spendFunds={spendFunds} billColorByName={billColorByName} fundColorById={fundColorById} />
           {bills.length > 0 && (
             <div className="mb-4">
               <p className="text-xs font-semibold text-ink-3 mb-2">Bills</p>
@@ -864,7 +865,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
                 const delta = prev != null ? b.spent_cents - prev : null
                 return (
                   <SpendRow key={`bill-${b.line_item_id}`} name={b.name} amount={b.spent_cents}
-                    dotColor={colorForId(b.line_item_id)} maxVal={maxSpend}
+                    dotColor={billColorByName[b.name] || colorForName(b.name)} maxVal={maxSpend}
                     delta={delta} deltaLabel={deltaLabel} />
                 )
               })}
@@ -878,7 +879,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
                 const delta = prev != null ? f.spent_cents - prev : null
                 return (
                   <SpendRow key={`fund-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents}
-                    dotColor={colorForId(f.fund_id)} maxVal={maxSpend}
+                    dotColor={entityColor({ id: f.fund_id, color: fundColorById[f.fund_id] })} maxVal={maxSpend}
                     delta={delta} deltaLabel={deltaLabel} />
                 )
               })}
@@ -888,7 +889,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
             <div className="pt-3 border-t border-line opacity-70">
               <p className="text-xs font-semibold text-ink-3 mb-2">Transfers out — not spending</p>
               {transferFunds.map((f) => (
-                <SpendRow key={`transfer-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents} dotColor={colorForId(f.fund_id)} barColor={TRANSFER_OUT} maxVal={maxTransfer} />
+                <SpendRow key={`transfer-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents} dotColor={entityColor({ id: f.fund_id, color: fundColorById[f.fund_id] })} barColor={TRANSFER_OUT} maxVal={maxTransfer} />
               ))}
             </div>
           )}
@@ -986,17 +987,26 @@ export default function OverviewPage() {
     try {
       const clock = await apiGet('/dev/current-date')
       const [y, m, d] = clock.effective_date.split('-').map(Number)
-      const [summary, txns, funds] = await Promise.all([
+      const [summary, txns, funds, bills] = await Promise.all([
         apiGet(`/monthly-summary?year=${y}&month=${m}`),
         apiGet(`/transactions/?year=${y}&month=${m}`),
         apiGet('/funds/'),
+        apiGet(`/line-items/?year=${y}&month=${m}`),
       ])
       const transferFundNames = new Set(funds.filter((f) => f.destination_type === 'transfer_out').map((f) => f.name))
       const paceTxns = txns.filter((tx) => !(tx.fund_name && transferFundNames.has(tx.fund_name)))
+      // Custom colors, keyed for the "Where it went" / donut lookups below.
+      // Funds keep id-stable colorForId fallback; Bills key by NAME (a Bill
+      // gets a new line-item id every month) — see theme.js entityColor/
+      // billColor doc comments. Only reflects the CURRENT month's plan, but
+      // a Bill's custom color copies forward automatically, so this stays
+      // accurate for merged multi-month rows too.
+      const fundColorById = Object.fromEntries(funds.map((f) => [f.id, f.color]))
+      const billColorByName = Object.fromEntries(bills.filter((b) => b.type === 'bill').map((b) => [b.name, b.color]))
       setCurrent({
         year: y, month: m, day: d,
         plannedTotal: summary.expected_bills_total_cents + summary.expected_fund_contributions_total_cents,
-        paceTxns,
+        paceTxns, fundColorById, billColorByName,
       })
     } catch (err) {
       setCurrentError(err.message || 'Failed to load')
@@ -1136,6 +1146,8 @@ export default function OverviewPage() {
               loading={breakdownLoading}
               error={breakdownError}
               onRetry={loadBreakdown}
+              billColorByName={current.billColorByName}
+              fundColorById={current.fundColorById}
             />
           )}
         </>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { MoreHorizontal } from 'lucide-react'
-import { LINE } from '../theme'
+import { MoreHorizontal, Check } from 'lucide-react'
+import { LINE, CHART_COLORS_HEX, EXTRA_SWATCH_COLORS } from '../theme'
 
 // ── Ring — single-value circular progress ─────────────────────────────────────
 // Used for "how much of this budget/target have I used" at a glance. Rounded
@@ -240,6 +240,50 @@ export function OverflowMenu({ items }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── ColorSwatchPicker — custom identity color for a Fund/Bill ────────────────
+// "Auto" (dashed ring, filled with the computed fallback color) + the 7
+// CHART_COLORS identity hues + 5 curated extras — one compact, wrapping row.
+// No free-form color wheel, by design (see CLAUDE.md-adjacent task spec).
+// `value` is a hex string or null (null === Auto); `onChange(hex | null)`.
+const SWATCH_COLORS = [...CHART_COLORS_HEX, ...EXTRA_SWATCH_COLORS]
+
+export function ColorSwatchPicker({ value, onChange, autoColor, label = 'Color' }) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-ink-2 mb-1.5">{label}</label>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          title="Auto"
+          aria-label="Auto color"
+          aria-pressed={value == null}
+          className="w-7 h-7 rounded-full shrink-0 border-2 border-dashed border-line-strong flex items-center justify-center transition-transform active:scale-90"
+          style={{ background: autoColor }}
+        >
+          {value == null && <Check size={13} className="text-white" strokeWidth={3} style={{ filter: 'drop-shadow(0 0 1.5px rgb(0 0 0 / 0.5))' }} />}
+        </button>
+        {SWATCH_COLORS.map((hex) => (
+          <button
+            key={hex}
+            type="button"
+            onClick={() => onChange(hex)}
+            title={hex}
+            aria-label={`Color ${hex}`}
+            aria-pressed={value === hex}
+            className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center transition-transform active:scale-90 ${
+              value === hex ? 'ring-2 ring-ink ring-offset-2 ring-offset-card' : ''
+            }`}
+            style={{ background: hex }}
+          >
+            {value === hex && <Check size={13} className="text-white" strokeWidth={3} style={{ filter: 'drop-shadow(0 0 1.5px rgb(0 0 0 / 0.5))' }} />}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

@@ -5,7 +5,7 @@ import {
   Wallet, PiggyBank, TrendingUp, RotateCcw, SlidersHorizontal,
 } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, monthLabel } from '../api'
-import { colorForId, LINE, LINE_STRONG, INK_3, CARD, areaGradientId } from '../theme'
+import { entityColor, LINE, LINE_STRONG, INK_3, CARD, areaGradientId } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
 import { Card, SectionLabel, Badge, PrimaryButton, EmptyState } from '../components/ui'
@@ -472,7 +472,7 @@ export default function FundDetailPage() {
   }
 
   const { fund, activity, balance_series } = detail
-  const color = colorForId(fund.id)
+  const color = entityColor(fund)
   const negative = fund.balance_cents < 0
   const bucket = `fund:${fund.id}`
   const fundNameById = Object.fromEntries(appState.funds.map((f) => [String(f.id), f.name]))

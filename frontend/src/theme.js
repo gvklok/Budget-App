@@ -139,22 +139,77 @@ export const CHART_COLORS = [
   rgbVar('--chart-7'), // plum
 ]
 
-// Deterministic entity color — same id always maps to the same CHART_COLORS
-// slot, regardless of render order or which page is looking at it. Numeric
-// ids (funds, categories, ...) map directly; non-numeric ids fall back to a
-// tiny string hash so this still degrades gracefully.
-export function colorForId(id) {
-  const n = Number(id)
-  if (Number.isFinite(n)) {
-    return CHART_COLORS[Math.abs(Math.trunc(n)) % CHART_COLORS.length]
-  }
-  const str = String(id)
+// Deterministic string-hash → CHART_COLORS slot. Used directly for entities
+// whose id is NOT stable identity (Bills get a new line-item id every month —
+// see colorForId's doc comment — so a Bill's fallback must key off its NAME,
+// not its id, or its color would visibly change month to month). Also backs
+// colorForId's own fallback for non-numeric ids.
+export function colorForName(name) {
+  const str = String(name)
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = (hash * 31 + str.charCodeAt(i)) | 0
   }
   return CHART_COLORS[Math.abs(hash) % CHART_COLORS.length]
 }
+
+// Deterministic entity color — same id always maps to the same CHART_COLORS
+// slot, regardless of render order or which page is looking at it. Numeric
+// ids (funds, categories, ...) map directly — safe because those ids are
+// stable for the entity's lifetime. Non-numeric ids fall back to colorForName.
+export function colorForId(id) {
+  const n = Number(id)
+  if (Number.isFinite(n)) {
+    return CHART_COLORS[Math.abs(Math.trunc(n)) % CHART_COLORS.length]
+  }
+  return colorForName(id)
+}
+
+// The one entity-color formula, used everywhere an identity color (dot, bar
+// fill, donut segment, chart line) is derived for a Fund or other
+// id-stable entity: an explicit custom `color` always wins; otherwise fall
+// back to the deterministic per-id slot. Never re-derive this with scattered
+// `fund.color || colorForId(fund.id)` inline — call this instead.
+export function entityColor(entity) {
+  return (entity && entity.color) || colorForId(entity && entity.id)
+}
+
+// Same formula as entityColor, but for Bills specifically — Bills get a new
+// line-item id every month (rolled plan), so colorForId(id) would silently
+// change a Bill's color month to month. colorForName(name) is the stable
+// fallback instead. Use this for every Bill row/donut/legend color.
+export function billColor(bill) {
+  return (bill && bill.color) || colorForName(bill && bill.name)
+}
+
+// Literal hex swatches for the color picker (Fund/Bill edit modals) — a
+// custom `color` is stored as a plain "#rrggbb" string server-side (not a
+// CSS variable), so the picker needs real hex values, not the theme-reactive
+// CHART_COLORS var() strings. These are the light-mode CHART_COLORS values
+// (same identity hues used everywhere else) — a fixed, deliberately-chosen
+// color a user picks doesn't need to re-tune itself per color scheme the way
+// the app's own aggregate/semantic colors do.
+export const CHART_COLORS_HEX = [
+  '#5f8a3f', // sage
+  '#5a82c2', // periwinkle
+  '#c1652f', // terracotta
+  '#0f8f79', // teal
+  '#b8862b', // ochre
+  '#c25a76', // rose
+  '#7a4f8a', // plum
+]
+
+// 5 curated extra hues, tasteful in both light and dark card surfaces,
+// chosen to sit apart from CHART_COLORS_HEX and from the app's reserved
+// semantic hues (SAVING green, BILLS umber, FUNDS_HUE/TRANSFER_OUT blue-stone)
+// so a custom pick never gets mistaken for a bucket-level concept color.
+export const EXTRA_SWATCH_COLORS = [
+  '#5b6ea8', // indigo
+  '#c2a23a', // mustard gold
+  '#a8435c', // crimson
+  '#3f96a8', // cyan
+  '#7d7a9e', // lavender slate
+]
 
 // Dedicated swatches for Savings/Monthly Reserve in the Real Cash breakdown —
 // kept out of CHART_COLORS so they never collide with a Fund's assigned

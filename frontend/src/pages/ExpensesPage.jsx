@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
-import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId } from '../theme'
+import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
 import Modal from '../components/Modal'
-import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu } from '../components/ui'
+import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu, ColorSwatchPicker } from '../components/ui'
 
 function c(cents) { return fmt(cents / 100) }
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -293,6 +293,7 @@ function LineItemModal({ item, categories, onClose, onSave }) {
   const [name, setName] = useState(item?.name ?? '')
   const [amount, setAmount] = useState(item ? (item.amount_cents / 100).toFixed(2) : '')
   const [categoryId, setCategoryId] = useState(item?.category_id ?? '')
+  const [color, setColor] = useState(item?.color ?? null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -302,7 +303,7 @@ function LineItemModal({ item, categories, onClose, onSave }) {
     if (!amount) return setError('Amount is required')
     setSaving(true); setError('')
     try {
-      await onSave({ name: name.trim(), type: 'bill', amount_cents: toCents(amount), actual_cents: 0, category_id: categoryId !== '' ? Number(categoryId) : null })
+      await onSave({ name: name.trim(), type: 'bill', amount_cents: toCents(amount), actual_cents: 0, category_id: categoryId !== '' ? Number(categoryId) : null, color })
       onClose()
     } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
@@ -325,6 +326,7 @@ function LineItemModal({ item, categories, onClose, onSave }) {
             {categories.map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
           </select>
         </div>
+        <ColorSwatchPicker value={color} onChange={setColor} autoColor={colorForName(name.trim() || 'Bill')} />
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : item ? 'Save Changes' : 'Add'}
@@ -598,13 +600,15 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
               const itemTxns = txnsByItemId[b.id] ?? []
               const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
               const billPct = b.amount_cents > 0 ? (spent / b.amount_cents) * 100 : 0
-              // Rows read as their own entity (colorForId, matching Where-it-went
+              // Rows read as their own entity (billColor — custom color if set,
+              // else a stable name-hash so a Bill's color never shifts month to
+              // month even though its line-item id does; matching Where-it-went
               // and the Fund identity dots) rather than the semantic Bills brown —
               // that brown is reserved for aggregates (ring, allocation bar, group
               // subtotal bar via GroupSummary/billStatusColor). Overspend still
               // escalates to CRITICAL — honesty over identity.
               return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
-                color={billPct > 100 ? CRITICAL : colorForId(b.id)}
+                color={billPct > 100 ? CRITICAL : billColor(b)}
                 onEdit={onEdit && (() => onEdit(b))} onDelete={onDelete && (() => onDelete(b))}
                 onLogTx={onLogTx && (() => onLogTx(b.id))} onDeleteTx={onDeleteTx} />
             })}
@@ -972,7 +976,7 @@ export default function ExpensesPage() {
   for (const f of funds) {
     if (f.monthly_contribution_cents > 0 && f.destination_type !== 'transfer_out') {
       const spent = (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0)
-      chartSegments.push({ label: f.name, color: colorForId(f.id), planned: f.monthly_contribution_cents, spent })
+      chartSegments.push({ label: f.name, color: entityColor(f), planned: f.monthly_contribution_cents, spent })
     }
   }
 
@@ -1296,10 +1300,16 @@ export default function ExpensesPage() {
                   // TRANSFER_OUT stone rather than the warn/critical fundStatusColor
                   // zones a discretionary Fund would at the same percentage.
                   const isTransferOut = fund.destination_type === 'transfer_out'
+                  // Bar fill reads as the fund's own identity color (matching its
+                  // dot everywhere else) rather than the semantic FUNDS_HUE blue —
+                  // that blue is reserved for aggregates (Funds ring, allocation
+                  // bar, Overview charts). Overspend still escalates to CRITICAL —
+                  // honesty over identity.
+                  const fundPct = fund.monthly_contribution_cents > 0 ? (spent / fund.monthly_contribution_cents) * 100 : 0
                   return <ItemRow key={fund.id} name={fund.name}
                     subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
                     budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
-                    color={isTransferOut ? TRANSFER_OUT : undefined}
+                    color={isTransferOut ? TRANSFER_OUT : (fundPct > 100 ? CRITICAL : entityColor(fund))}
                     onEdit={locked ? undefined : () => setEditFundContrib(fund)}
                     onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
                     onDeleteTx={locked ? undefined : handleDeleteTx} />

@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Pencil, Trash2, Plus, ArrowRightLeft, AlertTriangle, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
-import { SAVINGS_SWATCH, SAVING_TEXT, RESERVE_SWATCH, colorForId } from '../theme'
+import { SAVINGS_SWATCH, SAVING_TEXT, RESERVE_SWATCH, entityColor, colorForName } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
-import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar, OverflowMenu } from '../components/ui'
+import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar, OverflowMenu, ColorSwatchPicker } from '../components/ui'
 
 function c(cents) {
   return fmt(cents / 100)
@@ -57,6 +57,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
   const [balance, setBalance] = useState('')
   const [destinationType, setDestinationType] = useState('external_spend')
   const [allowNegative, setAllowNegative] = useState(false)
+  const [color, setColor] = useState(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -72,6 +73,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
         monthly_contribution_cents: 0,
         destination_type: destinationType,
         allow_negative_balance: allowNegative,
+        color,
       })
       onClose()
     } catch (err) {
@@ -111,6 +113,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
         </div>
         <DestinationTypeField value={destinationType} onChange={setDestinationType} />
         <AllowNegativeField checked={allowNegative} onChange={setAllowNegative} />
+        <ColorSwatchPicker value={color} onChange={setColor} autoColor={colorForName(name.trim() || 'Fund')} />
         <p className="text-xs text-ink-3">
           Set this fund's monthly contribution on the Expenses page.
         </p>
@@ -127,6 +130,7 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
   const [name, setName] = useState(fund.name)
   const [destinationType, setDestinationType] = useState(fund.destination_type ?? 'external_spend')
   const [allowNegative, setAllowNegative] = useState(fund.allow_negative_balance ?? false)
+  const [color, setColor] = useState(fund.color ?? null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -137,7 +141,7 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
     setSaving(true)
     setError('')
     try {
-      await onSave(fund.id, { name: name.trim(), destination_type: destinationType, allow_negative_balance: allowNegative })
+      await onSave(fund.id, { name: name.trim(), destination_type: destinationType, allow_negative_balance: allowNegative, color })
       onClose()
     } catch (err) {
       setError(err.message)
@@ -173,6 +177,7 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
         </div>
         <DestinationTypeField value={destinationType} onChange={setDestinationType} />
         <AllowNegativeField checked={allowNegative} onChange={setAllowNegative} />
+        <ColorSwatchPicker value={color} onChange={setColor} autoColor={entityColor({ id: fund.id })} />
         <div className="rounded-2xl bg-paper px-3.5 py-3">
           <p className="text-xs text-ink-3 mb-0.5">Monthly contribution</p>
           <p className="text-sm font-semibold text-ink-2">
@@ -210,7 +215,7 @@ function RealCashBreakdown({ savings, monthly_reserve, funds, total }) {
   const all = [
     { label: 'Savings', amount: savings.balance_cents, color: SAVINGS_SWATCH },
     { label: 'Monthly Reserve', amount: monthly_reserve.balance_cents, color: RESERVE_SWATCH },
-    ...funds.map((f) => ({ label: f.name, amount: f.balance_cents, color: colorForId(f.id) })),
+    ...funds.map((f) => ({ label: f.name, amount: f.balance_cents, color: entityColor(f) })),
   ]
   if (all.length === 0) return null
   const positive = all.filter((seg) => seg.amount > 0)
@@ -549,7 +554,7 @@ export default function FundsPage() {
       ) : (
         <div className="space-y-2.5">
           {(reordering ? reorderFunds : funds).map((fund, index) => {
-            const color = colorForId(fund.id)
+            const color = entityColor(fund)
             return (
               <Card
                 key={fund.id}
