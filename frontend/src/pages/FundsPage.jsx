@@ -5,7 +5,8 @@ import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { SAVINGS_SWATCH, SAVING_TEXT, RESERVE_SWATCH, entityColor, colorForName } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
-import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar, OverflowMenu, ColorSwatchPicker } from '../components/ui'
+import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar, OverflowMenu, ColorSwatchPicker, RecoveryBadge } from '../components/ui'
+import { useRefetchOnFocus } from '../hooks'
 
 function c(cents) {
   return fmt(cents / 100)
@@ -55,6 +56,7 @@ function AllowNegativeField({ checked, onChange }) {
 function AddFundModal({ savings_cents, onClose, onSave }) {
   const [name, setName] = useState('')
   const [balance, setBalance] = useState('')
+  const [contribution, setContribution] = useState('')
   const [destinationType, setDestinationType] = useState('external_spend')
   const [allowNegative, setAllowNegative] = useState(false)
   const [color, setColor] = useState(null)
@@ -70,7 +72,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
       await onSave({
         name: name.trim(),
         balance_cents: toCents(balance),
-        monthly_contribution_cents: 0,
+        monthly_contribution_cents: toCents(contribution || '0'),
         destination_type: destinationType,
         allow_negative_balance: allowNegative,
         color,
@@ -114,9 +116,21 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
         <DestinationTypeField value={destinationType} onChange={setDestinationType} />
         <AllowNegativeField checked={allowNegative} onChange={setAllowNegative} />
         <ColorSwatchPicker value={color} onChange={setColor} autoColor={colorForName(name.trim() || 'Fund')} />
-        <p className="text-xs text-ink-3">
-          Set this fund's monthly contribution on the Expenses page.
-        </p>
+        <div>
+          <label className={labelClass}>
+            Monthly contribution <span className="text-ink-3 font-normal">(optional)</span>
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={contribution}
+            onChange={(e) => setContribution(e.target.value)}
+            placeholder="0.00"
+            className={inputClass}
+          />
+          <p className="text-xs text-ink-3 mt-1.5">Can also be set later, on this page or the Expenses page.</p>
+        </div>
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Adding…' : 'Add Fund'}
@@ -128,6 +142,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
 
 function EditFundModal({ fund, onClose, onSave, onDelete }) {
   const [name, setName] = useState(fund.name)
+  const [contribution, setContribution] = useState(fund.monthly_contribution_cents > 0 ? (fund.monthly_contribution_cents / 100).toFixed(2) : '')
   const [destinationType, setDestinationType] = useState(fund.destination_type ?? 'external_spend')
   const [allowNegative, setAllowNegative] = useState(fund.allow_negative_balance ?? false)
   const [color, setColor] = useState(fund.color ?? null)
@@ -141,7 +156,13 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
     setSaving(true)
     setError('')
     try {
-      await onSave(fund.id, { name: name.trim(), destination_type: destinationType, allow_negative_balance: allowNegative, color })
+      await onSave(fund.id, {
+        name: name.trim(),
+        destination_type: destinationType,
+        allow_negative_balance: allowNegative,
+        color,
+        monthly_contribution_cents: toCents(contribution || '0'),
+      })
       onClose()
     } catch (err) {
       setError(err.message)
@@ -178,12 +199,18 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
         <DestinationTypeField value={destinationType} onChange={setDestinationType} />
         <AllowNegativeField checked={allowNegative} onChange={setAllowNegative} />
         <ColorSwatchPicker value={color} onChange={setColor} autoColor={entityColor({ id: fund.id })} />
-        <div className="rounded-2xl bg-paper px-3.5 py-3">
-          <p className="text-xs text-ink-3 mb-0.5">Monthly contribution</p>
-          <p className="text-sm font-semibold text-ink-2">
-            {fund.monthly_contribution_cents > 0 ? `${c(fund.monthly_contribution_cents)} / month` : 'Not set'}
-          </p>
-          <p className="text-xs text-ink-3 mt-1">Edit this on the Expenses page.</p>
+        <div>
+          <label className={labelClass}>Monthly contribution</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={contribution}
+            onChange={(e) => setContribution(e.target.value)}
+            placeholder="0.00"
+            className={inputClass}
+          />
+          <p className="text-xs text-ink-3 mt-1.5">Set to 0 to exclude from contributions total</p>
         </div>
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit" disabled={saving} className="w-full">
@@ -321,6 +348,7 @@ export default function FundsPage() {
   const [loadError, setLoadError] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
+  const [transferInitialFrom, setTransferInitialFrom] = useState(undefined)
   const [editFund, setEditFund] = useState(null)
   const [distributing, setDistributing] = useState(false)
   const [distributeResult, setDistributeResult] = useState(null)
@@ -343,6 +371,7 @@ export default function FundsPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useRefetchOnFocus(load)
 
   useEffect(() => {
     window.addEventListener('dev-refresh', load)
@@ -386,6 +415,15 @@ export default function FundsPage() {
   async function handleTransfer(data) {
     await apiPost('/transfers/', data)
     await load()
+  }
+
+  function openTransfer(initialFrom) {
+    setTransferInitialFrom(initialFrom)
+    setShowTransfer(true)
+  }
+  function closeTransfer() {
+    setShowTransfer(false)
+    setTransferInitialFrom(undefined)
   }
 
   // Reorder mode — priority order also drives Distribute's fill order when
@@ -444,7 +482,7 @@ export default function FundsPage() {
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-3xl font-bold text-ink tracking-tight">Funds</h1>
         <button
-          onClick={() => setShowTransfer(true)}
+          onClick={() => openTransfer(undefined)}
           className="flex items-center gap-1.5 text-sm font-semibold text-ink-2 border border-line bg-card rounded-full px-3.5 py-2 active:scale-[0.98] transition-transform"
         >
           <ArrowRightLeft size={14} />
@@ -461,9 +499,18 @@ export default function FundsPage() {
         <RealCashBreakdown savings={savings} monthly_reserve={monthly_reserve} funds={funds} total={real_cash.balance_cents} />
       </Card>
 
-      {/* Savings + Monthly Reserve — compact two-up */}
+      {/* Savings + Monthly Reserve — compact two-up. Savings is tappable —
+          opens Transfer preset with Savings as the source, since it's the
+          calm center of the UI and money most often moves FROM here. */}
       <div className="grid grid-cols-2 gap-3 mb-3 items-stretch">
-        <Card className="p-4 flex flex-col">
+        <Card
+          className="relative p-4 flex flex-col cursor-pointer active:scale-[0.99] transition-transform"
+          role="button"
+          tabIndex={0}
+          onClick={() => openTransfer('savings')}
+          onKeyDown={(e) => { if (e.key === 'Enter') openTransfer('savings') }}
+        >
+          <ArrowRightLeft size={13} className="absolute top-4 right-4 text-ink-3" />
           <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 pt-1">Savings</p>
           <p className="hero-figure text-xl font-bold text-ink mt-1 tabular">{c(savings.balance_cents)}</p>
           {/* One tight line — "resting place" + "% of Real Cash" — instead of
@@ -583,7 +630,13 @@ export default function FundsPage() {
                         : 'No contribution set'}
                     </span>
                     {fund.destination_type === 'transfer_out' && <Badge tone="transfer">Transfer Out</Badge>}
-                    {fund.balance_cents < 0 && <Badge tone="critical">Recovering</Badge>}
+                    {fund.balance_cents < 0 && (
+                      <RecoveryBadge
+                        note={fund.monthly_contribution_cents > 0
+                          ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
+                          : 'No contribution set — will not recover automatically'}
+                      />
+                    )}
                   </div>
                   {reordering ? (
                     <div className="flex items-center shrink-0 gap-1">
@@ -611,14 +664,6 @@ export default function FundsPage() {
                     </div>
                   )}
                 </div>
-
-                {fund.balance_cents < 0 && (
-                  <p className="text-xs text-ink-3 mt-1 pl-5">
-                    {fund.monthly_contribution_cents > 0
-                      ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
-                      : 'No contribution set — will not recover automatically'}
-                  </p>
-                )}
               </Card>
             )
           })}
@@ -643,7 +688,8 @@ export default function FundsPage() {
       {showTransfer && (
         <TransferModal
           state={state}
-          onClose={() => setShowTransfer(false)}
+          initialFrom={transferInitialFrom}
+          onClose={closeTransfer}
           onTransfer={handleTransfer}
         />
       )}

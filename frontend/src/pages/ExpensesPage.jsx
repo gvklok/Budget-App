@@ -4,7 +4,8 @@ import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, Chevron
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
 import Modal from '../components/Modal'
-import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu, ColorSwatchPicker } from '../components/ui'
+import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu, ColorSwatchPicker, RecoveryBadge } from '../components/ui'
+import { useRefetchOnFocus } from '../hooks'
 
 function c(cents) { return fmt(cents / 100) }
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -289,13 +290,14 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, d
 
 // ── Bill Line Item Modal ──────────────────────────────────────────────────────
 
-function LineItemModal({ item, categories, onClose, onSave }) {
+function LineItemModal({ item, categories, onClose, onSave, onDelete }) {
   const [name, setName] = useState(item?.name ?? '')
   const [amount, setAmount] = useState(item ? (item.amount_cents / 100).toFixed(2) : '')
   const [categoryId, setCategoryId] = useState(item?.category_id ?? '')
   const [color, setColor] = useState(item?.color ?? null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -306,6 +308,19 @@ function LineItemModal({ item, categories, onClose, onSave }) {
       await onSave({ name: name.trim(), type: 'bill', amount_cents: toCents(amount), actual_cents: 0, category_id: categoryId !== '' ? Number(categoryId) : null, color })
       onClose()
     } catch (err) { setError(err.message) } finally { setSaving(false) }
+  }
+
+  async function handleDeleteClick() {
+    setDeleting(true)
+    setError('')
+    try {
+      const deleted = await onDelete(item)
+      if (deleted) onClose()
+    } catch (err) {
+      setError(err.message || 'Delete failed')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -331,6 +346,22 @@ function LineItemModal({ item, categories, onClose, onSave }) {
         <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : item ? 'Save Changes' : 'Add'}
         </PrimaryButton>
+        {/* Quiet destructive action, edit-mode only — mirrors EditFundModal's
+            "Delete fund" footer so a bill row never needs its own trash icon
+            (owner kept almost-tapping it there). */}
+        {item && onDelete && (
+          <div className="pt-3 border-t border-line">
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              disabled={deleting}
+              className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-critical py-1.5 disabled:opacity-40"
+            >
+              <Trash2 size={13} />
+              {deleting ? 'Deleting…' : 'Delete bill'}
+            </button>
+          </div>
+        )}
       </form>
     </Modal>
   )
@@ -483,7 +514,7 @@ function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDele
 
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
-function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDelete, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride }) {
+function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
@@ -506,15 +537,17 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onDele
                 {negative && <AlertTriangle size={12} className="text-critical shrink-0" />}
                 <span className="truncate">{name}</span>
               </p>
-              <div className="flex items-center shrink-0">
-                {onLogTx && <IconButton compact onClick={onLogTx} title="Log transaction"><Receipt size={12} /></IconButton>}
+              {/* Pencil left, Log rightmost (and a touch larger, not compact) —
+                  the frequent action sits where the thumb lands; delete moved
+                  into the edit modal as a quiet destructive action instead of
+                  living on the row (owner kept almost-tapping it). */}
+              <div className="flex items-center gap-0.5 shrink-0">
                 {onEdit && <IconButton compact onClick={onEdit}><Pencil size={12} /></IconButton>}
-                {onDelete && <IconButton compact onClick={onDelete} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={12} /></IconButton>}
+                {onLogTx && <IconButton onClick={onLogTx} title="Log transaction"><Receipt size={14} /></IconButton>}
               </div>
             </div>
-            {negative && <Badge tone="critical" className="mt-1">Recovering</Badge>}
+            {negative && <RecoveryBadge note={recoveryNote} className="mt-1" />}
             {subtitle && <p className="text-xs text-ink-3 mt-0.5">{subtitle}</p>}
-            {recoveryNote && <p className="text-xs text-critical mt-0.5">{recoveryNote}</p>}
             {budgetCents > 0 && (
               <div className="mt-2">
                 <div className="flex items-baseline justify-between gap-2 mb-1.5">
@@ -576,7 +609,7 @@ function GroupSummary({ label, planned, spent }) {
   )
 }
 
-function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDeleteTx }) {
+function BillGroup({ label, bills, txnsByItemId, onEdit, onLogTx, onDeleteTx }) {
   const [open, setOpen] = useState(true)
   const totalPlanned = bills.reduce((s, b) => s + b.amount_cents, 0)
   const totalSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
@@ -609,7 +642,7 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
               // escalates to CRITICAL — honesty over identity.
               return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
                 color={billPct > 100 ? CRITICAL : billColor(b)}
-                onEdit={onEdit && (() => onEdit(b))} onDelete={onDelete && (() => onDelete(b))}
+                onEdit={onEdit && (() => onEdit(b))}
                 onLogTx={onLogTx && (() => onLogTx(b.id))} onDeleteTx={onDeleteTx} />
             })}
           </div>
@@ -756,6 +789,7 @@ export default function ExpensesPage() {
   }, [selected])
 
   useEffect(() => { load() }, [load])
+  useRefetchOnFocus(load)
 
   // U8: navigating away from an unlocked past month re-locks it (per-session unlock only)
   useEffect(() => { setUnlockedMonth(null) }, [selected?.year, selected?.month])
@@ -790,7 +824,12 @@ export default function ExpensesPage() {
       })
     }
   }
-  async function handleDeleteItem(item) { if (!confirm(`Delete "${item.name}"?`)) return; await apiDel(`/line-items/${item.id}`); await load() }
+  async function handleDeleteItem(item) {
+    if (!confirm(`Delete "${item.name}"?`)) return false
+    await apiDel(`/line-items/${item.id}`)
+    await load()
+    return true
+  }
   async function handleCreateCat(data) { await apiPost('/line-items/categories', data); await load() }
   async function handleUpdateCat(id, data) { await apiPatch(`/line-items/categories/${id}`, data); await load() }
   async function handleDeleteCat(cat) { if (!confirm(`Delete "${cat.name}"? Bills become uncategorized.`)) return; await apiDel(`/line-items/categories/${cat.id}`); await load() }
@@ -1211,12 +1250,12 @@ export default function ExpensesPage() {
                   const group = grouped[cat.id]
                   if (!group?.length) return null
                   return <BillGroup key={cat.id} label={cat.name} bills={group} txnsByItemId={txnsByItemId}
-                    onEdit={locked ? undefined : setEditItem} onDelete={locked ? undefined : handleDeleteItem}
+                    onEdit={locked ? undefined : setEditItem}
                     onLogTx={locked ? undefined : (id) => setLogTx({ lineItemId: id })} onDeleteTx={locked ? undefined : handleDeleteTx} />
                 })}
                 {uncategorized.length > 0 && (
                   <BillGroup label="Uncategorized" bills={uncategorized} txnsByItemId={txnsByItemId}
-                    onEdit={locked ? undefined : setEditItem} onDelete={locked ? undefined : handleDeleteItem}
+                    onEdit={locked ? undefined : setEditItem}
                     onLogTx={locked ? undefined : (id) => setLogTx({ lineItemId: id })} onDeleteTx={locked ? undefined : handleDeleteTx} />
                 )}
                 {!billTotalRedundant && (
@@ -1334,7 +1373,7 @@ export default function ExpensesPage() {
       {showAddSource && <IncomeSourceModal onClose={() => setShowAddSource(false)} onSave={handleCreateSource} />}
       {editSource && <IncomeSourceModal source={editSource} onClose={() => setEditSource(null)} onSave={(d) => handleUpdateSource(editSource.id, d)} />}
       {showAddItem && <LineItemModal categories={categories} onClose={() => setShowAddItem(false)} onSave={handleCreateItem} />}
-      {editItem && <LineItemModal item={editItem} categories={categories} onClose={() => setEditItem(null)} onSave={(d) => handleUpdateItem(editItem.id, d)} />}
+      {editItem && <LineItemModal item={editItem} categories={categories} onClose={() => setEditItem(null)} onSave={(d) => handleUpdateItem(editItem.id, d)} onDelete={handleDeleteItem} />}
       {showCatManager && (
         <ManageCategoriesModal
           categories={categories}

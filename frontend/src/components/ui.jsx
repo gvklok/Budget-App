@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { MoreHorizontal, Check } from 'lucide-react'
 import { LINE, CHART_COLORS_HEX, EXTRA_SWATCH_COLORS } from '../theme'
 
@@ -127,6 +128,69 @@ export function Badge({ tone = 'neutral', children, className = '' }) {
   return (
     <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${BADGE_TONES[tone]} ${className}`}>
       {children}
+    </span>
+  )
+}
+
+// ── RecoveryBadge — tappable "Recovering" badge with a dismissible popover ────
+// Owner: "I don't need a sea of red" — the recovery sentence ("At $X/mo, back
+// to $0 in ~N months") used to sit always-visible under every negative Fund
+// row. It's now hidden behind a tap on the badge itself, so the row stays
+// calm until asked. Rendered via a portal (fixed-positioned, computed from
+// the trigger's own rect) so it always escapes any `overflow-hidden` list
+// container it's nested in, rather than getting clipped. Dismisses on
+// outside tap, Escape, or scroll (position would go stale otherwise).
+export function RecoveryBadge({ note, className = '' }) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState(null)
+  const btnRef = useRef(null)
+  const popRef = useRef(null)
+
+  function toggle(e) {
+    e.stopPropagation()
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      const width = 232
+      setPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - width - 12) })
+    }
+    setOpen((v) => !v)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    function onOutside(e) {
+      if (popRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false) }
+    function onScroll() { setOpen(false) }
+    document.addEventListener('mousedown', onOutside)
+    document.addEventListener('touchstart', onOutside)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onOutside)
+      document.removeEventListener('touchstart', onOutside)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [open])
+
+  return (
+    <span className={`inline-block ${className}`}>
+      <button type="button" ref={btnRef} onClick={toggle} className="inline-flex">
+        <Badge tone="critical">Recovering</Badge>
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={popRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: 232 }}
+          className="z-50 rounded-2xl bg-ink text-on-ink text-xs leading-snug px-3.5 py-2.5 shadow-pop"
+        >
+          {note}
+        </div>,
+        document.body
+      )}
     </span>
   )
 }

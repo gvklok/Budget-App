@@ -9,6 +9,7 @@ import { entityColor, LINE, LINE_STRONG, INK_3, CARD, areaGradientId } from '../
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
 import { Card, SectionLabel, Badge, PrimaryButton, EmptyState } from '../components/ui'
+import { useRefetchOnFocus } from '../hooks'
 
 function c(cents) {
   return fmt(cents / 100)
@@ -424,6 +425,7 @@ export default function FundDetailPage() {
   }, [id])
 
   useEffect(() => { load() }, [load])
+  useRefetchOnFocus(load)
 
   useEffect(() => {
     window.addEventListener('dev-refresh', load)

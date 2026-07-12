@@ -3,6 +3,7 @@ import { Check, Plus, Pencil, Trash2, X, RotateCcw } from 'lucide-react'
 import { apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { Card, SectionLabel, EmptyState, PrimaryButton, IconButton, Bar } from '../components/ui'
 import { ACCENT, LINE_STRONG } from '../theme'
+import { useRefetchOnFocus } from '../hooks'
 
 // ── ChecklistRow ──────────────────────────────────────────────────────────────
 // Tap anywhere on the row to toggle. Edit/delete IconButtons stop propagation
@@ -151,6 +152,7 @@ export default function ChecklistPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useRefetchOnFocus(load)
 
   useEffect(() => {
     window.addEventListener('dev-refresh', load)

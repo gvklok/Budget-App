@@ -6,6 +6,7 @@ import {
   INK, INK_2, INK_3, LINE, PAPER, CARD, areaGradientId,
 } from '../theme'
 import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
+import { useRefetchOnFocus } from '../hooks'
 
 // ── shared money/date helpers ─────────────────────────────────────────────────
 
@@ -125,6 +126,21 @@ function aggregateRange(months) {
   return { n, totalIncome, totalKept, totalBills, totalFunds, totalTransfers, overspentCount }
 }
 
+// Compact "Feb – Jul" range label for the hero rate's small caption — short
+// form (no year) unless the window crosses a year boundary, matching
+// rangeHeaderLabel's convention but always short (this caption sits under a
+// giant number, not a card header with room to spell out the year).
+function periodRangeShortLabel(months) {
+  if (months.length === 0) return ''
+  const first = months[0]
+  const last = months[months.length - 1]
+  if (first.year === last.year && first.month === last.month) {
+    return monthShortLabel(last.year, last.month)
+  }
+  const firstLabel = first.year === last.year ? monthShortLabel(first.year, first.month) : `${monthShortLabel(first.year, first.month)} ${first.year}`
+  return `${firstLabel} – ${monthShortLabel(last.year, last.month)}${last.year !== first.year ? ` ${last.year}` : ''}`
+}
+
 function PeriodReviewCard({ months, rangeMonths }) {
   const { n, totalIncome, totalKept, totalBills, totalFunds, totalTransfers, overspentCount } = aggregateRange(months)
   const avgSpent = n > 0 ? (totalBills + totalFunds) / n : 0
@@ -139,16 +155,25 @@ function PeriodReviewCard({ months, rangeMonths }) {
         <EmptyState title="No activity in this period yet." />
       ) : (
         <>
-          <div className="flex items-start justify-between gap-3 flex-wrap">
+          {/* SHOW the rate, don't tell it — the hero figure is the % itself
+              (calm green, the app's one saving hue), with the plain-language
+              sentence demoted underneath as supporting detail. */}
+          {rate != null ? (
+            <div className="mb-1">
+              <span className="hero-figure text-5xl font-bold tabular" style={{ color: rate < 0 ? CRITICAL : SAVING }}>
+                {Math.round(rate)}%
+              </span>
+              <p className="text-xs text-ink-3 mt-0.5">savings rate · {periodRangeShortLabel(months)}</p>
+              <p className="text-sm text-ink-2 mt-2">
+                You kept <span className="tabular font-semibold text-ink">{c(totalKept)}</span> of{' '}
+                <span className="tabular">{c(totalIncome)}</span> income
+              </p>
+            </div>
+          ) : (
             <p className="text-base font-semibold text-ink leading-snug">
               You kept <span className="tabular">{c(totalKept)}</span> of <span className="tabular">{c(totalIncome)}</span> income
             </p>
-            {rate != null && (
-              <span className="text-2xl font-bold tabular shrink-0" style={{ color: rate < 0 ? CRITICAL : SAVING }}>
-                {Math.round(rate)}%
-              </span>
-            )}
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-line">
             <Stat label="Spent on bills" value={c(totalBills)} dotColor={BILLS} />
@@ -900,18 +925,18 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
 }
 
 // ── CollapsibleChartCard — declutter wrapper for the "over this period"
-// charts (owner: "too worky on the top"). Collapsed by default; a tap on the
-// header row expands it. Content is lazy-rendered (only mounted once open),
-// and the open/closed choice persists per-card in localStorage so the
-// owner's preference sticks across visits. Reuses the same chevron-toggle
-// language as ExpensesPage's collapsible sections rather than inventing a
-// new interaction. ──────────────────────────────────────────────────────────
+// charts. Expanded by default (owner: charts should SHOW, not hide behind a
+// tap) — a tap on the header row still collapses it, and the open/closed
+// choice persists per-card in localStorage so the owner's preference sticks
+// across visits. Reuses the same chevron-toggle language as ExpensesPage's
+// collapsible sections rather than inventing a new interaction. ────────────
 function CollapsibleChartCard({ storageKey, label, teaser, children }) {
   const [open, setOpen] = useState(() => {
     try {
-      return localStorage.getItem(storageKey) === '1'
+      const stored = localStorage.getItem(storageKey)
+      return stored === null ? true : stored === '1'
     } catch {
-      return false
+      return true
     }
   })
 
@@ -1043,11 +1068,13 @@ export default function OverviewPage() {
 
   useEffect(() => { loadBreakdown() }, [loadBreakdown, refreshKey])
 
+  const bump = useCallback(() => setRefreshKey((k) => k + 1), [])
+  useRefetchOnFocus(bump)
+
   useEffect(() => {
-    function onRefresh() { setRefreshKey((k) => k + 1) }
-    window.addEventListener('dev-refresh', onRefresh)
-    return () => window.removeEventListener('dev-refresh', onRefresh)
-  }, [])
+    window.addEventListener('dev-refresh', bump)
+    return () => window.removeEventListener('dev-refresh', bump)
+  }, [bump])
 
   if (mainError) {
     return (
