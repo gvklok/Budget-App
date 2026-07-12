@@ -118,9 +118,11 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
             line_item = db.query(models.Expense).filter(models.Expense.id == tx.line_item_id).first()
             if line_item is not None and line_item.type == "fund" and line_item.fund_id:
                 fund = fund_by_id.get(line_item.fund_id)
-        if fund is None:
-            continue
-        if fund.destination_type == "transfer_out":
+        # Only a positively-resolved transfer_out fund escapes "spending".
+        # Orphaned spends (deleted bill / deleted fund) count as spending with
+        # external_spend semantics — matching /overview/monthly's deleted-fund
+        # fallback so the three reporting surfaces agree on the total.
+        if fund is not None and fund.destination_type == "transfer_out":
             transfers_out_cents += tx.amount_cents
         else:
             actual_fund_spent += tx.amount_cents

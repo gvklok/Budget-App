@@ -133,6 +133,21 @@ def _migrate() -> None:
             """))
             conn.execute(text("DROP TABLE transactions"))
             conn.execute(text("ALTER TABLE transactions_new RENAME TO transactions"))
+
+        # transactions bank-sync seam columns (passive). Re-read cols in case the
+        # table was just rebuilt above (which drops these).
+        tx_seam_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))}
+        if "source" not in tx_seam_cols:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"))
+        if "external_id" not in tx_seam_cols:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN external_id TEXT"))
+        if "status" not in tx_seam_cols:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'"))
+        # Partial unique index: dedupe imported rows, leave manual (NULL) rows free.
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_transactions_source_external_id "
+            "ON transactions (source, external_id) WHERE external_id IS NOT NULL"
+        ))
         conn.commit()
 
 

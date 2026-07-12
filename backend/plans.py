@@ -83,14 +83,21 @@ def get_or_autoload_plan(db: Session, year: int, month: int) -> models.MonthlyPl
 
     if prior:
         prior_items = db.query(models.Expense).filter(models.Expense.plan_id == prior.id).all()
+        # Drop dangling references while copying forward: a fund_id or
+        # category_id whose target was deleted would otherwise re-copy forever,
+        # and a fund-item with a dead fund_id can never be spent against.
+        existing_fund_ids = {f.id for f in db.query(models.Fund.id).all()}
+        existing_cat_ids = {c.id for c in db.query(models.ExpenseCategory.id).all()}
         for item in prior_items:
+            fund_id = item.fund_id if item.fund_id in existing_fund_ids else None
+            category_id = item.category_id if item.category_id in existing_cat_ids else None
             db.add(models.Expense(
                 name=item.name,
                 type=item.type,
                 amount_cents=item.amount_cents,
                 actual_cents=0,
-                category_id=item.category_id,
-                fund_id=item.fund_id,
+                category_id=category_id,
+                fund_id=fund_id,
                 plan_id=plan.id,
                 sort_order=item.sort_order,
                 color=item.color,

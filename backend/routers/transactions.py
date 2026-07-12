@@ -73,24 +73,30 @@ def _debit(tx: models.Transaction, db: Session) -> None:
     rc.balance_cents -= tx.amount_cents
 
 
-def _credit(tx: models.Transaction, db: Session) -> None:
-    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
-
-    if tx.line_item_id is not None:
-        line_item = db.query(models.Expense).filter(models.Expense.id == tx.line_item_id).first()
-        if line_item and line_item.type == "bill":
-            mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
-            mr.balance_cents += tx.amount_cents
-        elif line_item and line_item.type == "fund" and line_item.fund_id:
-            fund = db.query(models.Fund).filter(models.Fund.id == line_item.fund_id).first()
-            if fund:
-                fund.balance_cents += tx.amount_cents
-    elif tx.fund_id is not None:
-        fund = db.query(models.Fund).filter(models.Fund.id == tx.fund_id).first()
+def _credit_bucket(bucket: Optional[str], amount_cents: int, db: Session) -> bool:
+    """Credit `amount_cents` to the named ledger bucket ('mr', 'savings', or
+    'fund:{id}'). Returns True if the bucket resolved and was credited, False if
+    it no longer exists (a deleted fund) so the caller can follow the money to
+    Savings. Does NOT touch Real Cash."""
+    if bucket == "mr":
+        mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
+        mr.balance_cents += amount_cents
+        return True
+    if bucket == "savings":
+        savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+        savings.balance_cents += amount_cents
+        return True
+    if bucket and bucket.startswith("fund:"):
+        try:
+            fund_id = int(bucket.split(":")[1])
+        except (ValueError, IndexError):
+            return False
+        fund = db.query(models.Fund).filter(models.Fund.id == fund_id).first()
         if fund:
-            fund.balance_cents += tx.amount_cents
-
-    rc.balance_cents += tx.amount_cents
+            fund.balance_cents += amount_cents
+            return True
+        return False
+    return False
 
 
 def _enrich(transactions: list[models.Transaction], db: Session) -> list[schemas.TransactionOut]:
@@ -222,15 +228,56 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
     if not tx:
         raise HTTPException(404, "Transaction not found")
-    _credit(tx, db)
-    # Append-only: never delete the original spend entry — record a reversal.
-    bucket, label = _bucket_and_label(tx, db)
+
+    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
+
+    # Reverse against the ORIGINAL spend's ledger entry, not the tx's current
+    # line-item/fund pointers: a since-changed bill->fund type or repointed
+    # fund_id would otherwise credit the wrong bucket and corrupt bucket truth.
+    spend = (
+        db.query(models.LedgerEntry)
+        .filter(
+            models.LedgerEntry.transaction_id == tx.id,
+            models.LedgerEntry.kind == "spend",
+        )
+        .order_by(models.LedgerEntry.id.asc())
+        .first()
+    )
+
+    _, derived_label = _bucket_and_label(tx, db)
+    if spend is not None:
+        origin_bucket = spend.from_bucket
+        base_label = spend.label if spend.label is not None else derived_label
+    else:
+        # Pre-ledger legacy tx: fall back to creation-time derivation.
+        origin_bucket, base_label = _bucket_and_label(tx, db)
+
+    # Credit exactly one bucket AND Real Cash by the same amount — that is what
+    # preserves the invariant. If the original bucket is a deleted fund, the
+    # reversal follows the money to Savings (where the fund's balance was swept).
+    suffix = ""
+    credited_bucket = origin_bucket
+    if origin_bucket is None or not _credit_bucket(origin_bucket, tx.amount_cents, db):
+        savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+        savings.balance_cents += tx.amount_cents
+        credited_bucket = "savings"
+        suffix = " (fund deleted)"
+
+    rc.balance_cents += tx.amount_cents
+
+    if suffix:
+        label = f"{base_label}{suffix}" if base_label else suffix.strip()
+    else:
+        label = base_label
+
+    # Append-only: never delete the original spend entry — record a reversal
+    # whose to_bucket is the bucket ACTUALLY credited.
     ledger.record(
         db,
         kind="spend_reversal",
         amount_cents=tx.amount_cents,
         from_bucket="external",
-        to_bucket=bucket,
+        to_bucket=credited_bucket,
         label=label,
         transaction_id=tx.id,
         date=tx.date,

@@ -132,6 +132,9 @@ class TransactionOut(BaseModel):
     fund_id: Optional[int] = None
     line_item_name: Optional[str] = None
     fund_name: Optional[str] = None
+    source: str = "manual"
+    external_id: Optional[str] = None
+    status: str = "posted"
     model_config = {"from_attributes": True}
 
 

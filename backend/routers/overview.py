@@ -127,6 +127,10 @@ def spending_breakdown(
 
     bill_totals: dict[int, int] = {}
     fund_totals: dict[int, int] = {}
+    # Orphaned bill-side spends (line item deleted) collapse into one row so the
+    # spend still shows up rather than silently vanishing from the breakdown.
+    deleted_bill_total = 0
+    deleted_bill_line_item_id = None
     for t in transactions:
         line_item = expenses_by_id.get(t.line_item_id) if t.line_item_id is not None else None
         if line_item is not None and line_item.type == "bill":
@@ -135,6 +139,10 @@ def spending_breakdown(
             fund_totals[line_item.fund_id] = fund_totals.get(line_item.fund_id, 0) + t.amount_cents
         elif t.fund_id is not None:
             fund_totals[t.fund_id] = fund_totals.get(t.fund_id, 0) + t.amount_cents
+        elif line_item is None and t.line_item_id is not None:
+            deleted_bill_total += t.amount_cents
+            if deleted_bill_line_item_id is None:
+                deleted_bill_line_item_id = t.line_item_id
 
     funds_by_id = {}
     if fund_totals:
@@ -157,12 +165,19 @@ def spending_breakdown(
             {"line_item_id": lid, "name": expenses_by_id[lid].name, "spent_cents": total}
             for lid, total in bill_totals.items()
         )
+    bill_rows = list(bill_rows)
+    if deleted_bill_total > 0:
+        bill_rows.append({
+            "line_item_id": deleted_bill_line_item_id,
+            "name": "Deleted bill",
+            "spent_cents": deleted_bill_total,
+        })
     bills = sorted(bill_rows, key=lambda b: b["spent_cents"], reverse=True)
     funds = sorted(
         (
             {
                 "fund_id": fid,
-                "name": funds_by_id[fid].name if fid in funds_by_id else None,
+                "name": funds_by_id[fid].name if fid in funds_by_id else "Deleted fund",
                 "spent_cents": total,
                 "destination_type": funds_by_id[fid].destination_type if fid in funds_by_id else "external_spend",
             }

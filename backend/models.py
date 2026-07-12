@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Index, text
 from database import Base
 
 
@@ -84,6 +84,22 @@ class Transaction(Base):
     line_item_id = Column(Integer, ForeignKey("expenses.id", ondelete="CASCADE"), nullable=True)
     fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Bank-sync seam (passive; no API accepts these yet). external_id is the
+    # bank/provider's own id; the partial unique index dedupes imported rows
+    # while leaving manual rows (external_id NULL) unconstrained.
+    source = Column(String, nullable=False, default="manual")  # "manual" | provider name
+    external_id = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="posted")  # "posted" | "pending" | ...
+
+    __table_args__ = (
+        Index(
+            "ix_transactions_source_external_id",
+            "source",
+            "external_id",
+            unique=True,
+            sqlite_where=text("external_id IS NOT NULL"),
+        ),
+    )
 
 
 class AppClock(Base):
