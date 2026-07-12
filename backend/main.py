@@ -50,6 +50,8 @@ def _migrate() -> None:
             # New column defaults every existing row to 0 — backfill so current
             # (id) order is preserved instead of collapsing to a single tie.
             conn.execute(text("UPDATE funds SET sort_order = id WHERE sort_order = 0"))
+        if "color" not in fund_cols:
+            conn.execute(text("ALTER TABLE funds ADD COLUMN color TEXT"))
 
         # monthly_plans table additions (U6)
         plan_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(monthly_plans)"))}
@@ -102,6 +104,8 @@ def _migrate() -> None:
                 text("UPDATE expenses SET plan_id = :p WHERE plan_id IS NULL"),
                 {"p": plan_id},
             )
+        if "color" not in existing:
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN color TEXT"))
 
         # transactions table: make line_item_id nullable + add fund_id
         tx_cols = {row[1]: row for row in conn.execute(text("PRAGMA table_info(transactions)"))}

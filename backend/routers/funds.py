@@ -84,6 +84,8 @@ def fund_detail(fund_id: int, db: Session = Depends(get_db)):
 def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
     if body.destination_type not in VALID_DESTINATION_TYPES:
         raise HTTPException(400, f"destination_type must be one of {sorted(VALID_DESTINATION_TYPES)}")
+    if body.color is not None and not schemas.HEX_COLOR_RE.match(body.color):
+        raise HTTPException(400, "color must be a hex string like '#5a82c2'")
     if body.balance_cents < 0:
         # A fund can only go negative by spending (U9) — seeding one negative
         # would silently break the invariant since no bucket covers the deficit.
@@ -103,6 +105,7 @@ def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
         destination_type=body.destination_type,
         allow_negative_balance=body.allow_negative_balance,
         sort_order=max_sort_order + 1,
+        color=body.color,
     )
     db.add(fund)
     db.flush()
@@ -131,6 +134,12 @@ def update_fund(fund_id: int, body: schemas.FundUpdate, db: Session = Depends(ge
         # existing negative balance persists; only NEW transactions immediately
         # start following the strict (no-further-negative) rule.
         fund.allow_negative_balance = body.allow_negative_balance
+    if body.color is not None:
+        if not schemas.HEX_COLOR_RE.match(body.color):
+            raise HTTPException(400, "color must be a hex string like '#5a82c2'")
+        fund.color = body.color
+    if "color" in body.model_fields_set and body.color is None:
+        fund.color = None
     db.commit()
     db.refresh(fund)
     return fund

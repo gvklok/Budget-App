@@ -148,6 +148,8 @@ def reorder_line_items(body: ReorderItemsBody, db: Session = Depends(get_db)):
 def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
     if body.amount_cents <= 0:
         raise HTTPException(400, "Amount must be positive")
+    if body.color is not None and not schemas.HEX_COLOR_RE.match(body.color):
+        raise HTTPException(400, "color must be a hex string like '#5a82c2'")
     _validate_type_and_fund(body.type, body.fund_id, body.new_fund_name, db)
 
     year, month = (body.year, body.month) if body.year and body.month else plans_lib.current_year_month(db)
@@ -196,6 +198,7 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
         fund_id=resolved_fund_id,
         plan_id=plan.id,
         sort_order=max_item_sort_order + 1,
+        color=body.color,
     )
     db.add(expense)
     db.flush()
@@ -232,6 +235,12 @@ def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = D
         expense.fund_id = body.fund_id
     if "fund_id" in body.model_fields_set and body.fund_id is None:
         expense.fund_id = None
+    if body.color is not None:
+        if not schemas.HEX_COLOR_RE.match(body.color):
+            raise HTTPException(400, "color must be a hex string like '#5a82c2'")
+        expense.color = body.color
+    if "color" in body.model_fields_set and body.color is None:
+        expense.color = None
     plans_lib.sync_mr_target(db)
     db.commit()
     db.refresh(expense)

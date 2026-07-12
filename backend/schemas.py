@@ -1,5 +1,8 @@
+import re
 from typing import Optional
 from pydantic import BaseModel
+
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class RealCashOut(BaseModel):
@@ -29,6 +32,7 @@ class FundOut(BaseModel):
     destination_type: str
     allow_negative_balance: bool
     sort_order: int
+    color: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -38,6 +42,7 @@ class FundCreate(BaseModel):
     monthly_contribution_cents: int = 0
     destination_type: str = "external_spend"
     allow_negative_balance: bool = False
+    color: Optional[str] = None
 
 
 class FundUpdate(BaseModel):
@@ -45,6 +50,7 @@ class FundUpdate(BaseModel):
     monthly_contribution_cents: Optional[int] = None
     destination_type: Optional[str] = None
     allow_negative_balance: Optional[bool] = None
+    color: Optional[str] = None
 
 
 class ExpenseCategoryOut(BaseModel):
@@ -67,6 +73,7 @@ class ExpenseOut(BaseModel):
     fund_id: Optional[int] = None
     plan_id: Optional[int] = None
     sort_order: int
+    color: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -80,6 +87,7 @@ class ExpenseCreate(BaseModel):
     new_fund_name: Optional[str] = None  # inline fund creation when type="fund"
     year: Optional[int] = None   # U3: which month's plan this belongs to;
     month: Optional[int] = None  # defaults to the effective current month
+    color: Optional[str] = None
 
 
 class ExpenseUpdate(BaseModel):
@@ -89,6 +97,7 @@ class ExpenseUpdate(BaseModel):
     actual_cents: Optional[int] = None
     category_id: Optional[int] = None
     fund_id: Optional[int] = None
+    color: Optional[str] = None
 
 
 class IncomeSourceOut(BaseModel):

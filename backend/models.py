@@ -31,6 +31,7 @@ class Fund(Base):
     destination_type = Column(String, default="external_spend", nullable=False)  # "external_spend" | "transfer_out"
     allow_negative_balance = Column(Boolean, default=False, nullable=False)  # U9
     sort_order = Column(Integer, nullable=False, default=0)
+    color = Column(String, nullable=True)  # hex like "#5a82c2"; null = app picks automatically
 
 
 class ExpenseCategory(Base):
@@ -62,6 +63,7 @@ class Expense(Base):
     fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)
     plan_id = Column(Integer, ForeignKey("monthly_plans.id", ondelete="CASCADE"), nullable=True)  # U3
     sort_order = Column(Integer, nullable=False, default=0)
+    color = Column(String, nullable=True)  # hex like "#5a82c2"; null = app picks automatically
 
 
 class IncomeSource(Base):

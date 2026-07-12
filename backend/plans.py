@@ -93,6 +93,7 @@ def get_or_autoload_plan(db: Session, year: int, month: int) -> models.MonthlyPl
                 fund_id=item.fund_id,
                 plan_id=plan.id,
                 sort_order=item.sort_order,
+                color=item.color,
             ))
 
     db.commit()
