@@ -57,6 +57,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
   const [name, setName] = useState('')
   const [balance, setBalance] = useState('')
   const [contribution, setContribution] = useState('')
+  const [goal, setGoal] = useState('')
   const [destinationType, setDestinationType] = useState('external_spend')
   const [allowNegative, setAllowNegative] = useState(false)
   const [color, setColor] = useState(null)
@@ -73,6 +74,7 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
         name: name.trim(),
         balance_cents: toCents(balance),
         monthly_contribution_cents: toCents(contribution || '0'),
+        goal_cents: goal.trim() === '' ? null : toCents(goal),
         destination_type: destinationType,
         allow_negative_balance: allowNegative,
         color,
@@ -131,6 +133,21 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
           />
           <p className="text-xs text-ink-3 mt-1.5">Can also be set later, on this page or the Expenses page.</p>
         </div>
+        <div>
+          <label className={labelClass}>
+            Goal <span className="text-ink-3 font-normal">(optional)</span>
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            placeholder="0.00"
+            className={inputClass}
+          />
+          <p className="text-xs text-ink-3 mt-1.5">A target balance to track progress toward — informational only.</p>
+        </div>
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Adding…' : 'Add Fund'}
@@ -140,9 +157,10 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
   )
 }
 
-function EditFundModal({ fund, onClose, onSave, onDelete }) {
+export function EditFundModal({ fund, onClose, onSave, onDelete }) {
   const [name, setName] = useState(fund.name)
   const [contribution, setContribution] = useState(fund.monthly_contribution_cents > 0 ? (fund.monthly_contribution_cents / 100).toFixed(2) : '')
+  const [goal, setGoal] = useState(fund.goal_cents ? (fund.goal_cents / 100).toFixed(2) : '')
   const [destinationType, setDestinationType] = useState(fund.destination_type ?? 'external_spend')
   const [allowNegative, setAllowNegative] = useState(fund.allow_negative_balance ?? false)
   const [color, setColor] = useState(fund.color ?? null)
@@ -162,6 +180,7 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
         allow_negative_balance: allowNegative,
         color,
         monthly_contribution_cents: toCents(contribution || '0'),
+        goal_cents: goal.trim() === '' ? null : toCents(goal),
       })
       onClose()
     } catch (err) {
@@ -211,6 +230,21 @@ function EditFundModal({ fund, onClose, onSave, onDelete }) {
             className={inputClass}
           />
           <p className="text-xs text-ink-3 mt-1.5">Set to 0 to exclude from contributions total</p>
+        </div>
+        <div>
+          <label className={labelClass}>
+            Goal <span className="text-ink-3 font-normal">(optional)</span>
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            placeholder="0.00"
+            className={inputClass}
+          />
+          <p className="text-xs text-ink-3 mt-1.5">A target balance to track progress toward — informational only. Leave blank to clear.</p>
         </div>
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit" disabled={saving} className="w-full">

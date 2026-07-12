@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef, useId } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   ChevronLeft, ArrowRightLeft, ShoppingBag, AlertTriangle,
   Wallet, PiggyBank, TrendingUp, RotateCcw, SlidersHorizontal,
 } from 'lucide-react'
-import { fmt, toCents, apiGet, apiPost, monthLabel } from '../api'
-import { entityColor, LINE, LINE_STRONG, INK_3, CARD, areaGradientId } from '../theme'
+import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel, monthLabel } from '../api'
+import { entityColor, LINE, LINE_STRONG, INK_3, CARD, SAVING_TEXT, areaGradientId } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
-import { Card, SectionLabel, Badge, PrimaryButton, EmptyState } from '../components/ui'
+import { Card, SectionLabel, Badge, PrimaryButton, EmptyState, Bar } from '../components/ui'
+import { EditFundModal } from './FundsPage'
 import { useRefetchOnFocus } from '../hooks'
 
 function c(cents) {
@@ -78,6 +79,16 @@ function tickLabel(dollars) {
 function shortDate(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number)
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// Adds `n` whole months to a (year, 1-indexed month) pair, rolling the year
+// over as needed — used to project "funded by {Month Year}" from the
+// effective current date (never the browser clock, per CLAUDE.md).
+function addMonthsLabel(year, month, n) {
+  const total = (month - 1) + n
+  const ny = year + Math.floor(total / 12)
+  const nm = (total % 12) + 1
+  return monthLabel(`${ny}-${String(nm).padStart(2, '0')}`)
 }
 
 // Month-only label for intermediate x-axis ticks — computed from a UTC
@@ -400,22 +411,30 @@ function LogSpendModal({ fund, onClose, onSave }) {
 
 export default function FundDetailPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [detail, setDetail] = useState(null)
   const [appState, setAppState] = useState(null)
+  const [currentDate, setCurrentDate] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [showTransfer, setShowTransfer] = useState(false)
   const [showLogSpend, setShowLogSpend] = useState(false)
+  const [showEditFund, setShowEditFund] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError('')
     setNotFound(false)
     try {
-      const [d, s] = await Promise.all([apiGet(`/funds/${id}/detail`), apiGet('/state')])
+      const [d, s, cd] = await Promise.all([
+        apiGet(`/funds/${id}/detail`),
+        apiGet('/state'),
+        apiGet('/dev/current-date'),
+      ])
       setDetail(d)
       setAppState(s)
+      setCurrentDate(cd)
     } catch (err) {
       if (/not found/i.test(err.message || '')) setNotFound(true)
       else setLoadError(err.message || 'Failed to load')
@@ -442,6 +461,20 @@ export default function FundDetailPage() {
     await apiPost('/transactions/', data)
     await load()
     refreshDevOverlay()
+  }
+
+  async function handleFundUpdate(fundId, data) {
+    await apiPatch(`/funds/${fundId}`, data)
+    await load()
+    refreshDevOverlay()
+  }
+
+  async function handleFundDelete(fund) {
+    if (!confirm(`Delete "${fund.name}"? Its balance (${c(fund.balance_cents)}) will return to Savings.`)) return false
+    await apiDel(`/funds/${fund.id}`)
+    refreshDevOverlay()
+    navigate('/funds', { replace: true })
+    return true
   }
 
   if (notFound) {
@@ -519,6 +552,38 @@ export default function FundDetailPage() {
             ? `${c(fund.monthly_contribution_cents)} / month contribution`
             : 'No monthly contribution set'}
         </p>
+
+        {/* Goal — deliberately subtle (owner: "make it less huge, just when I
+            click on it"). Never appears in list rows, only here on detail. */}
+        {fund.goal_cents != null ? (
+          <div className="mt-4 pt-4 border-t border-line">
+            <p className="text-xs text-ink-2">
+              {c(fund.balance_cents)} of {c(fund.goal_cents)} goal
+              <span className="text-ink-3"> · {Math.round((fund.balance_cents / fund.goal_cents) * 100)}%</span>
+            </p>
+            <div className="mt-2">
+              <Bar pct={(fund.balance_cents / fund.goal_cents) * 100} color={color} height={5} />
+            </div>
+            {fund.balance_cents >= fund.goal_cents ? (
+              <p className="text-xs font-semibold mt-1.5" style={{ color: SAVING_TEXT }}>Goal reached ✓</p>
+            ) : fund.monthly_contribution_cents > 0 && currentDate ? (
+              <p className="text-xs text-ink-3 mt-1.5">
+                Funded by {addMonthsLabel(
+                  ...currentDate.effective_date.split('-').slice(0, 2).map(Number),
+                  Math.ceil((fund.goal_cents - fund.balance_cents) / fund.monthly_contribution_cents)
+                )} at {c(fund.monthly_contribution_cents)}/mo
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowEditFund(true)}
+            className="text-xs font-semibold text-ink-3 mt-4 pt-4 border-t border-line w-full text-left"
+          >
+            Set a goal…
+          </button>
+        )}
       </Card>
 
       {/* Quick actions — Log spend is the one clear primary action */}
@@ -581,6 +646,14 @@ export default function FundDetailPage() {
           fund={fund}
           onClose={() => setShowLogSpend(false)}
           onSave={handleLogSpend}
+        />
+      )}
+      {showEditFund && (
+        <EditFundModal
+          fund={fund}
+          onClose={() => setShowEditFund(false)}
+          onSave={handleFundUpdate}
+          onDelete={handleFundDelete}
         />
       )}
     </div>
