@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle } from 'lucide-react'
+import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { LINE, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId } from '../theme'
 import Modal from '../components/Modal'
@@ -624,6 +624,37 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
   )
 }
 
+// ── Reorder row — shared flat-list row for Bills/Funds reorder mode ──────────
+// Calm, buttons-only reordering (no HTML5 drag-and-drop — unreliable on
+// touch). First/last row disable their respective direction.
+
+function ReorderRow({ name, amountCents, first, last, onUp, onDown }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 transition-transform duration-[120ms]">
+      <p className="flex-1 min-w-0 text-sm font-medium text-ink truncate">{name}</p>
+      <span className="text-xs text-ink-3 tabular shrink-0">{c(amountCents)}</span>
+      <div className="flex items-center shrink-0 gap-1">
+        <button
+          onClick={onUp}
+          disabled={first}
+          className="w-10 h-10 flex items-center justify-center rounded-full text-ink-2 hover:bg-paper disabled:opacity-30 disabled:hover:bg-transparent"
+          aria-label={`Move ${name} up`}
+        >
+          <ChevronUp size={17} />
+        </button>
+        <button
+          onClick={onDown}
+          disabled={last}
+          className="w-10 h-10 flex items-center justify-center rounded-full text-ink-2 hover:bg-paper disabled:opacity-30 disabled:hover:bg-transparent"
+          aria-label={`Move ${name} down`}
+        >
+          <ChevronDown size={17} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ExpensesPage() {
@@ -664,6 +695,18 @@ export default function ExpensesPage() {
   const [reallocatePrompt, setReallocatePrompt] = useState(null) // U5: { itemId, itemName, delta, isNew, oldAmount? }
   const [unlockedMonth, setUnlockedMonth] = useState(null) // U8: { year, month } currently unlocked for editing this session
   const [loadError, setLoadError] = useState('')
+
+  // Reorder mode — Bills (flattens category grouping while active, so order
+  // is unambiguous) and Funds (reuses the funds reorder endpoint — Funds
+  // section here lists Funds themselves, same order as FundsPage).
+  const [billsReordering, setBillsReordering] = useState(false)
+  const [billsReorderList, setBillsReorderList] = useState([])
+  const [billsReorderError, setBillsReorderError] = useState('')
+  const [billsReorderSaving, setBillsReorderSaving] = useState(false)
+  const [fundsReordering, setFundsReordering] = useState(false)
+  const [fundsReorderList, setFundsReorderList] = useState([])
+  const [fundsReorderError, setFundsReorderError] = useState('')
+  const [fundsReorderSaving, setFundsReorderSaving] = useState(false)
 
   // Resolve the effective "today" once on mount, then default the viewed month to it
   // (unless the URL already names one).
@@ -774,6 +817,71 @@ export default function ExpensesPage() {
     }
     await load()
     setReallocatePrompt(null)
+  }
+
+  // Bills reorder mode — flattens category grouping to a single ungrouped
+  // list (in true plan sort_order) so priority is unambiguous while active;
+  // the grouped view re-derives from the persisted sort_order afterwards.
+  function startBillsReorder() {
+    setBillsReorderList([...bills].sort((a, b) => a.sort_order - b.sort_order || a.id - b.id))
+    setBillsReorderError('')
+    setBillsReordering(true)
+  }
+  function moveBillsReorder(index, dir) {
+    setBillsReorderList((prev) => {
+      const target = index + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+  async function finishBillsReorder() {
+    setBillsReorderSaving(true)
+    setBillsReorderError('')
+    try {
+      await apiPost('/line-items/reorder', { ordered_ids: billsReorderList.map((b) => b.id) })
+      await load()
+      setBillsReordering(false)
+    } catch (err) {
+      setBillsReorderError(err.message || 'Reorder failed — order restored')
+      await load()
+      setBillsReordering(false)
+    } finally {
+      setBillsReorderSaving(false)
+    }
+  }
+
+  // Funds reorder mode — reuses the FundsPage priority order (same endpoint,
+  // same list) since this section literally lists Funds, not line items.
+  function startFundsReorder() {
+    setFundsReorderList(funds)
+    setFundsReorderError('')
+    setFundsReordering(true)
+  }
+  function moveFundsReorder(index, dir) {
+    setFundsReorderList((prev) => {
+      const target = index + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+  async function finishFundsReorder() {
+    setFundsReorderSaving(true)
+    setFundsReorderError('')
+    try {
+      await apiPost('/funds/reorder', { ordered_ids: fundsReorderList.map((f) => f.id) })
+      await load()
+      setFundsReordering(false)
+    } catch (err) {
+      setFundsReorderError(err.message || 'Reorder failed — order restored')
+      await load()
+      setFundsReordering(false)
+    } finally {
+      setFundsReorderSaving(false)
+    }
   }
 
   if (loadError) {
@@ -1039,26 +1147,59 @@ export default function ExpensesPage() {
           this renders) */}
       <div>
         <div className="flex items-center justify-between mb-3 px-1">
-          <button onClick={() => setBillsOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+          <button onClick={() => setBillsOpen((v) => !v)} disabled={billsReordering}
+            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3 disabled:opacity-60">
             {billsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Bills
             {overBillsCount > 0 && <Badge tone="critical">{overBillsCount} over budget</Badge>}
           </button>
           {!locked && (
-            <div className="flex items-center gap-2">
-              <button onClick={() => setShowCatManager(true)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-white rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
-                <Tag size={12} />Categories
+            billsReordering ? (
+              <button
+                onClick={finishBillsReorder}
+                disabled={billsReorderSaving}
+                className="text-xs font-semibold bg-accent text-white rounded-full px-3.5 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
+              >
+                {billsReorderSaving ? 'Saving…' : 'Done'}
               </button>
-              <button onClick={() => setShowAddItem(true)}
-                className="flex items-center gap-1 text-sm font-semibold text-ink pl-2">
-                <Plus size={16} />Add
-              </button>
-            </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowCatManager(true)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-white rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
+                  <Tag size={12} />Categories
+                </button>
+                {bills.length > 1 && (
+                  <button onClick={startBillsReorder}
+                    className="flex items-center gap-1 text-sm font-semibold text-ink-2 pl-1" title="Reorder bills">
+                    <ArrowUpDown size={15} />Reorder
+                  </button>
+                )}
+                <button onClick={() => setShowAddItem(true)}
+                  className="flex items-center gap-1 text-sm font-semibold text-ink pl-2">
+                  <Plus size={16} />Add
+                </button>
+              </div>
+            )
           )}
         </div>
 
-        {billsOpen && (
+        {billsReordering && (
+          <p className="text-xs text-ink-3 -mt-2 mb-3 px-1">
+            Sets display order — categories regroup automatically once you're done.
+          </p>
+        )}
+        {billsReorderError && (
+          <p className="text-xs text-critical -mt-2 mb-3 px-1">{billsReorderError}</p>
+        )}
+
+        {billsReordering ? (
+          <Card className="overflow-hidden divide-y divide-line">
+            {billsReorderList.map((b, index) => (
+              <ReorderRow key={b.id} name={b.name} amountCents={b.amount_cents}
+                first={index === 0} last={index === billsReorderList.length - 1}
+                onUp={() => moveBillsReorder(index, -1)} onDown={() => moveBillsReorder(index, 1)} />
+            ))}
+          </Card>
+        ) : billsOpen && (
           <>
             {bills.length === 0 ? (
               <EmptyState title="No bills yet — add one above" />
@@ -1090,17 +1231,53 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Funds — collapsible */}
+      {/* Funds — collapsible. Order here comes from /funds/ — reuses the same
+          reorder endpoint FundsPage uses (this section lists Funds, not line
+          items, so there's only one order to manage). */}
       {funds.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3 px-1">
-            <button onClick={() => setFundsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+            <button onClick={() => setFundsOpen((v) => !v)} disabled={fundsReordering}
+              className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3 disabled:opacity-60">
               {fundsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Funds
               {overFundsCount > 0 && <Badge tone="critical">{overFundsCount} over budget</Badge>}
             </button>
+            {!locked && (
+              fundsReordering ? (
+                <button
+                  onClick={finishFundsReorder}
+                  disabled={fundsReorderSaving}
+                  className="text-xs font-semibold bg-accent text-white rounded-full px-3.5 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
+                >
+                  {fundsReorderSaving ? 'Saving…' : 'Done'}
+                </button>
+              ) : funds.length > 1 && (
+                <button onClick={startFundsReorder}
+                  className="flex items-center gap-1 text-sm font-semibold text-ink-2" title="Reorder funds">
+                  <ArrowUpDown size={15} />Reorder
+                </button>
+              )
+            )}
           </div>
-          {fundsOpen && (
+
+          {fundsReordering && (
+            <p className="text-xs text-ink-3 -mt-2 mb-3 px-1">
+              Top funds get filled first when Savings runs short.
+            </p>
+          )}
+          {fundsReorderError && (
+            <p className="text-xs text-critical -mt-2 mb-3 px-1">{fundsReorderError}</p>
+          )}
+
+          {fundsReordering ? (
+            <Card className="overflow-hidden divide-y divide-line">
+              {fundsReorderList.map((f, index) => (
+                <ReorderRow key={f.id} name={f.name} amountCents={f.monthly_contribution_cents}
+                  first={index === 0} last={index === fundsReorderList.length - 1}
+                  onUp={() => moveFundsReorder(index, -1)} onDown={() => moveFundsReorder(index, 1)} />
+              ))}
+            </Card>
+          ) : fundsOpen && (
             <Card className="overflow-hidden">
               <div className="divide-y divide-line">
                 {funds.map((fund) => {

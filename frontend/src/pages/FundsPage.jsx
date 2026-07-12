@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Pencil, Trash2, Plus, ArrowRightLeft, AlertTriangle, ChevronRight } from 'lucide-react'
+import { Pencil, Trash2, Plus, ArrowRightLeft, AlertTriangle, ChevronRight, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { SAVINGS_SWATCH, SAVING_TEXT, RESERVE_SWATCH, colorForId } from '../theme'
 import Modal from '../components/Modal'
@@ -310,6 +310,10 @@ export default function FundsPage() {
   const [editFund, setEditFund] = useState(null)
   const [distributing, setDistributing] = useState(false)
   const [distributeResult, setDistributeResult] = useState(null)
+  const [reordering, setReordering] = useState(false)
+  const [reorderFunds, setReorderFunds] = useState([])
+  const [reorderError, setReorderError] = useState('')
+  const [reorderSaving, setReorderSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -368,6 +372,40 @@ export default function FundsPage() {
   async function handleTransfer(data) {
     await apiPost('/transfers/', data)
     await load()
+  }
+
+  // Reorder mode — priority order also drives Distribute's fill order when
+  // Savings runs short, so this list is functional, not just cosmetic.
+  function startReorder() {
+    setReorderFunds(funds)
+    setReorderError('')
+    setReordering(true)
+  }
+
+  function moveFund(index, dir) {
+    setReorderFunds((prev) => {
+      const target = index + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+
+  async function finishReorder() {
+    setReorderSaving(true)
+    setReorderError('')
+    try {
+      await apiPost('/funds/reorder', { ordered_ids: reorderFunds.map((f) => f.id) })
+      await load()
+      setReordering(false)
+    } catch (err) {
+      setReorderError(err.message || 'Reorder failed — order restored')
+      await load()
+      setReordering(false)
+    } finally {
+      setReorderSaving(false)
+    }
   }
 
   if (loadError) {
@@ -430,30 +468,59 @@ export default function FundsPage() {
       {/* Funds */}
       <SectionLabel
         action={
-          <div className="flex items-center gap-3">
-            {funds.some((f) => f.monthly_contribution_cents > 0) && (
-              <button
-                onClick={handleDistribute}
-                disabled={distributing}
-                className="text-xs font-semibold text-accent disabled:opacity-40"
-              >
-                {distributing ? 'Distributing…' : 'Distribute'}
-              </button>
-            )}
+          reordering ? (
             <button
-              onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1 text-sm font-semibold text-ink"
+              onClick={finishReorder}
+              disabled={reorderSaving}
+              className="text-xs font-semibold bg-accent text-white rounded-full px-3.5 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
             >
-              <Plus size={16} />
-              Add
+              {reorderSaving ? 'Saving…' : 'Done'}
             </button>
-          </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              {funds.some((f) => f.monthly_contribution_cents > 0) && (
+                <button
+                  onClick={handleDistribute}
+                  disabled={distributing}
+                  className="text-xs font-semibold text-accent disabled:opacity-40"
+                >
+                  {distributing ? 'Distributing…' : 'Distribute'}
+                </button>
+              )}
+              {funds.length > 1 && (
+                <button
+                  onClick={startReorder}
+                  className="flex items-center gap-1 text-sm font-semibold text-ink-2"
+                  title="Reorder funds"
+                >
+                  <ArrowUpDown size={15} />
+                  Reorder
+                </button>
+              )}
+              <button
+                onClick={() => setShowAdd(true)}
+                className="flex items-center gap-1 text-sm font-semibold text-ink"
+              >
+                <Plus size={16} />
+                Add
+              </button>
+            </div>
+          )
         }
       >
         Funds
       </SectionLabel>
 
-      {distributeResult && (
+      {reordering && (
+        <p className="text-xs text-ink-3 -mt-2 mb-3 px-1">
+          Top funds get filled first when Savings runs short.
+        </p>
+      )}
+      {reorderError && (
+        <p className="text-xs text-critical -mt-2 mb-3 px-1">{reorderError}</p>
+      )}
+
+      {!reordering && distributeResult && (
         <div className={`mb-3 px-4 py-3 rounded-2xl text-xs ${distributeResult.error ? 'bg-critical-soft text-critical' : 'bg-paper text-ink-2'}`}>
           {distributeResult.error ? distributeResult.error : (
             <>
@@ -475,16 +542,16 @@ export default function FundsPage() {
         <EmptyState title="No funds yet — add one above" />
       ) : (
         <div className="space-y-2.5">
-          {funds.map((fund) => {
+          {(reordering ? reorderFunds : funds).map((fund, index) => {
             const color = colorForId(fund.id)
             return (
               <Card
                 key={fund.id}
-                className="p-4 cursor-pointer active:scale-[0.99] transition-transform"
-                role="button"
-                tabIndex={0}
-                onClick={() => navigate(`/funds/${fund.id}`)}
-                onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/funds/${fund.id}`) }}
+                className={`p-4 transition-transform ${reordering ? '' : 'cursor-pointer active:scale-[0.99]'}`}
+                role={reordering ? undefined : 'button'}
+                tabIndex={reordering ? undefined : 0}
+                onClick={reordering ? undefined : () => navigate(`/funds/${fund.id}`)}
+                onKeyDown={reordering ? undefined : (e) => { if (e.key === 'Enter') navigate(`/funds/${fund.id}`) }}
               >
                 {/* Line 1: identity + balance */}
                 <div className="flex items-center justify-between gap-3">
@@ -507,10 +574,31 @@ export default function FundsPage() {
                     {fund.destination_type === 'transfer_out' && <Badge tone="transfer">Transfer Out</Badge>}
                     {fund.balance_cents < 0 && <Badge tone="critical">Recovering</Badge>}
                   </div>
-                  <div className="flex items-center shrink-0">
-                    <IconButton onClick={(e) => { e.stopPropagation(); setEditFund(fund) }}><Pencil size={13} /></IconButton>
-                    <ChevronRight size={15} className="text-ink-3 ml-0.5" />
-                  </div>
+                  {reordering ? (
+                    <div className="flex items-center shrink-0 gap-1">
+                      <button
+                        onClick={() => moveFund(index, -1)}
+                        disabled={index === 0}
+                        className="w-10 h-10 flex items-center justify-center rounded-full text-ink-2 hover:bg-paper disabled:opacity-30 disabled:hover:bg-transparent"
+                        aria-label={`Move ${fund.name} up`}
+                      >
+                        <ChevronUp size={17} />
+                      </button>
+                      <button
+                        onClick={() => moveFund(index, 1)}
+                        disabled={index === reorderFunds.length - 1}
+                        className="w-10 h-10 flex items-center justify-center rounded-full text-ink-2 hover:bg-paper disabled:opacity-30 disabled:hover:bg-transparent"
+                        aria-label={`Move ${fund.name} down`}
+                      >
+                        <ChevronDown size={17} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center shrink-0">
+                      <IconButton onClick={(e) => { e.stopPropagation(); setEditFund(fund) }}><Pencil size={13} /></IconButton>
+                      <ChevronRight size={15} className="text-ink-3 ml-0.5" />
+                    </div>
+                  )}
                 </div>
 
                 {fund.balance_cents < 0 && (
