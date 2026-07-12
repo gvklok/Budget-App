@@ -1,3 +1,5 @@
+import { useState, useEffect, useRef } from 'react'
+import { MoreHorizontal } from 'lucide-react'
 import { LINE } from '../theme'
 
 // ── Ring — single-value circular progress ─────────────────────────────────────
@@ -188,6 +190,56 @@ export function EmptyState({ title, action }) {
     <div className="rounded-3xl border border-dashed border-line-strong p-8 text-center">
       <p className="text-ink-3 text-sm mb-2">{title}</p>
       {action}
+    </div>
+  )
+}
+
+// ── OverflowMenu — "⋯" popover for secondary section-header actions ─────────
+// Section headers accumulate controls fast (Add, Distribute, Categories,
+// Reorder, ...); the primary 1-2 actions stay inline, everything else
+// collapses behind one MoreHorizontal icon button. Calm ink-text rows, no
+// icons required. Closes on outside tap or Escape — no other affordance.
+export function OverflowMenu({ items }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    document.addEventListener('touchstart', onOutside)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onOutside)
+      document.removeEventListener('touchstart', onOutside)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="relative" ref={ref}>
+      <IconButton compact onClick={() => setOpen((v) => !v)} aria-label="More actions" aria-expanded={open}>
+        <MoreHorizontal size={16} />
+      </IconButton>
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 z-20 min-w-[168px] rounded-2xl bg-card border border-line shadow-pop py-1.5">
+          {items.map((item, i) => (
+            <button
+              key={i}
+              onClick={() => { setOpen(false); item.onClick() }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm font-medium text-ink text-left hover:bg-paper transition-colors"
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

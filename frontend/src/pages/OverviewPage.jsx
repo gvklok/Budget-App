@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, Check, AlertTriangle } from 'lucide-react'
+import { LayoutDashboard, ChevronDown, ChevronUp } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
-  colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, SAVING_SOFT, TRANSFER_OUT, CRITICAL, CRITICAL_SOFT,
+  colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
   INK, INK_2, INK_3, LINE, PAPER, CARD, areaGradientId,
 } from '../theme'
-import { Card, SectionLabel, GroupDivider, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
+import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
 
 // ── shared money/date helpers ─────────────────────────────────────────────────
 
@@ -111,7 +111,8 @@ function Stat({ label, value, dotColor, tone }) {
 
 // Months with no activity at all are excluded so a long 1y window isn't
 // diluted by history that predates the seed/real data. Shared by
-// PeriodReviewCard and MoneyFlowCard so both cards agree on the same totals.
+// PeriodReviewCard and MoneyFlowContent (plus the page's Money Flow teaser)
+// so all three agree on the same totals.
 function aggregateRange(months) {
   const active = months.filter((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
   const n = active.length
@@ -205,7 +206,9 @@ function resolveLabelCenters(naturalCenters, minGap, lo, hi) {
   return centers.map((y) => Math.max(lo, y))
 }
 
-function MoneyFlowCard({ months }) {
+// Content only — no Card/SectionLabel chrome, so it can be lazy-rendered
+// inside the page's CollapsibleChartCard wrapper (see below).
+function MoneyFlowContent({ months }) {
   const agg = aggregateRange(months)
   if (agg.totalIncome <= 0) return null
 
@@ -289,8 +292,7 @@ function MoneyFlowCard({ months }) {
   const COL_GAP = 6
 
   return (
-    <Card className="p-5 mb-3">
-      <SectionLabel>Money Flow</SectionLabel>
+    <>
       <div className="flex items-stretch" style={{ gap: COL_GAP }}>
         <div className="relative shrink-0" style={{ width: LEFT_COL, height: VBH }}>
           {/* Absolute children ignore the flex parent's width, so each label
@@ -332,7 +334,7 @@ function MoneyFlowCard({ months }) {
           <p className="text-xs font-semibold text-critical">Overspent +{c(gapCents)} — beyond what income covered this period</p>
         </div>
       )}
-    </Card>
+    </>
   )
 }
 
@@ -345,7 +347,10 @@ function MoneyFlowCard({ months }) {
 // still renders one centered, sensibly-capped bar rather than stretching to
 // fill the whole plot width.
 
-function KeptVsSpentChart({ months }) {
+// Content only — no Card/SectionLabel chrome (see MoneyFlowContent above);
+// the chart speaks for itself, so the old "Kept $X of $Y income" sentence
+// underneath it was deleted rather than kept as a teaser inside the card.
+function KeptVsSpentContent({ months }) {
   const n = months.length
   const VBW = 330
   const VBH = 176
@@ -372,21 +377,8 @@ function KeptVsSpentChart({ months }) {
   const bandW = plotW / Math.max(n, 1)
   const barW = Math.min(bandW * 0.56, 56) // capped so a 1-bar window stays a bar, not a slab — more air between bars
 
-  const last = months[months.length - 1]
-  let summary
-  if (!last || (last.income_cents === 0 && last.bills_spent_cents === 0 && last.funds_spent_cents === 0 && last.transfers_out_cents === 0)) {
-    summary = 'No activity yet this month.'
-  } else if (last.income_cents === 0) {
-    summary = `Spent ${c(last.bills_spent_cents + last.funds_spent_cents)} with no income recorded this month.`
-  } else if (last.kept_cents < 0) {
-    summary = `Overspent by ${c(-last.kept_cents)} against ${c(last.income_cents)} income this month.`
-  } else {
-    summary = `Kept ${c(last.kept_cents)} of ${c(last.income_cents)} income this month.`
-  }
-
   return (
-    <Card className="p-5 mb-3">
-      <SectionLabel>Kept vs Spent</SectionLabel>
+    <>
       <div className="relative">
         <svg viewBox={`0 0 ${VBW} ${VBH}`} width="100%" height={VBH} preserveAspectRatio="none" className="block overflow-visible">
           {ticks.map((t) => (
@@ -472,8 +464,7 @@ function KeptVsSpentChart({ months }) {
         <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: TRANSFER_OUT }} />Transfers out</span>
         <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: SAVING }} />Kept</span>
       </div>
-      <p className="text-sm text-ink-2 mt-3">{summary}</p>
-    </Card>
+    </>
   )
 }
 
@@ -628,39 +619,47 @@ function SpendingPaceChart({ year, month, day, plannedTotal, txns, tag }) {
 // stat instead of a one-bar chart, since a single bar has nothing to compare
 // itself against. ───────────────────────────────────────────────────────────
 
-function SavingsRateSingleMonth({ month }) {
-  const hasIncome = month.income_cents > 0
-  const pct = hasIncome ? (month.kept_cents / month.income_cents) * 100 : null
-  return (
-    <Card className="p-5 mb-3">
-      <SectionLabel>Savings Rate</SectionLabel>
-      {pct != null ? (
-        <div className="flex items-baseline gap-3">
-          <span className="text-4xl font-bold tabular" style={{ color: pct < 0 ? CRITICAL : SAVING }}>
-            {Math.round(pct)}%
-          </span>
-          <p className="text-sm text-ink-2">
-            Kept <span className="font-semibold text-ink tabular">{c(month.kept_cents)}</span> of{' '}
-            <span className="tabular">{c(month.income_cents)}</span> income this month.
-          </p>
-        </div>
-      ) : (
-        <p className="text-sm text-ink-3">No income recorded this month.</p>
-      )}
-    </Card>
-  )
-}
-
-function SavingsRateCard({ months }) {
+// Shared by SavingsRateContent (chart) and the page's collapsed-card teaser
+// so both agree on the same number — same pattern as aggregateRange above.
+function savingsRateStats(months) {
   if (months.length === 1) {
-    return <SavingsRateSingleMonth month={months[0]} />
+    const month = months[0]
+    const hasIncome = month.income_cents > 0
+    return { single: true, pct: hasIncome ? (month.kept_cents / month.income_cents) * 100 : null }
   }
-
   const last6 = months.slice(-6)
   const withIncome = last6.filter((m) => m.income_cents > 0)
   const avgPct = withIncome.length
     ? withIncome.reduce((s, m) => s + (m.kept_cents / m.income_cents) * 100, 0) / withIncome.length
     : null
+  return { single: false, avgPct }
+}
+
+function SavingsRateSingleMonthContent({ month }) {
+  const hasIncome = month.income_cents > 0
+  const pct = hasIncome ? (month.kept_cents / month.income_cents) * 100 : null
+  return pct != null ? (
+    <div className="flex items-baseline gap-3">
+      <span className="text-4xl font-bold tabular" style={{ color: pct < 0 ? CRITICAL : SAVING }}>
+        {Math.round(pct)}%
+      </span>
+      <p className="text-sm text-ink-2">
+        Kept <span className="font-semibold text-ink tabular">{c(month.kept_cents)}</span> of{' '}
+        <span className="tabular">{c(month.income_cents)}</span> income this month.
+      </p>
+    </div>
+  ) : (
+    <p className="text-sm text-ink-3">No income recorded this month.</p>
+  )
+}
+
+function SavingsRateContent({ months }) {
+  if (months.length === 1) {
+    return <SavingsRateSingleMonthContent month={months[0]} />
+  }
+
+  const { avgPct } = savingsRateStats(months)
+  const last6 = months.slice(-6)
 
   const VBW = 330
   const VBH = 128
@@ -676,8 +675,7 @@ function SavingsRateCard({ months }) {
   const baselineY = topPad + plotH
 
   return (
-    <Card className="p-5 mb-3">
-      <SectionLabel>Savings Rate</SectionLabel>
+    <>
       <svg viewBox={`0 0 ${VBW} ${VBH}`} width="100%" height={VBH} preserveAspectRatio="none" className="block overflow-visible">
         {avgPct != null && (
           <line
@@ -724,63 +722,7 @@ function SavingsRateCard({ months }) {
           ? <>You keep ~<span className="font-semibold text-ink tabular">{Math.round(avgPct)}%</span> of income on average.</>
           : 'Not enough income history yet.'}
       </p>
-    </Card>
-  )
-}
-
-// ── Bills Coverage — stat strip, the cash-flow-smoothing heart of the app.
-// Renamed from "Reserve Check" (owner: "idk what the reserve check is") —
-// the copy now says outright what the Monthly Reserve is FOR. Always pinned
-// to the effective current month regardless of range. ─────────────────────
-
-function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
-  if (remainingBillsCents <= 0) return null
-
-  const covered = mrBalanceCents >= remainingBillsCents
-  const shortfall = covered ? 0 : remainingBillsCents - mrBalanceCents
-  const Icon = covered ? Check : AlertTriangle
-
-  let segments
-  if (covered) {
-    const reservedPct = mrBalanceCents > 0 ? (remainingBillsCents / mrBalanceCents) * 100 : 100
-    segments = [
-      { pct: reservedPct, color: BILLS },
-      { pct: Math.max(0, 100 - reservedPct), color: SAVING },
-    ]
-  } else {
-    const coveredPct = (mrBalanceCents / remainingBillsCents) * 100
-    segments = [
-      { pct: Math.max(0, coveredPct), color: BILLS },
-      { pct: Math.max(0, 100 - coveredPct), color: CRITICAL },
-    ]
-  }
-
-  return (
-    <Card className="p-5 mb-3">
-      <SectionLabel action={tag && <Badge tone="neutral">{tag}</Badge>}>Bills Coverage</SectionLabel>
-      <div className="flex items-start gap-3">
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-          style={{ background: covered ? SAVING_SOFT : CRITICAL_SOFT, color: covered ? SAVING_TEXT : CRITICAL }}
-        >
-          <Icon size={14} />
-        </div>
-        <p className="text-sm text-ink-2 flex-1">
-          Set aside for bills: <span className="font-semibold text-ink tabular">{c(mrBalanceCents)}</span> · Bills left to pay: <span className="font-semibold text-ink tabular">{c(remainingBillsCents)}</span> —{' '}
-          {covered
-            ? <span className="font-semibold" style={{ color: SAVING_TEXT }}>covered ✓</span>
-            : <span className="font-semibold text-critical">short by {c(shortfall)}</span>}
-        </p>
-      </div>
-      <div className="h-2 rounded-full bg-paper overflow-hidden flex gap-[2px] mt-3">
-        {segments.map((seg, i) => seg.pct > 0.5 && (
-          <div key={i} className="h-full" style={{ width: `${seg.pct}%`, background: seg.color }} />
-        ))}
-      </div>
-      <p className="text-[11px] text-ink-3 mt-2.5">
-        Your Monthly Reserve holds this month's bill money so paychecks never get raided mid-month.
-      </p>
-    </Card>
+    </>
   )
 }
 
@@ -956,6 +898,44 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
   )
 }
 
+// ── CollapsibleChartCard — declutter wrapper for the "over this period"
+// charts (owner: "too worky on the top"). Collapsed by default; a tap on the
+// header row expands it. Content is lazy-rendered (only mounted once open),
+// and the open/closed choice persists per-card in localStorage so the
+// owner's preference sticks across visits. Reuses the same chevron-toggle
+// language as ExpensesPage's collapsible sections rather than inventing a
+// new interaction. ──────────────────────────────────────────────────────────
+function CollapsibleChartCard({ storageKey, label, teaser, children }) {
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(storageKey) === '1'
+    } catch {
+      return false
+    }
+  })
+
+  function toggle() {
+    setOpen((v) => {
+      const next = !v
+      try { localStorage.setItem(storageKey, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  return (
+    <Card className="p-5 mb-3">
+      <button onClick={toggle} className="w-full flex items-center justify-between gap-3 text-left" aria-expanded={open}>
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{label}</p>
+          {!open && teaser && <p className="text-sm text-ink-2 mt-1 truncate">{teaser}</p>}
+        </div>
+        {open ? <ChevronUp size={16} className="text-ink-3 shrink-0" /> : <ChevronDown size={16} className="text-ink-3 shrink-0" />}
+      </button>
+      {open && <div className="mt-4">{children}</div>}
+    </Card>
+  )
+}
+
 // ── Page ────────────────────────────────────────────────────────────────────────
 
 const RANGE_OPTIONS = [
@@ -976,9 +956,9 @@ export default function OverviewPage() {
   const [breakdownLoading, setBreakdownLoading] = useState(false)
   const [breakdownError, setBreakdownError] = useState('')
 
-  // Current-month data for Spending Pace + Reserve Check + the "Where it
-  // went" window's end month — pinned to the effective current month
-  // regardless of the range selector.
+  // Current-month data for Spending Pace + the "Where it went" window's end
+  // month — pinned to the effective current month regardless of the range
+  // selector.
   const [current, setCurrent] = useState(null)
   const [currentLoading, setCurrentLoading] = useState(true)
   const [currentError, setCurrentError] = useState('')
@@ -1006,22 +986,17 @@ export default function OverviewPage() {
     try {
       const clock = await apiGet('/dev/current-date')
       const [y, m, d] = clock.effective_date.split('-').map(Number)
-      const [summary, state, txns, funds, curBreakdown] = await Promise.all([
+      const [summary, txns, funds] = await Promise.all([
         apiGet(`/monthly-summary?year=${y}&month=${m}`),
-        apiGet('/state'),
         apiGet(`/transactions/?year=${y}&month=${m}`),
         apiGet('/funds/'),
-        apiGet(`/overview/spending-breakdown?year=${y}&month=${m}`),
       ])
       const transferFundNames = new Set(funds.filter((f) => f.destination_type === 'transfer_out').map((f) => f.name))
       const paceTxns = txns.filter((tx) => !(tx.fund_name && transferFundNames.has(tx.fund_name)))
-      const actualBillsSpent = (curBreakdown.bills ?? []).reduce((s, b) => s + b.spent_cents, 0)
       setCurrent({
         year: y, month: m, day: d,
         plannedTotal: summary.expected_bills_total_cents + summary.expected_fund_contributions_total_cents,
         paceTxns,
-        mrBalanceCents: state.monthly_reserve.balance_cents,
-        remainingBillsCents: summary.expected_bills_total_cents - actualBillsSpent,
       })
     } catch (err) {
       setCurrentError(err.message || 'Failed to load')
@@ -1082,6 +1057,19 @@ export default function OverviewPage() {
   const hasActivity = monthly.some((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
   const currentTag = current ? monthShortLabel(current.year, current.month) : null
 
+  // Teaser lines for the collapsed chart cards below — computed once here so
+  // the collapsed header and the (lazily-mounted) chart content agree on the
+  // same numbers (see aggregateRange / savingsRateStats doc comments).
+  const moneyFlowAgg = aggregateRange(monthly)
+  const moneyFlowTeaser = moneyFlowAgg.totalIncome > 0
+    ? `Income ${c(moneyFlowAgg.totalIncome)} → kept ${c(moneyFlowAgg.totalKept)}`
+    : null
+  const keptVsSpentTeaser = `${monthly.length} month${monthly.length === 1 ? '' : 's'}`
+  const rateStats = savingsRateStats(monthly)
+  const savingsRateTeaser = rateStats.single
+    ? (rateStats.pct != null ? `${Math.round(rateStats.pct)}% this month` : null)
+    : (rateStats.avgPct != null ? `~${Math.round(rateStats.avgPct)}% avg` : null)
+
   return (
     <div className="px-4 pt-6 pb-6">
       <div className="flex items-center justify-between mb-5 gap-3">
@@ -1103,19 +1091,16 @@ export default function OverviewPage() {
         <>
           <PeriodReviewCard months={monthly} rangeMonths={range} />
 
-          {/* THIS MONTH — always the effective current month, regardless of
-              the range selector above (each card carries its own Jul tag). */}
-          <GroupDivider>This Month</GroupDivider>
-
+          {/* Spending Pace is always pinned to the effective current month
+              regardless of the range selector above — its own Jul tag makes
+              that scope explicit, so the old "This Month" group divider no
+              longer earns its place now that Bills Coverage (the divider's
+              other occupant) is gone. */}
           {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
             <SpendingPaceChart
               year={current.year} month={current.month} day={current.day}
               plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
             />
-          )}
-
-          {!currentLoading && !currentError && current && (
-            <ReserveCheckCard mrBalanceCents={current.mrBalanceCents} remainingBillsCents={current.remainingBillsCents} tag={currentTag} />
           )}
 
           {currentError && (
@@ -1125,14 +1110,22 @@ export default function OverviewPage() {
             </Card>
           )}
 
-          {/* OVER THIS PERIOD — the selected range from the top selector. */}
-          <GroupDivider>Over This Period</GroupDivider>
+          {/* Money Flow / Kept vs Spent / Savings Rate — collapsed by default
+              (owner: "too worky on the top"); Period Review, Spending Pace,
+              and Where It Went stay always-expanded as the page's core read. */}
+          {moneyFlowTeaser && (
+            <CollapsibleChartCard storageKey="overview.moneyFlow.open" label="Money Flow" teaser={moneyFlowTeaser}>
+              <MoneyFlowContent months={monthly} />
+            </CollapsibleChartCard>
+          )}
 
-          <MoneyFlowCard months={monthly} />
+          <CollapsibleChartCard storageKey="overview.keptVsSpent.open" label="Kept vs Spent" teaser={keptVsSpentTeaser}>
+            <KeptVsSpentContent months={monthly} />
+          </CollapsibleChartCard>
 
-          <KeptVsSpentChart months={monthly} />
-
-          <SavingsRateCard months={monthly} />
+          <CollapsibleChartCard storageKey="overview.savingsRate.open" label="Savings Rate" teaser={savingsRateTeaser}>
+            <SavingsRateContent months={monthly} />
+          </CollapsibleChartCard>
 
           {current && (
             <WhereItWentCard

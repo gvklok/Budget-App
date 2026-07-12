@@ -4,7 +4,7 @@ import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, Chevron
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId } from '../theme'
 import Modal from '../components/Modal'
-import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented } from '../components/ui'
+import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu } from '../components/ui'
 
 function c(cents) { return fmt(cents / 100) }
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -1044,6 +1044,10 @@ export default function ExpensesPage() {
             )}
           </div>
           <p className="text-3xl font-bold text-ink tabular">{c(summary.expected_income_cents)}</p>
+          <p className="text-xs text-ink-2 -mt-2">
+            Expected expenses {c(summary.expected_bills_total_cents + summary.expected_fund_contributions_total_cents)}
+            {' '}· Bills {c(summary.expected_bills_total_cents)} + Funds {c(summary.expected_fund_contributions_total_cents)}
+          </p>
 
           <AllocationBar
             income={summary.expected_income_cents}
@@ -1163,20 +1167,14 @@ export default function ExpensesPage() {
               </button>
             ) : (
               <div className="flex items-center gap-2">
-                <button onClick={() => setShowCatManager(true)}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-ink-2 border border-line bg-card rounded-full pl-2.5 pr-3 py-1.5 active:scale-[0.98] transition-transform">
-                  <Tag size={12} />Categories
-                </button>
-                {bills.length > 1 && (
-                  <button onClick={startBillsReorder}
-                    className="flex items-center gap-1 text-sm font-semibold text-ink-2 pl-1" title="Reorder bills">
-                    <ArrowUpDown size={15} />Reorder
-                  </button>
-                )}
                 <button onClick={() => setShowAddItem(true)}
-                  className="flex items-center gap-1 text-sm font-semibold text-ink pl-2">
+                  className="flex items-center gap-1 text-sm font-semibold text-ink">
                   <Plus size={16} />Add
                 </button>
+                <OverflowMenu items={[
+                  { label: 'Categories', icon: <Tag size={15} />, onClick: () => setShowCatManager(true) },
+                  ...(bills.length > 1 ? [{ label: 'Reorder', icon: <ArrowUpDown size={15} />, onClick: startBillsReorder }] : []),
+                ]} />
               </div>
             )
           )}
@@ -1252,10 +1250,9 @@ export default function ExpensesPage() {
                   {fundsReorderSaving ? 'Saving…' : 'Done'}
                 </button>
               ) : funds.length > 1 && (
-                <button onClick={startFundsReorder}
-                  className="flex items-center gap-1 text-sm font-semibold text-ink-2" title="Reorder funds">
-                  <ArrowUpDown size={15} />Reorder
-                </button>
+                <OverflowMenu items={[
+                  { label: 'Reorder', icon: <ArrowUpDown size={15} />, onClick: startFundsReorder },
+                ]} />
               )
             )}
           </div>

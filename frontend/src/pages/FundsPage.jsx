@@ -5,7 +5,7 @@ import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { SAVINGS_SWATCH, SAVING_TEXT, RESERVE_SWATCH, colorForId } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
-import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar } from '../components/ui'
+import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar, OverflowMenu } from '../components/ui'
 
 function c(cents) {
   return fmt(cents / 100)
@@ -270,29 +270,38 @@ function MonthlyReserveCard({ mr, savings, onUpdate }) {
 
   return (
     <Card className="p-4 flex flex-col">
-      <div className="flex items-center justify-between gap-1.5">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Monthly Reserve</p>
-        {atTarget && <Badge tone="bills">Funded</Badge>}
+      {/* Label + Top Off share one row (above the progress bar, to the side) —
+          keeps the card a tight 4-line stack instead of a tall column with the
+          button anchored to the bottom. */}
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Monthly Reserve</p>
+      {/* Button sits beside the (short) amount — the uppercase label is too
+          wide to share a row with anything in this half-width card at 390px. */}
+      <div className="flex items-center justify-between gap-1.5 mt-1">
+        <p className="hero-figure text-xl font-bold text-ink tabular">{c(mr.balance_cents)}</p>
+        {shortfall > 0 ? (
+          <button
+            onClick={handleTopOff}
+            disabled={toppingOff || savings.balance_cents < shortfall}
+            title={`Move ${c(shortfall)} from Savings`}
+            className="shrink-0 text-[11px] font-semibold bg-accent text-white rounded-full px-2.5 py-1 disabled:opacity-40 active:scale-[0.98] transition-transform"
+          >
+            {toppingOff ? 'Topping…' : 'Top Off'}
+          </button>
+        ) : atTarget ? (
+          <Badge tone="bills">Funded</Badge>
+        ) : null}
       </div>
-      <p className="text-xl font-bold text-ink mt-1 tabular">{c(mr.balance_cents)}</p>
       {mr.target_cents > 0 ? (
         <>
-          <p className="text-[11px] text-ink-3 mt-1">of {c(mr.target_cents)} target</p>
+          <p className="text-[11px] text-ink-3 mt-1">
+            of {c(mr.target_cents)} target{shortfall > 0 && <> · needs {c(shortfall)}</>}
+          </p>
           <div className="mt-2">
             <Bar pct={pct} color={RESERVE_SWATCH} height={5} />
           </div>
         </>
       ) : (
         <p className="text-[11px] text-ink-3 mt-1">No Bills configured yet</p>
-      )}
-      {shortfall > 0 && (
-        <button
-          onClick={handleTopOff}
-          disabled={toppingOff || savings.balance_cents < shortfall}
-          className="mt-2.5 self-end text-xs font-semibold bg-accent text-white rounded-full px-3.5 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
-        >
-          {toppingOff ? 'Topping off…' : `Top Off ${c(shortfall)}`}
-        </button>
       )}
       {topOffError && <p className="mt-2 text-[11px] text-critical">{topOffError}</p>}
       {topOffNote && <p className="mt-2 text-[11px] text-ink-3">{topOffNote}</p>}
@@ -450,17 +459,19 @@ export default function FundsPage() {
       {/* Savings + Monthly Reserve — compact two-up */}
       <div className="grid grid-cols-2 gap-3 mb-3 items-stretch">
         <Card className="p-4 flex flex-col">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Savings</p>
-          <p className="hero-figure text-xl font-bold text-ink mt-1">{c(savings.balance_cents)}</p>
-          <p className="text-[11px] text-ink-3 mt-1">Default resting place</p>
-          {/* Answers "how much of my money is resting?" instead of a
-              decorative progress-bar-to-nowhere — matches Monthly Reserve's
-              rhythm (its own "of $X target" line sits in the same spot). */}
-          {real_cash.balance_cents > 0 && (
-            <p className="mt-auto pt-3 text-[11px] font-semibold" style={{ color: SAVING_TEXT }}>
-              {Math.round((savings.balance_cents / real_cash.balance_cents) * 100)}% of Real Cash
-            </p>
-          )}
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 pt-1">Savings</p>
+          <p className="hero-figure text-xl font-bold text-ink mt-1 tabular">{c(savings.balance_cents)}</p>
+          {/* One tight line — "resting place" + "% of Real Cash" — instead of
+              a bottom-pinned second line, so the card is only as tall as its
+              content needs (matches Monthly Reserve's new compact height). */}
+          <p className="text-[11px] text-ink-3 mt-1">
+            Default resting place
+            {real_cash.balance_cents > 0 && (
+              <> · <span className="font-semibold" style={{ color: SAVING_TEXT }}>
+                {Math.round((savings.balance_cents / real_cash.balance_cents) * 100)}% of Real Cash
+              </span></>
+            )}
+          </p>
         </Card>
         <MonthlyReserveCard mr={monthly_reserve} savings={savings} onUpdate={load} />
       </div>
@@ -487,16 +498,6 @@ export default function FundsPage() {
                   {distributing ? 'Distributing…' : 'Distribute'}
                 </button>
               )}
-              {funds.length > 1 && (
-                <button
-                  onClick={startReorder}
-                  className="flex items-center gap-1 text-sm font-semibold text-ink-2"
-                  title="Reorder funds"
-                >
-                  <ArrowUpDown size={15} />
-                  Reorder
-                </button>
-              )}
               <button
                 onClick={() => setShowAdd(true)}
                 className="flex items-center gap-1 text-sm font-semibold text-ink"
@@ -504,6 +505,11 @@ export default function FundsPage() {
                 <Plus size={16} />
                 Add
               </button>
+              {funds.length > 1 && (
+                <OverflowMenu items={[
+                  { label: 'Reorder', icon: <ArrowUpDown size={15} />, onClick: startReorder },
+                ]} />
+              )}
             </div>
           )
         }

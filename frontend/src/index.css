@@ -111,7 +111,12 @@
   --saving-ink: 126 203 158;
   --saving-soft: 28 51 39;
 
-  --bills: 201 145 80;
+  /* Darkened from #c99150 (owner: read odd next to other elements) — lands
+     at #a8763a, 4.11:1 mark contrast on --card (#23201b) and 4.53:1 on
+     --paper (#19171e19) — both clear the >=3:1 mark-contrast floor with
+     room to spare. --bills-ink unchanged: already 8.57:1 / 9.45:1 on the
+     same two surfaces, nowhere near the 4.5:1 text floor. */
+  --bills: 168 118 58;
   --bills-ink: 224 181 127;
   --bills-soft: 51 38 25;
 
