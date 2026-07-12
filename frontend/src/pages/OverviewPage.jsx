@@ -5,7 +5,7 @@ import {
   colorForId, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, SAVING_SOFT, TRANSFER_OUT, CRITICAL,
   INK, INK_2, INK_3, LINE, PAPER, areaGradientId,
 } from '../theme'
-import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
+import { Card, SectionLabel, GroupDivider, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
 
 // ── shared money/date helpers ─────────────────────────────────────────────────
 
@@ -175,7 +175,7 @@ function PeriodReviewCard({ months, rangeMonths }) {
 
 // ── Money Flow — Monarch-style cash-flow sankey for the selected range ──────
 // Single left source "Income $X" fans into right destination nodes: Bills
-// (slate), Funds (terracotta), Transfers out (stone), Kept (SAVING) — a
+// (umber), Funds (blue), Transfers out (stone), Kept (SAVING) — a
 // two-column, hand-rolled SVG sankey (no library). Ribbons are flat fills at
 // ~85% opacity, no gradients — calm by design. Zero income hides the card
 // entirely; a zero-value destination just omits its ribbon/node. When the
@@ -255,12 +255,16 @@ function MoneyFlowCard({ months }) {
   // slice is that node's cumulative-fraction-of-rightTotal remapped onto
   // Income's own (possibly shorter, when overspent) height. When the period
   // isn't overspent, rightTotal === leftTotal and this is an exact 1:1,
-  // edge-to-edge match — no compression.
+  // edge-to-edge match — no compression. Cumulative fraction MUST be tracked
+  // in dollar amount (node.amount), not pixel height (node.h) — mixing the
+  // two units made every ribbon's source slice collapse to ~0, so all
+  // ribbons appeared to droop from the very top of the Income node instead
+  // of fanning out from their own proportional slice.
   let cum = 0
   const ribbons = rightNodes.map((node) => {
     const f0 = cum / rightTotal
-    const f1 = (cum + node.h) / rightTotal
-    cum += node.h
+    const f1 = (cum + node.amount) / rightTotal
+    cum += node.amount
     const midX = (leftX0 + NODE_W + rightX0) / 2
     const y0a = leftY0 + f0 * leftH
     const y1a = leftY0 + f1 * leftH
@@ -333,8 +337,8 @@ function MoneyFlowCard({ months }) {
 }
 
 // ── Kept vs Spent — stacked bar (bills + funds + transfers + kept) ───────────
-// Form: one stacked bar per month, bottom→top: Bills (BILLS slate), Funds
-// (FUNDS_HUE terracotta), Transfers out (TRANSFER_OUT stone), Kept (SAVING
+// Form: one stacked bar per month, bottom→top: Bills (BILLS umber), Funds
+// (FUNDS_HUE blue), Transfers out (TRANSFER_OUT stone), Kept (SAVING
 // green). A dashed income tick marks where income landed, so an overspent
 // month (kept clamped to 0) visibly rises above its own income line — the
 // honest way to show a leak without a second axis. A single-month window (1m)
@@ -782,7 +786,7 @@ function ReserveCheckCard({ mrBalanceCents, remainingBillsCents, tag }) {
 
 // ── Where it went — spending breakdown, aggregated over the selected range ────
 // Identity stays as a small colored dot (colorForId); the bar fill itself
-// switches to the semantic bucket color (Bills slate, Funds terracotta,
+// switches to the semantic bucket color (Bills umber, Funds blue,
 // Transfers stone) so the list reads as one system, not a rainbow. The range
 // selector replaces per-month navigation — this card always shows the
 // selected window ending at the effective current month, with a delta against
@@ -1099,9 +1103,9 @@ export default function OverviewPage() {
         <>
           <PeriodReviewCard months={monthly} rangeMonths={range} />
 
-          <MoneyFlowCard months={monthly} />
-
-          <KeptVsSpentChart months={monthly} />
+          {/* THIS MONTH — always the effective current month, regardless of
+              the range selector above (each card carries its own Jul tag). */}
+          <GroupDivider>This Month</GroupDivider>
 
           {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
             <SpendingPaceChart
@@ -1109,8 +1113,6 @@ export default function OverviewPage() {
               plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
             />
           )}
-
-          <SavingsRateCard months={monthly} />
 
           {!currentLoading && !currentError && current && (
             <ReserveCheckCard mrBalanceCents={current.mrBalanceCents} remainingBillsCents={current.remainingBillsCents} tag={currentTag} />
@@ -1122,6 +1124,15 @@ export default function OverviewPage() {
               <button onClick={loadCurrent} className="text-xs font-semibold text-accent shrink-0">Retry</button>
             </Card>
           )}
+
+          {/* OVER THIS PERIOD — the selected range from the top selector. */}
+          <GroupDivider>Over This Period</GroupDivider>
+
+          <MoneyFlowCard months={monthly} />
+
+          <KeptVsSpentChart months={monthly} />
+
+          <SavingsRateCard months={monthly} />
 
           {current && (
             <WhereItWentCard

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Pencil, Trash2, Plus, ArrowRightLeft, AlertTriangle, ChevronRight } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
-import { SAVINGS_SWATCH, RESERVE_SWATCH, colorForId } from '../theme'
+import { SAVINGS_SWATCH, SAVING_TEXT, RESERVE_SWATCH, colorForId } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
 import { Card, SectionLabel, Badge, PrimaryButton, IconButton, EmptyState, Segmented, Bar } from '../components/ui'
@@ -123,12 +123,13 @@ function AddFundModal({ savings_cents, onClose, onSave }) {
   )
 }
 
-function EditFundModal({ fund, onClose, onSave }) {
+function EditFundModal({ fund, onClose, onSave, onDelete }) {
   const [name, setName] = useState(fund.name)
   const [destinationType, setDestinationType] = useState(fund.destination_type ?? 'external_spend')
   const [allowNegative, setAllowNegative] = useState(fund.allow_negative_balance ?? false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -142,6 +143,19 @@ function EditFundModal({ fund, onClose, onSave }) {
       setError(err.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleDeleteClick() {
+    setDeleting(true)
+    setError('')
+    try {
+      const deleted = await onDelete(fund)
+      if (deleted) onClose()
+    } catch (err) {
+      setError(err.message || 'Delete failed')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -170,6 +184,20 @@ function EditFundModal({ fund, onClose, onSave }) {
         <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : 'Save Changes'}
         </PrimaryButton>
+        {/* Quiet destructive action — deliberately not another icon button
+            on the row (pencil+trash on every row invited accidents); it now
+            lives here, behind the same confirm flow as before. */}
+        <div className="pt-3 border-t border-line">
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            disabled={deleting}
+            className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-critical py-1.5 disabled:opacity-40"
+          >
+            <Trash2 size={13} />
+            {deleting ? 'Deleting…' : 'Delete fund'}
+          </button>
+        </div>
       </form>
     </Modal>
   )
@@ -261,7 +289,7 @@ function MonthlyReserveCard({ mr, savings, onUpdate }) {
         <button
           onClick={handleTopOff}
           disabled={toppingOff || savings.balance_cents < shortfall}
-          className="mt-2.5 w-full text-xs font-semibold bg-accent text-white rounded-full py-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
+          className="mt-2.5 self-end text-xs font-semibold bg-accent text-white rounded-full px-3.5 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform"
         >
           {toppingOff ? 'Topping off…' : `Top Off ${c(shortfall)}`}
         </button>
@@ -313,10 +341,14 @@ export default function FundsPage() {
     await load()
   }
 
+  // Returns true when the fund was actually deleted — false when the user
+  // cancelled the confirm — so the caller (the Edit modal) knows whether to
+  // close itself.
   async function handleDelete(fund) {
-    if (!confirm(`Delete "${fund.name}"? Its balance (${c(fund.balance_cents)}) will return to Savings.`)) return
+    if (!confirm(`Delete "${fund.name}"? Its balance (${c(fund.balance_cents)}) will return to Savings.`)) return false
     await apiDel(`/funds/${fund.id}`)
     await load()
+    return true
   }
 
   async function handleDistribute() {
@@ -383,13 +415,14 @@ export default function FundsPage() {
           <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">Savings</p>
           <p className="hero-figure text-xl font-bold text-ink mt-1">{c(savings.balance_cents)}</p>
           <p className="text-[11px] text-ink-3 mt-1">Default resting place</p>
-          {/* Decorative rest-state bar — Savings has no target/ceiling to track
-              progress against, but a quiet full bar keeps this card's rhythm
-              matched to Monthly Reserve's, instead of trailing off into blank
-              space below the microcopy. */}
-          <div className="mt-auto pt-3">
-            <div className="h-[5px] rounded-full" style={{ background: SAVINGS_SWATCH, opacity: 0.3 }} />
-          </div>
+          {/* Answers "how much of my money is resting?" instead of a
+              decorative progress-bar-to-nowhere — matches Monthly Reserve's
+              rhythm (its own "of $X target" line sits in the same spot). */}
+          {real_cash.balance_cents > 0 && (
+            <p className="mt-auto pt-3 text-[11px] font-semibold" style={{ color: SAVING_TEXT }}>
+              {Math.round((savings.balance_cents / real_cash.balance_cents) * 100)}% of Real Cash
+            </p>
+          )}
         </Card>
         <MonthlyReserveCard mr={monthly_reserve} savings={savings} onUpdate={load} />
       </div>
@@ -476,7 +509,6 @@ export default function FundsPage() {
                   </div>
                   <div className="flex items-center shrink-0">
                     <IconButton onClick={(e) => { e.stopPropagation(); setEditFund(fund) }}><Pencil size={13} /></IconButton>
-                    <IconButton onClick={(e) => { e.stopPropagation(); handleDelete(fund) }} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={13} /></IconButton>
                     <ChevronRight size={15} className="text-ink-3 ml-0.5" />
                   </div>
                 </div>
@@ -506,6 +538,7 @@ export default function FundsPage() {
           fund={editFund}
           onClose={() => setEditFund(null)}
           onSave={handleUpdate}
+          onDelete={handleDelete}
         />
       )}
       {showTransfer && (

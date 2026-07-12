@@ -89,6 +89,19 @@ export function SectionLabel({ children, action }) {
   )
 }
 
+// ── GroupDivider ──────────────────────────────────────────────────────────────
+// A quiet, card-less label that groups a run of cards into a named cluster
+// (e.g. Overview's "This Month" vs "Over This Period" story split) — ambient
+// structure, not another card, so it never competes with the cards around it.
+
+export function GroupDivider({ children }) {
+  return (
+    <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 px-1 pt-1 mb-2">
+      {children}
+    </p>
+  )
+}
+
 // ── Badge ───────────────────────────────────────────────────────────────────────
 
 const BADGE_TONES = {
@@ -98,7 +111,10 @@ const BADGE_TONES = {
   // step (>=4.5:1 on the soft chip background), never the lighter fill hue.
   good: 'bg-good-soft text-good-ink',
   saving: 'bg-saving-soft text-saving-ink',
-  bills: 'bg-bills-soft text-bills',
+  // `-ink` is the darker text-safe step (>=4.5:1 on the soft chip
+  // background) — same pattern as good/saving above; DEFAULT is reserved
+  // for fills/marks, never small text.
+  bills: 'bg-bills-soft text-bills-ink',
   funds: 'bg-funds-soft text-funds',
   transfer: 'bg-transfer-soft text-transfer',
   warn: 'bg-warn-soft text-warn',

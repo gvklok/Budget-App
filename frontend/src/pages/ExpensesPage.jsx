@@ -598,8 +598,13 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onDelete, onLogTx, onDe
               const itemTxns = txnsByItemId[b.id] ?? []
               const spent = itemTxns.reduce((s, t) => s + t.amount_cents, 0)
               const billPct = b.amount_cents > 0 ? (spent / b.amount_cents) * 100 : 0
+              // Rows read as their own entity (colorForId, matching Where-it-went
+              // and the Fund identity dots) rather than the semantic Bills brown —
+              // that brown is reserved for aggregates (ring, allocation bar, group
+              // subtotal bar via GroupSummary/billStatusColor). Overspend still
+              // escalates to CRITICAL — honesty over identity.
               return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
-                color={billStatusColor(billPct)}
+                color={billPct > 100 ? CRITICAL : colorForId(b.id)}
                 onEdit={onEdit && (() => onEdit(b))} onDelete={onDelete && (() => onDelete(b))}
                 onLogTx={onLogTx && (() => onLogTx(b.id))} onDeleteTx={onDeleteTx} />
             })}

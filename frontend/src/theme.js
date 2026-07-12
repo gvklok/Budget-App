@@ -25,11 +25,13 @@ export const ACCENT_SOFT = '#e4efea'
 //                in the app.
 //   BILLS        Bills AND Monthly Reserve (bills route to MR — one concept,
 //                one hue) — the Bills ring/bars, the MR card, bills-spent
-//                chart segments.
+//                chart segments. Deliberately an earthy brown/umber — bills
+//                are obligation, sober, not fun (owner's call).
 //   FUNDS_HUE    fund AGGREGATES — the Funds ring, fund progress bars,
 //                funds-spent chart segments. Individual funds keep their
 //                per-id colorForId identity in lists/legends/donuts; this
-//                hue is only for the semantic/aggregate reading.
+//                hue is only for the semantic/aggregate reading. Deliberately
+//                a dusty-confident blue — funds are fun money (owner's call).
 //   TRANSFER_OUT money moved to another account you own (401k, Roth, HSA) —
 //                visibly NOT spending, and never wears warn/critical.
 //   CRITICAL     overspend and negative balances only — the one true alarm.
@@ -38,15 +40,29 @@ export const ACCENT_SOFT = '#e4efea'
 // language (buttons, nav, focus rings); SAVING is the calm "money kept" hue
 // — lighter and friendlier so Savings never reads as just "another button
 // color." Validated with the dataviz skill's validator (mark contrast
-// >=3:1 on both #ffffff and #f6f4ef paper). Small/thin TEXT rendered in the
-// SAVING family (chips, "+$150.00" amounts, "covered") uses SAVING_TEXT
-// instead — a darker step of the same hue that clears 4.5:1 text contrast
-// on white, paper, AND the saving-soft chip background.
-export const SAVING = '#3a9c69' // lighter, friendlier green — mark/fill use (bars, swatches, dots, large stat text)
+// >=3:1 on both #ffffff and #f6f4ef paper) — re-validated after a one-step
+// darken (owner's call, reads less "mint" against paper): 4.28:1 on
+// #ffffff, 3.89:1 on #f6f4ef. Small/thin TEXT rendered in the SAVING family
+// (chips, "+$150.00" amounts, "covered") uses SAVING_TEXT instead — a
+// darker step of the same hue that clears 4.5:1 text contrast on white,
+// paper, AND the saving-soft chip background.
+export const SAVING = '#2f8a5c' // green — mark/fill use (bars, swatches, dots, large stat text)
 export const SAVING_TEXT = '#286b49' // darker text-safe variant — small text, chips, contribution amounts
 export const SAVING_SOFT = '#e7f3ed' // light tint for chip/badge backgrounds
-export const BILLS = '#3e6c8c' // slate-blue
-export const FUNDS_HUE = '#c1652f' // warm terracotta
+// BILLS: warm clay/umber — mark/fill use (bars, rings, MR card, chart
+// segments). Chroma/lightness/contrast validated (dataviz validator) against
+// both #ffffff and #f6f4ef surfaces. BILLS_TEXT is a darker step of the same
+// hue for small TEXT uses (the "Funded" badge) — clears 4.5:1 on white,
+// paper, AND bills-soft where BILLS itself only clears ~4:1 (too tight for
+// small semibold text).
+export const BILLS = '#9c6522' // clay/umber — mark/fill use
+export const BILLS_TEXT = '#8a5618' // darker text-safe variant — small text (badges)
+// FUNDS_HUE: dusty-confident blue — mark/fill use. Kept visually distinct
+// from CHART_COLORS' own dusty-blue identity slot (nudged lighter/more
+// periwinkle, see below) so a blue fund's identity dot is never confusable
+// with this semantic aggregate hue when the two sit adjacent (Expenses fund
+// rows, Overview donut/legend).
+export const FUNDS_HUE = '#2f5f9e' // dusty-confident blue — mark/fill use
 export const TRANSFER_OUT = '#9c9484' // neutral stone
 
 // GOOD is a deliberate alias of SAVING, not a second green — the app has
@@ -82,9 +98,13 @@ export function fundStatusColor(pct) {
 // don't reorder casually; re-run the validator if you do. Never cycle — an
 // nth category beyond this list should fold into an "Other" slot rather than
 // repeating a color.
+// The dusty-blue slot is nudged lighter/more periwinkle than the semantic
+// FUNDS_HUE above (ΔE ~14, re-validated) specifically so a blue fund's
+// identity dot never reads as "the same blue" as the Funds aggregate hue
+// when they sit side by side.
 export const CHART_COLORS = [
   '#5f8a3f', // sage
-  '#3a6bb0', // dusty blue
+  '#5a82c2', // periwinkle blue (identity) — distinct from FUNDS_HUE's deeper dusty blue
   '#c1652f', // terracotta
   '#0f8f79', // teal
   '#b8862b', // ochre
@@ -112,7 +132,7 @@ export function colorForId(id) {
 // Dedicated swatches for Savings/Monthly Reserve in the Real Cash breakdown —
 // kept out of CHART_COLORS so they never collide with a Fund's assigned
 // color. These now just alias the semantic concept colors above: Savings is
-// SAVING green, Monthly Reserve is BILLS slate (bills route to MR).
+// SAVING green, Monthly Reserve is BILLS umber (bills route to MR).
 export const SAVINGS_SWATCH = SAVING
 export const RESERVE_SWATCH = BILLS
 

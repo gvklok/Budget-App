@@ -29,22 +29,28 @@ export default {
         // `soft` background (>=4.5:1) — use it wherever saving/good renders
         // as small TEXT (chips, amounts), reserve DEFAULT for fills/marks.
         saving: {
-          DEFAULT: '#3a9c69',
+          DEFAULT: '#2f8a5c',
           soft: '#e7f3ed',
           ink: '#286b49',
         },
         good: {
-          DEFAULT: '#3a9c69',
+          DEFAULT: '#2f8a5c',
           soft: '#e7f3ed',
           ink: '#286b49',
         },
+        // Bills: earthy clay/umber (obligation, sober). `ink` is the darker
+        // text-safe step for small text on the `soft` chip background — the
+        // DEFAULT hue only clears ~4:1 there, short of 4.5:1 for small text.
         bills: {
-          DEFAULT: '#3e6c8c',
-          soft: '#e6edf1',
+          DEFAULT: '#9c6522',
+          soft: '#f1e8dc',
+          ink: '#8a5618',
         },
+        // Funds: dusty-confident blue (fun money). DEFAULT clears 4.5:1+ on
+        // white/paper/soft already, so no separate `ink` step is needed.
         funds: {
-          DEFAULT: '#c1652f',
-          soft: '#f6e8de',
+          DEFAULT: '#2f5f9e',
+          soft: '#e6edf6',
         },
         transfer: {
           DEFAULT: '#9c9484',
