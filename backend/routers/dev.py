@@ -147,22 +147,39 @@ def set_fund_contribution(body: FundContributionBody, db: Session = Depends(get_
     return {"ok": True}
 
 
-_MULTIPLIERS = {"monthly": 1, "semimonthly": 2, "biweekly": 26 / 12, "weekly": 52 / 12}
+class SimulatePaycheckBody(BaseModel):
+    source_id: Optional[int] = None
 
 
 @router.post("/simulate-paycheck")
-def simulate_paycheck(db: Session = Depends(get_db)):
-    sources = db.query(models.IncomeSource).all()
-    if not sources:
-        raise HTTPException(400, "No income sources configured — add one on the Expenses page")
-    monthly_cents = sum(round(s.amount_cents * _MULTIPLIERS[s.frequency]) for s in sources)
+def simulate_paycheck(body: Optional[SimulatePaycheckBody] = None, db: Session = Depends(get_db)):
+    """Credit ONE real paycheck (a source's amount_cents once) to Savings +
+    Real Cash — not a monthly-normalized total. With a source_id, credit just
+    that source; without one, credit one paycheck per configured source."""
+    if body and body.source_id is not None:
+        source = db.query(models.IncomeSource).filter(models.IncomeSource.id == body.source_id).first()
+        if not source:
+            raise HTTPException(404, f"Income source not found: {body.source_id}")
+        sources = [source]
+    else:
+        sources = db.query(models.IncomeSource).all()
+        if not sources:
+            raise HTTPException(400, "No income sources configured — add one on the Expenses page")
+
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
     rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
-    savings.balance_cents += monthly_cents
-    rc.balance_cents += monthly_cents
-    ledger.record(db, kind="paycheck", amount_cents=monthly_cents, from_bucket="external", to_bucket="savings", label="Paycheck")
+
+    total = 0
+    paychecks = []
+    for s in sources:
+        savings.balance_cents += s.amount_cents
+        rc.balance_cents += s.amount_cents
+        ledger.record(db, kind="paycheck", amount_cents=s.amount_cents, from_bucket="external", to_bucket="savings", label=s.name)
+        total += s.amount_cents
+        paychecks.append({"source_id": s.id, "name": s.name, "amount_cents": s.amount_cents})
+
     db.commit()
-    return {"ok": True, "added_cents": monthly_cents}
+    return {"ok": True, "added_cents": total, "paychecks": paychecks}
 
 
 @router.post("/simulate-transaction")

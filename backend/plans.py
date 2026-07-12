@@ -96,5 +96,11 @@ def get_or_autoload_plan(db: Session, year: int, month: int) -> models.MonthlyPl
                 color=item.color,
             ))
 
+    # If this is the effective current month, the MR target (Σ current-month
+    # Bills) must reflect the freshly-copied bills immediately on page load —
+    # otherwise a new month's target stays stale until Distribute runs.
+    if (year, month) == current_year_month(db):
+        sync_mr_target(db)
+
     db.commit()
     return plan

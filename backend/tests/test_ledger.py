@@ -26,7 +26,8 @@ def test_ledger_paycheck_entry(client):
     assert paycheck["from_bucket"] == "external"
     assert paycheck["to_bucket"] == "savings"
     assert paycheck["amount_cents"] == 500000
-    assert paycheck["label"] == "Paycheck"
+    # Label is the income source's name (one real paycheck), not a generic "Paycheck".
+    assert paycheck["label"] == "Job"
 
 
 def test_ledger_top_off_entry(client):

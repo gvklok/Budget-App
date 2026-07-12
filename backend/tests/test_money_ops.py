@@ -16,10 +16,14 @@ def test_paycheck(client, helpers):
     })
     assert r.status_code == 200
 
-    # Simulate paycheck
+    # Simulate paycheck: ONE paycheck = the source's amount_cents once
     r = client.post("/dev/simulate-paycheck")
     assert r.status_code == 200
-    assert r.json()["added_cents"] == 500000
+    body = r.json()
+    assert body["added_cents"] == 500000
+    assert len(body["paychecks"]) == 1
+    assert body["paychecks"][0]["name"] == "Job"
+    assert body["paychecks"][0]["amount_cents"] == 500000
 
     # Check balances
     state = helpers["get_state"](client)
@@ -27,6 +31,85 @@ def test_paycheck(client, helpers):
     assert state["savings"]["balance_cents"] == 500000
     assert state["monthly_reserve"]["balance_cents"] == 0
     assert state["invariant_holds"] is True
+
+
+def test_paycheck_is_one_check_not_monthly_total(client, helpers):
+    """A biweekly source credits amount_cents ONCE (one real paycheck), not a
+    monthly-normalized ~2.17x lump."""
+    client.post("/income-sources", json={
+        "name": "Biweekly Job", "amount_cents": 100000, "frequency": "biweekly"
+    })
+    r = client.post("/dev/simulate-paycheck")
+    assert r.status_code == 200
+    assert r.json()["added_cents"] == 100000
+    state = helpers["get_state"](client)
+    assert state["real_cash"]["balance_cents"] == 100000
+    assert state["savings"]["balance_cents"] == 100000
+    helpers["assert_invariant"](client)
+
+
+def test_paycheck_multiple_sources_one_each(client, helpers):
+    """No body: one paycheck per source, one ledger entry each."""
+    client.post("/income-sources", json={"name": "A", "amount_cents": 200000, "frequency": "biweekly"})
+    client.post("/income-sources", json={"name": "B", "amount_cents": 50000, "frequency": "weekly"})
+    r = client.post("/dev/simulate-paycheck")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added_cents"] == 250000
+    assert {p["name"] for p in body["paychecks"]} == {"A", "B"}
+    entries = client.get("/ledger/?kind=paycheck").json()
+    assert len(entries) == 2
+    helpers["assert_invariant"](client)
+
+
+def test_paycheck_single_source_by_id(client, helpers):
+    """With source_id: credit only that source."""
+    a = client.post("/income-sources", json={"name": "A", "amount_cents": 200000, "frequency": "biweekly"}).json()
+    client.post("/income-sources", json={"name": "B", "amount_cents": 50000, "frequency": "weekly"})
+    r = client.post("/dev/simulate-paycheck", json={"source_id": a["id"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added_cents"] == 200000
+    assert body["paychecks"] == [{"source_id": a["id"], "name": "A", "amount_cents": 200000}]
+    state = helpers["get_state"](client)
+    assert state["real_cash"]["balance_cents"] == 200000
+    helpers["assert_invariant"](client)
+
+
+def test_mr_target_synced_on_app_open_after_rollover(client, helpers):
+    """Bug: after a month rollover, the MR target stayed on the OLD month's
+    total until Distribute ran. Opening the app (GET /current-month-status)
+    must materialize the new month's plan AND sync the target immediately."""
+    client.post("/dev/set-real-cash", json={"balance_cents": 500000})
+    client.post("/dev/set-simulated-date", json={"date": "2026-07-10"})
+
+    # July plan with a bill → target follows July's bills
+    client.post("/line-items/", json={
+        "name": "Rent", "type": "bill", "amount_cents": 120000, "year": 2026, "month": 7
+    })
+    assert helpers["get_state"](client)["monthly_reserve"]["target_cents"] == 120000
+
+    # Roll into August (no plan yet). set-simulated-date syncs against a
+    # nonexistent August plan → target computes to 0 here.
+    client.post("/dev/set-simulated-date", json={"date": "2026-08-01"})
+    assert helpers["get_state"](client)["monthly_reserve"]["target_cents"] == 0
+
+    # Open the app: call ONLY the banner endpoint. It must materialize August's
+    # plan (copying July's bill) and re-sync the target — no Distribute needed.
+    r = client.get("/current-month-status")
+    assert r.status_code == 200
+    status = r.json()
+    assert (status["year"], status["month"]) == (2026, 8)
+    # Fresh month: neither top-off nor distribute done → banner shows.
+    assert status["top_off_done"] is False
+    assert status["distribute_done"] is False
+    assert status["needs_banner"] is True
+
+    # Target now reflects August's copied bills; plan exists.
+    assert helpers["get_state"](client)["monthly_reserve"]["target_cents"] == 120000
+    aug = client.get("/plans/2026/8").json()
+    assert aug["planned"] is True and aug["month"] == 8
+    helpers["assert_invariant"](client)
 
 
 def test_transfer_savings_to_mr(client, helpers):

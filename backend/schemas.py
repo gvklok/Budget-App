@@ -33,6 +33,7 @@ class FundOut(BaseModel):
     allow_negative_balance: bool
     sort_order: int
     color: Optional[str] = None
+    goal_cents: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
@@ -43,6 +44,7 @@ class FundCreate(BaseModel):
     destination_type: str = "external_spend"
     allow_negative_balance: bool = False
     color: Optional[str] = None
+    goal_cents: Optional[int] = None
 
 
 class FundUpdate(BaseModel):
@@ -51,6 +53,7 @@ class FundUpdate(BaseModel):
     destination_type: Optional[str] = None
     allow_negative_balance: Optional[bool] = None
     color: Optional[str] = None
+    goal_cents: Optional[int] = None
 
 
 class ExpenseCategoryOut(BaseModel):

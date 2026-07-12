@@ -32,6 +32,7 @@ class Fund(Base):
     allow_negative_balance = Column(Boolean, default=False, nullable=False)  # U9
     sort_order = Column(Integer, nullable=False, default=0)
     color = Column(String, nullable=True)  # hex like "#5a82c2"; null = app picks automatically
+    goal_cents = Column(Integer, nullable=True)  # informational target; progress computed client-side
 
 
 class ExpenseCategory(Base):

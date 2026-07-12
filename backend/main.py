@@ -9,7 +9,7 @@ import models
 import schemas
 import plans as plans_lib
 from database import engine, get_db, SessionLocal
-from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income, plans, ledger_read
+from routers import funds, expenses, transactions, transfers, checklist, overview, dev, monthly_reserve, income, plans, ledger_read, export
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -34,6 +34,7 @@ app.include_router(monthly_reserve.router, prefix="/monthly-reserve", tags=["mon
 app.include_router(income.router, tags=["income"])
 app.include_router(plans.router, prefix="/plans", tags=["plans"])  # U3
 app.include_router(ledger_read.router, prefix="/ledger", tags=["ledger"])
+app.include_router(export.router, tags=["export"])
 
 
 def _migrate() -> None:
@@ -52,6 +53,8 @@ def _migrate() -> None:
             conn.execute(text("UPDATE funds SET sort_order = id WHERE sort_order = 0"))
         if "color" not in fund_cols:
             conn.execute(text("ALTER TABLE funds ADD COLUMN color TEXT"))
+        if "goal_cents" not in fund_cols:
+            conn.execute(text("ALTER TABLE funds ADD COLUMN goal_cents INTEGER"))
 
         # monthly_plans table additions (U6)
         plan_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(monthly_plans)"))}
@@ -165,7 +168,10 @@ def current_month_status(db: Session = Depends(get_db)):
     month — drives the new-month banner. Never about whichever month is being
     viewed on the Expenses page, only the real (or simulated) current month."""
     year, month = plans_lib.current_year_month(db)
-    plan = plans_lib.get_plan(db, year, month)
+    # Runs on every app open (banner check). Lazily materialize the effective
+    # current month's plan here so a fresh month is created + its MR target
+    # synced on first load — the banner status and target must never be stale.
+    plan = plans_lib.get_or_autoload_plan(db, year, month)
     top_off_done = bool(plan and plan.top_off_executed_at)
     distribute_done = bool(plan and plan.distribute_executed_at)
     return {
