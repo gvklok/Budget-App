@@ -1,8 +1,10 @@
 services:
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
+    # Not published to the host: nginx (frontend) reaches it over the compose
+    # network, and everything user-facing goes through :3000/api.
+    expose:
+      - "8000"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
