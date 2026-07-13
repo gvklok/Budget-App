@@ -170,9 +170,13 @@ function PeriodReviewCard({ months, rangeMonths }) {
               </p>
             </div>
           ) : (
-            <p className="text-base font-semibold text-ink leading-snug">
-              You kept <span className="tabular">{c(totalKept)}</span> of <span className="tabular">{c(totalIncome)}</span> income
-            </p>
+            /* No income recorded in the window — still lead with a NUMBER, not
+               a sentence: the period's spending is the next-best headline. */
+            <div className="mb-1">
+              <span className="hero-figure text-5xl font-bold tabular text-ink">{c(totalBills + totalFunds)}</span>
+              <p className="text-xs text-ink-3 mt-0.5">spent · {periodRangeShortLabel(months)}</p>
+              <p className="text-sm text-ink-2 mt-2">No income recorded this period — log a paycheck and this becomes your savings rate</p>
+            </div>
           )}
 
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-line">

@@ -1,10 +1,12 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import models
 import schemas
+import ledger
 import plans as plans_lib
 from database import get_db
 
@@ -66,6 +68,32 @@ def delete_income_source(source_id: int, db: Session = Depends(get_db)):
     db.delete(source)
     db.commit()
     return {"ok": True}
+
+
+class LogPaycheckBody(BaseModel):
+    source_id: int
+    amount_cents: Optional[int] = None  # override for a bonus/odd check; default = source amount
+
+
+@router.post("/paycheck")
+def log_paycheck(body: LogPaycheckBody, db: Session = Depends(get_db)):
+    """Real (non-dev) income entry: a paycheck lands in Savings. Mirrors the
+    dev simulate-paycheck mechanic — Savings and Real Cash rise together and
+    the ledger records it, which is what powers income in every report."""
+    source = db.query(models.IncomeSource).filter(models.IncomeSource.id == body.source_id).first()
+    if not source:
+        raise HTTPException(404, "Income source not found")
+    amount = body.amount_cents if body.amount_cents is not None else source.amount_cents
+    if amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+
+    savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
+    savings.balance_cents += amount
+    rc.balance_cents += amount
+    ledger.record(db, kind="paycheck", amount_cents=amount, from_bucket="external", to_bucket="savings", label=source.name)
+    db.commit()
+    return {"ok": True, "added_cents": amount, "source_id": source.id, "name": source.name}
 
 
 # ── Monthly summary ───────────────────────────────────────────────────────────
