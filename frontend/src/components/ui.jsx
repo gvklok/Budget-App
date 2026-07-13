@@ -360,6 +360,7 @@ export function Segmented({ options, value, onChange }) {
       {options.map((opt) => (
         <button
           key={opt.value}
+          type="button"
           onClick={() => onChange(opt.value)}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
             value === opt.value ? 'bg-card text-ink shadow-sm' : 'text-ink-3'

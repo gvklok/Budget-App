@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
-import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
+import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
 import Modal from '../components/Modal'
 import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu, ColorSwatchPicker, RecoveryBadge } from '../components/ui'
 import { useRefetchOnFocus } from '../hooks'
@@ -211,9 +211,9 @@ function FundContributionModal({ fund, onClose, onSave }) {
 
 // ── Log Transaction Modal ─────────────────────────────────────────────────────
 
-function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, defaultDate, onClose, onSave }) {
+function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, defaultFundId, defaultSourceId, defaultDate, onClose, onSave, onLogPaycheck }) {
   const today = defaultDate ?? new Date().toISOString().slice(0, 10)
-  const [mode, setMode] = useState(defaultFundId ? 'fund' : 'category')
+  const [mode, setMode] = useState(defaultSourceId ? 'paycheck' : defaultFundId ? 'fund' : 'category')
   const [lineItemId, setLineItemId] = useState(defaultLineItemId ?? '')
   const [fundId, setFundId] = useState(defaultFundId ?? '')
   const [amount, setAmount] = useState('')
@@ -222,8 +222,34 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, d
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // Paycheck mode — no fund/date/merchant, money lands on Savings now. Amount
+  // pre-fills from the selected source (editable — bonus/odd checks) and
+  // re-fills whenever the source selection changes.
+  const initialSourceId = defaultSourceId ?? incomeSources?.[0]?.id ?? ''
+  const [sourceId, setSourceId] = useState(initialSourceId)
+  const [paycheckAmount, setPaycheckAmount] = useState(() => {
+    const src = incomeSources?.find((s) => s.id === initialSourceId)
+    return src ? (src.amount_cents / 100).toFixed(2) : ''
+  })
+  function handleSourceChange(id) {
+    const numId = id === '' ? '' : Number(id)
+    setSourceId(numId)
+    const src = incomeSources?.find((s) => s.id === numId)
+    if (src) setPaycheckAmount((src.amount_cents / 100).toFixed(2))
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
+    if (mode === 'paycheck') {
+      if (!sourceId) return setError('Select an income source')
+      if (!paycheckAmount) return setError('Amount is required')
+      setSaving(true); setError('')
+      try {
+        await onLogPaycheck({ source_id: Number(sourceId), amount_cents: toCents(paycheckAmount) })
+        onClose()
+      } catch (err) { setError(err.message) } finally { setSaving(false) }
+      return
+    }
     if (mode === 'category' && !lineItemId) return setError('Select a line item')
     if (mode === 'fund' && !fundId) return setError('Select a fund')
     if (!amount) return setError('Amount is required')
@@ -241,10 +267,10 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, d
     <Modal title="Log Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Segmented
-          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }]}
+          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'paycheck', label: 'Paycheck' }]}
           value={mode} onChange={setMode}
         />
-        {mode === 'category' ? (
+        {mode === 'category' && (
           <div>
             <label className={labelClass}>Bill</label>
             <select value={lineItemId} onChange={(e) => setLineItemId(e.target.value)} className={inputClass}>
@@ -252,7 +278,8 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, d
               {bills.map((li) => <option key={li.id} value={li.id}>{li.name}</option>)}
             </select>
           </div>
-        ) : (
+        )}
+        {mode === 'fund' && (
           <div>
             <label className={labelClass}>Fund</label>
             <select value={fundId} onChange={(e) => setFundId(e.target.value)} className={inputClass}>
@@ -261,27 +288,60 @@ function LogTransactionModal({ bills, funds, defaultLineItemId, defaultFundId, d
             </select>
           </div>
         )}
-        <div>
-          <label className={labelClass}>Amount</label>
-          <input autoFocus type="number" step="0.01" min="0" value={amount}
-            onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
-            className={inputClass} />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-          </div>
-          <div>
-            <label className={labelClass}>
-              Merchant <span className="text-ink-3 font-normal">(optional)</span>
-            </label>
-            <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="e.g. Walmart" className={inputClass} />
-          </div>
-        </div>
+        {mode === 'paycheck' && (
+          incomeSources && incomeSources.length > 0 ? (
+            <>
+              <div>
+                <label className={labelClass}>Income source</label>
+                <select value={sourceId} onChange={(e) => handleSourceChange(e.target.value)} className={inputClass}>
+                  <option value="">Select…</option>
+                  {incomeSources.map((s) => <option key={s.id} value={s.id}>{s.name} ({c(s.amount_cents)})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>Amount</label>
+                <input autoFocus type="number" step="0.01" min="0" value={paycheckAmount}
+                  onChange={(e) => setPaycheckAmount(e.target.value)} placeholder="0.00"
+                  className={inputClass} />
+                <p className="text-xs text-ink-3 mt-1.5">Pre-filled from the source — edit for a bonus or odd check.</p>
+              </div>
+              {paycheckAmount && Number(paycheckAmount) > 0 && (
+                <p className="text-sm font-semibold" style={{ color: SAVING_TEXT }}>
+                  + {c(toCents(paycheckAmount))} → Savings
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-ink-3">Add an income source below first.</p>
+          )
+        )}
+        {mode !== 'paycheck' && (
+          <>
+            <div>
+              <label className={labelClass}>Amount</label>
+              <input autoFocus type="number" step="0.01" min="0" value={amount}
+                onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
+                className={inputClass} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelClass}>Date</label>
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className={labelClass}>
+                  Merchant <span className="text-ink-3 font-normal">(optional)</span>
+                </label>
+                <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="e.g. Walmart" className={inputClass} />
+              </div>
+            </div>
+          </>
+        )}
         {error && <p className="text-sm text-critical">{error}</p>}
-        <PrimaryButton type="submit" disabled={saving} className="w-full">
-          {saving ? 'Saving…' : 'Log'}
+        <PrimaryButton type="submit"
+          disabled={saving || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
+          className="w-full">
+          {saving ? 'Saving…' : mode === 'paycheck' ? 'Log paycheck' : 'Log'}
         </PrimaryButton>
       </form>
     </Modal>
@@ -835,6 +895,11 @@ export default function ExpensesPage() {
   async function handleDeleteCat(cat) { if (!confirm(`Delete "${cat.name}"? Bills become uncategorized.`)) return; await apiDel(`/line-items/categories/${cat.id}`); await load() }
   async function handleUpdateFundContrib(id, data) { await apiPatch(`/funds/${id}`, data); await load() }
   async function handleLogTx(data) { await apiPost('/transactions/', data); await load() }
+  async function handleLogPaycheck(data) {
+    await apiPost('/paycheck', data)
+    await load()
+    window.dispatchEvent(new Event('dev-refresh'))
+  }
   async function handleDeleteTx(tx) { if (!confirm('Delete this transaction?')) return; await apiDel(`/transactions/${tx.id}`); await load() }
 
   // U5: resolve the source-labeling prompt
@@ -1176,9 +1241,15 @@ export default function ExpensesPage() {
                       <p className="text-xs text-ink-3 mt-0.5 tabular">{c(s.amount_cents)} · {freqLabel(s.frequency)}</p>
                     </div>
                     {!locked && (
-                      <div className="flex items-center gap-0.5 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <IconButton onClick={() => setEditSource(s)}><Pencil size={14} /></IconButton>
                         <IconButton onClick={() => handleDeleteSource(s)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={14} /></IconButton>
+                        {/* Rightmost — same thumb logic as ItemRow's Log button; the
+                            frequent income action lives where the thumb lands. */}
+                        <button onClick={() => setLogTx({ sourceId: s.id })}
+                          className="flex items-center gap-1 text-xs font-semibold text-saving-ink bg-saving-soft rounded-full px-2.5 py-1.5 active:scale-[0.98] transition-transform">
+                          <Plus size={12} />Paycheck
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1360,7 +1431,14 @@ export default function ExpensesPage() {
       )}
 
       {/* Modals */}
-      {logTx && <LogTransactionModal bills={bills} funds={funds} defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultDate={logTxDefaultDate} onClose={() => setLogTx(null)} onSave={handleLogTx} />}
+      {logTx && (
+        <LogTransactionModal
+          bills={bills} funds={funds} incomeSources={incomeSources}
+          defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultSourceId={logTx.sourceId}
+          defaultDate={logTxDefaultDate}
+          onClose={() => setLogTx(null)} onSave={handleLogTx} onLogPaycheck={handleLogPaycheck}
+        />
+      )}
       {reallocatePrompt && (
         <SourceLabelModal
           prompt={reallocatePrompt}
