@@ -473,3 +473,16 @@ Committed as separate judgment points on `fableFun`:
   endpoints; distribute funds in the user's priority order).
 - Dark mode: CSS-variable tokens, warm charcoal palette, System/Light/Dark
   toggle on Settings.
+
+## Changelog addendum 2 (2026-07-12/13)
+
+- Edge-case audit + fixes: invariant-safe transaction reversals via the ledger,
+  coherent deleted-bucket reporting, plan-copy hygiene, FK enforcement ON with
+  history-preserving delete rules (owner ruling: history is permanent, names
+  survive deletion via snapshots), destination classification frozen at spend
+  time (no retroactive transfer-out rewrites), bank-sync seam columns.
+- Real paycheck logging (POST /paycheck + Log-modal Paycheck mode) — income no
+  longer requires the dev overlay.
+- Fund goals (detail page only) + Settings JSON backup export + custom entity
+  colors + reorderable funds/bills + declutter pass + dark mode + PWA
+  (manifest/icons/refetch-on-focus) + two-user hardening (WAL).
