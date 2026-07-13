@@ -110,44 +110,131 @@ def _migrate() -> None:
         if "color" not in existing:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN color TEXT"))
 
-        # transactions table: make line_item_id nullable + add fund_id
+        # transactions table: line_item_id must be ON DELETE SET NULL (owner
+        # ruling — deletion never destroys history). Rebuild only when the live
+        # FK action is wrong (legacy CASCADE) or the table predates fund_id;
+        # inspect the actual on_delete via PRAGMA so hot-reloads are idempotent.
         tx_cols = {row[1]: row for row in conn.execute(text("PRAGMA table_info(transactions)"))}
+        fk_rows = conn.execute(text("PRAGMA foreign_key_list(transactions)")).fetchall()
+        # PRAGMA foreign_key_list columns: (id, seq, table, from, to, on_update, on_delete, match)
+        line_item_on_delete = next((fk[6] for fk in fk_rows if fk[3] == "line_item_id"), None)
         needs_rebuild = (
-            "line_item_id" in tx_cols and tx_cols["line_item_id"][3] == 1  # notnull=1
-        ) or "fund_id" not in tx_cols
+            ("line_item_id" in tx_cols and tx_cols["line_item_id"][3] == 1)  # notnull=1 legacy
+            or "fund_id" not in tx_cols
+            or (line_item_on_delete is not None and line_item_on_delete != "SET NULL")
+        )
         if needs_rebuild:
+            conn.execute(text("DROP TABLE IF EXISTS transactions_new"))
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS transactions_new (
+                CREATE TABLE transactions_new (
                     id INTEGER PRIMARY KEY,
                     amount_cents INTEGER NOT NULL,
                     date TEXT NOT NULL,
                     merchant TEXT,
-                    line_item_id INTEGER REFERENCES expenses(id) ON DELETE CASCADE,
+                    line_item_id INTEGER REFERENCES expenses(id) ON DELETE SET NULL,
                     fund_id INTEGER REFERENCES funds(id) ON DELETE SET NULL,
-                    created_at DATETIME
+                    created_at DATETIME,
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    external_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'posted',
+                    line_item_name TEXT,
+                    destination_type TEXT
                 )
             """))
-            conn.execute(text("""
-                INSERT INTO transactions_new (id, amount_cents, date, merchant, line_item_id, created_at)
-                SELECT id, amount_cents, date, merchant, line_item_id, created_at FROM transactions
+            # Preserve EVERY column. Sanitize dangling line_item_id/fund_id (legacy
+            # orphans left behind while FK enforcement was OFF) to NULL so the copy
+            # satisfies the now-enforced constraints instead of aborting startup.
+            src = "t.source" if "source" in tx_cols else "'manual'"
+            ext = "t.external_id" if "external_id" in tx_cols else "NULL"
+            sta = "t.status" if "status" in tx_cols else "'posted'"
+            nam = "t.line_item_name" if "line_item_name" in tx_cols else "NULL"
+            dst = "t.destination_type" if "destination_type" in tx_cols else "NULL"
+            conn.execute(text(f"""
+                INSERT INTO transactions_new
+                    (id, amount_cents, date, merchant, line_item_id, fund_id, created_at,
+                     source, external_id, status, line_item_name, destination_type)
+                SELECT t.id, t.amount_cents, t.date, t.merchant,
+                       CASE WHEN e.id IS NULL THEN NULL ELSE t.line_item_id END,
+                       CASE WHEN f.id IS NULL THEN NULL ELSE t.fund_id END,
+                       t.created_at, {src}, {ext}, {sta}, {nam}, {dst}
+                FROM transactions t
+                LEFT JOIN expenses e ON e.id = t.line_item_id
+                LEFT JOIN funds f ON f.id = t.fund_id
             """))
             conn.execute(text("DROP TABLE transactions"))
             conn.execute(text("ALTER TABLE transactions_new RENAME TO transactions"))
 
-        # transactions bank-sync seam columns (passive). Re-read cols in case the
-        # table was just rebuilt above (which drops these).
-        tx_seam_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))}
-        if "source" not in tx_seam_cols:
+        # Ensure seam + snapshot columns exist (covers the no-rebuild path). Re-read
+        # cols in case the table was just rebuilt above.
+        tx_cols2 = {row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))}
+        if "source" not in tx_cols2:
             conn.execute(text("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"))
-        if "external_id" not in tx_seam_cols:
+        if "external_id" not in tx_cols2:
             conn.execute(text("ALTER TABLE transactions ADD COLUMN external_id TEXT"))
-        if "status" not in tx_seam_cols:
+        if "status" not in tx_cols2:
             conn.execute(text("ALTER TABLE transactions ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'"))
+        if "line_item_name" not in tx_cols2:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN line_item_name TEXT"))
+        if "destination_type" not in tx_cols2:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN destination_type TEXT"))
         # Partial unique index: dedupe imported rows, leave manual (NULL) rows free.
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_transactions_source_external_id "
             "ON transactions (source, external_id) WHERE external_id IS NOT NULL"
         ))
+
+        # Backfill name snapshots for rows whose line item still resolves (one-time;
+        # idempotent since it only fills NULLs). Orphans that already lost their
+        # line item stay NULL and report as "Deleted bill".
+        conn.execute(text("""
+            UPDATE transactions SET line_item_name = (
+                SELECT e.name FROM expenses e WHERE e.id = transactions.line_item_id
+            )
+            WHERE line_item_id IS NOT NULL AND line_item_name IS NULL
+        """))
+        # Backfill destination snapshot from the fund's CURRENT destination — best
+        # available for pre-snapshot rows (direct fund spends, then fund line items).
+        conn.execute(text("""
+            UPDATE transactions SET destination_type = (
+                SELECT f.destination_type FROM funds f WHERE f.id = transactions.fund_id
+            )
+            WHERE fund_id IS NOT NULL AND destination_type IS NULL
+              AND EXISTS (SELECT 1 FROM funds f WHERE f.id = transactions.fund_id)
+        """))
+        conn.execute(text("""
+            UPDATE transactions SET destination_type = (
+                SELECT f.destination_type FROM funds f
+                JOIN expenses e ON e.fund_id = f.id
+                WHERE e.id = transactions.line_item_id AND e.type = 'fund'
+            )
+            WHERE line_item_id IS NOT NULL AND destination_type IS NULL
+              AND EXISTS (
+                SELECT 1 FROM expenses e JOIN funds f ON f.id = e.fund_id
+                WHERE e.id = transactions.line_item_id AND e.type = 'fund'
+              )
+        """))
+
+        # ledger_entries destination snapshot (U-ledger). Backfill fund-side spends
+        # and their reversals from the fund's current destination.
+        led_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ledger_entries)"))}
+        if "destination_type" not in led_cols:
+            conn.execute(text("ALTER TABLE ledger_entries ADD COLUMN destination_type TEXT"))
+        conn.execute(text("""
+            UPDATE ledger_entries SET destination_type = (
+                SELECT f.destination_type FROM funds f
+                WHERE 'fund:' || f.id = ledger_entries.from_bucket
+            )
+            WHERE kind = 'spend' AND destination_type IS NULL AND from_bucket LIKE 'fund:%'
+              AND EXISTS (SELECT 1 FROM funds f WHERE 'fund:' || f.id = ledger_entries.from_bucket)
+        """))
+        conn.execute(text("""
+            UPDATE ledger_entries SET destination_type = (
+                SELECT f.destination_type FROM funds f
+                WHERE 'fund:' || f.id = ledger_entries.to_bucket
+            )
+            WHERE kind = 'spend_reversal' AND destination_type IS NULL AND to_bucket LIKE 'fund:%'
+              AND EXISTS (SELECT 1 FROM funds f WHERE 'fund:' || f.id = ledger_entries.to_bucket)
+        """))
         conn.commit()
 
 

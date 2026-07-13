@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 import models
 import plans as plans_lib
 from database import get_db
+from routers.transactions import _deleted_fund_names
 
 router = APIRouter()
 
@@ -67,15 +68,21 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
         sign = 1 if e.kind == "spend" else -1
         fund_side = e.from_bucket if e.kind == "spend" else e.to_bucket
         fund_id = _fund_id_from_bucket(fund_side)
-        # A deleted fund can't be resolved — treat as external_spend; "mr" and
-        # "savings" always count as spending.
-        if fund_id is not None and fund_id in transfer_out_ids:
-            month_totals["transfers_out_cents"] += sign * e.amount_cents
-        elif fund_id is not None:
-            month_totals["funds_spent_cents"] += sign * e.amount_cents
-        else:
+        if fund_id is None:
             # "mr" (bills) — and rare direct savings withdrawals — count with bills.
             month_totals["bills_spent_cents"] += sign * e.amount_cents
+            continue
+        # Classify by the entry's destination SNAPSHOT so a later fund flip never
+        # reclassifies this month. Legacy nulls fall back to the live fund (a
+        # since-deleted fund stays external_spend — i.e. ordinary fund spending).
+        if e.destination_type is not None:
+            is_transfer_out = e.destination_type == "transfer_out"
+        else:
+            is_transfer_out = fund_id in transfer_out_ids
+        if is_transfer_out:
+            month_totals["transfers_out_cents"] += sign * e.amount_cents
+        else:
+            month_totals["funds_spent_cents"] += sign * e.amount_cents
 
     result = []
     for year, month in month_keys:
@@ -125,29 +132,59 @@ def spending_breakdown(
         for e in db.query(models.Expense).filter(models.Expense.id.in_(line_item_ids)).all():
             expenses_by_id[e.id] = e
 
-    bill_totals: dict[int, int] = {}
-    fund_totals: dict[int, int] = {}
-    # Orphaned bill-side spends (line item deleted) collapse into one row so the
-    # spend still shows up rather than silently vanishing from the breakdown.
-    deleted_bill_total = 0
-    deleted_bill_line_item_id = None
+    # Under FK ON, deleting a bill/fund nulls the tx's pointer (SET NULL) — the
+    # spend ledger entry still names the original bucket, so use it to recover the
+    # fund id / bill-vs-fund split for orphaned spends.
+    tx_ids = [t.id for t in transactions]
+    spend_by_tx: dict[int, models.LedgerEntry] = {}
+    if tx_ids:
+        for e in (
+            db.query(models.LedgerEntry)
+            .filter(models.LedgerEntry.kind == "spend", models.LedgerEntry.transaction_id.in_(tx_ids))
+            .order_by(models.LedgerEntry.id.asc())
+            .all()
+        ):
+            spend_by_tx.setdefault(e.transaction_id, e)
+
+    bill_totals: dict[int, int] = {}         # live bill line_item_id -> cents
+    orphan_bill_totals: dict[str, int] = {}  # deleted-bill snapshot name -> cents
+    deleted_bill_nameless = 0                # orphan bill with no snapshot name
+    fund_totals: dict[int, int] = {}         # fund_id -> cents (live or deleted)
+    fund_dest: dict[int, str] = {}           # fund_id -> representative destination snapshot
+
     for t in transactions:
         line_item = expenses_by_id.get(t.line_item_id) if t.line_item_id is not None else None
+        entry = spend_by_tx.get(t.id)
+        ledger_fund_id = _fund_id_from_bucket(entry.from_bucket) if entry else None
+
+        # Resolve the fund this spend hit: live pointers first, ledger snapshot last.
+        fund_id = None
+        if line_item is not None and line_item.type == "fund" and line_item.fund_id is not None:
+            fund_id = line_item.fund_id
+        elif line_item is None and t.fund_id is not None:
+            fund_id = t.fund_id
+        elif ledger_fund_id is not None and (line_item is None or line_item.type != "bill"):
+            fund_id = ledger_fund_id
+
         if line_item is not None and line_item.type == "bill":
             bill_totals[line_item.id] = bill_totals.get(line_item.id, 0) + t.amount_cents
-        elif line_item is not None and line_item.type == "fund" and line_item.fund_id is not None:
-            fund_totals[line_item.fund_id] = fund_totals.get(line_item.fund_id, 0) + t.amount_cents
-        elif t.fund_id is not None:
-            fund_totals[t.fund_id] = fund_totals.get(t.fund_id, 0) + t.amount_cents
-        elif line_item is None and t.line_item_id is not None:
-            deleted_bill_total += t.amount_cents
-            if deleted_bill_line_item_id is None:
-                deleted_bill_line_item_id = t.line_item_id
+        elif fund_id is not None:
+            fund_totals[fund_id] = fund_totals.get(fund_id, 0) + t.amount_cents
+            if t.destination_type is not None:
+                fund_dest.setdefault(fund_id, t.destination_type)
+        else:
+            # Orphaned bill spend (line item deleted): group by snapshot name.
+            name = t.line_item_name
+            if name:
+                orphan_bill_totals[name] = orphan_bill_totals.get(name, 0) + t.amount_cents
+            else:
+                deleted_bill_nameless += t.amount_cents
 
     funds_by_id = {}
     if fund_totals:
         for f in db.query(models.Fund).filter(models.Fund.id.in_(fund_totals)).all():
             funds_by_id[f.id] = f
+    deleted_fund_names = _deleted_fund_names(db) if any(fid not in funds_by_id for fid in fund_totals) else {}
 
     # Bills are month-scoped line items, so the "same" bill (Rent) has a
     # different id in every month's plan — a multi-month window must merge by
@@ -159,33 +196,31 @@ def spending_breakdown(
             name = expenses_by_id[lid].name
             row = merged.setdefault(name, {"line_item_id": lid, "name": name, "spent_cents": 0})
             row["spent_cents"] += total
-        bill_rows = merged.values()
+        bill_rows = list(merged.values())
     else:
-        bill_rows = (
+        bill_rows = [
             {"line_item_id": lid, "name": expenses_by_id[lid].name, "spent_cents": total}
             for lid, total in bill_totals.items()
-        )
-    bill_rows = list(bill_rows)
-    if deleted_bill_total > 0:
-        bill_rows.append({
-            "line_item_id": deleted_bill_line_item_id,
-            "name": "Deleted bill",
-            "spent_cents": deleted_bill_total,
-        })
+        ]
+    # Deleted bills keep their name (owner ruling), grouped by snapshot regardless
+    # of window; only truly nameless legacy orphans collapse to "Deleted bill".
+    for name, total in orphan_bill_totals.items():
+        bill_rows.append({"line_item_id": None, "name": f"{name} (deleted)", "spent_cents": total})
+    if deleted_bill_nameless > 0:
+        bill_rows.append({"line_item_id": None, "name": "Deleted bill", "spent_cents": deleted_bill_nameless})
     bills = sorted(bill_rows, key=lambda b: b["spent_cents"], reverse=True)
-    funds = sorted(
-        (
-            {
-                "fund_id": fid,
-                "name": funds_by_id[fid].name if fid in funds_by_id else "Deleted fund",
-                "spent_cents": total,
-                "destination_type": funds_by_id[fid].destination_type if fid in funds_by_id else "external_spend",
-            }
-            for fid, total in fund_totals.items()
-        ),
-        key=lambda f: f["spent_cents"],
-        reverse=True,
-    )
+
+    fund_rows = []
+    for fid, total in fund_totals.items():
+        if fid in funds_by_id:
+            name = funds_by_id[fid].name
+            dest = fund_dest.get(fid, funds_by_id[fid].destination_type)
+        else:
+            base = deleted_fund_names.get(fid)
+            name = f"{base} (deleted)" if base else "Deleted fund"
+            dest = fund_dest.get(fid, "external_spend")
+        fund_rows.append({"fund_id": fid, "name": name, "spent_cents": total, "destination_type": dest})
+    funds = sorted(fund_rows, key=lambda f: f["spent_cents"], reverse=True)
     return {"bills": bills, "funds": funds}
 
 

@@ -16,6 +16,7 @@ def record(
     label: Optional[str] = None,
     transaction_id: Optional[int] = None,
     date: Optional[str] = None,
+    destination_type: Optional[str] = None,
 ) -> None:
     """Append an immutable LedgerEntry. amount_cents must be positive; zero-value
     movements are skipped (nothing happened). date defaults to the effective
@@ -34,5 +35,6 @@ def record(
             amount_cents=amount_cents,
             label=label,
             transaction_id=transaction_id,
+            destination_type=destination_type,
         )
     )

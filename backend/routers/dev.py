@@ -208,6 +208,14 @@ def simulate_transaction(body: SimulateTransactionBody, db: Session = Depends(ge
         destination_type=body.destination_type or "external_spend",
     )
     db.add(txn)
+    # Destination snapshot: a Savings Withdrawal carries its own destination (U1);
+    # a fund spend snapshots the fund's current destination; MR spends have none.
+    if body.bucket == "savings":
+        entry_destination = body.destination_type or "external_spend"
+    elif isinstance(bucket, models.Fund):
+        entry_destination = bucket.destination_type
+    else:
+        entry_destination = None
     ledger.record(
         db,
         kind="spend",
@@ -215,6 +223,7 @@ def simulate_transaction(body: SimulateTransactionBody, db: Session = Depends(ge
         from_bucket=body.bucket,
         to_bucket="external",
         label=body.label or "Simulated",
+        destination_type=entry_destination,
     )
     db.commit()
     return {"ok": True}
@@ -281,6 +290,9 @@ def current_date(db: Session = Depends(get_db)):
 
 @router.post("/reset")
 def reset(db: Session = Depends(get_db)):
+    # FK enforcement is ON: delete children before parents. Transactions reference
+    # expenses/funds; expenses reference categories/funds/plans — so transactions
+    # go first, then expenses, then the tables they point at.
     db.query(models.Transaction).delete()
     db.query(models.SimulatedTransaction).delete()
     db.query(models.LedgerEntry).delete()

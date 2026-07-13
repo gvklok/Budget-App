@@ -18,6 +18,9 @@ def _set_sqlite_pragmas(dbapi_conn, _record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA busy_timeout=5000")
+    # SQLite leaves FK enforcement OFF per connection by default; turn it on so
+    # ON DELETE SET NULL actually fires (history-preserving deletes rely on it).
+    cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

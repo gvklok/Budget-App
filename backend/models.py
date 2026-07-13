@@ -81,9 +81,13 @@ class Transaction(Base):
     amount_cents = Column(Integer, nullable=False)
     date = Column(String, nullable=False)  # YYYY-MM-DD
     merchant = Column(String, nullable=True)
-    line_item_id = Column(Integer, ForeignKey("expenses.id", ondelete="CASCADE"), nullable=True)
+    # SET NULL, not CASCADE: deleting a bill/fund never deletes its history (owner
+    # ruling). The name/destination snapshots below keep the row self-describing.
+    line_item_id = Column(Integer, ForeignKey("expenses.id", ondelete="SET NULL"), nullable=True)
     fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    line_item_name = Column(String, nullable=True)  # snapshot of the line item's name at creation
+    destination_type = Column(String, nullable=True)  # snapshot of the fund's destination at spend time; null for bills
     # Bank-sync seam (passive; no API accepts these yet). external_id is the
     # bank/provider's own id; the partial unique index dedupes imported rows
     # while leaving manual rows (external_id NULL) unconstrained.
@@ -125,6 +129,10 @@ class LedgerEntry(Base):
     amount_cents = Column(Integer, nullable=False)  # always positive
     label = Column(String, nullable=True)
     transaction_id = Column(Integer, nullable=True)  # plain int ref, no FK — must survive tx deletion
+    # Snapshot of the fund's destination at spend time (spend / spend_reversal with
+    # a fund-side bucket); null for bill/MR/savings movements. Reporting classifies
+    # by this so flipping a fund's destination never reclassifies past months.
+    destination_type = Column(String, nullable=True)
 
 
 class ChecklistItem(Base):

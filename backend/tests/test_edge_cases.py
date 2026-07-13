@@ -180,8 +180,9 @@ def test_reporting_surfaces_agree_after_bill_and_fund_deletion(client, helpers):
     )
     assert breakdown_total == 70000
 
-    assert any(b["name"] == "Deleted bill" and b["spent_cents"] == 50000 for b in breakdown["bills"])
-    assert any(f["name"] == "Deleted fund" and f["spent_cents"] == 20000 for f in breakdown["funds"])
+    # History keeps the deleted bucket's NAME (owner ruling), not a generic label.
+    assert any(b["name"] == "Rent (deleted)" and b["spent_cents"] == 50000 for b in breakdown["bills"])
+    assert any(f["name"] == "Vacation (deleted)" and f["spent_cents"] == 20000 for f in breakdown["funds"])
 
 
 def test_plan_copy_nulls_dead_fund_and_category(client, helpers):
@@ -225,3 +226,118 @@ def test_transactions_carry_source_and_status_defaults(client):
     assert txs[0]["source"] == "manual"
     assert txs[0]["status"] == "posted"
     assert txs[0]["external_id"] is None
+
+
+# ── FK enforcement + history-preserving deletes (owner ruling batch) ────────────
+
+
+def test_foreign_keys_are_enforced(client):
+    """PRAGMA foreign_keys is ON for every connection (SET NULL must actually
+    fire on delete)."""
+    from sqlalchemy import text
+    from database import engine
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1
+
+
+def test_deleting_bill_nulls_tx_but_keeps_name_snapshot(client, helpers):
+    """Under FK ON, deleting a bill SET-NULLs line_item_id (never deletes the tx);
+    the name snapshot survives, monthly-summary still counts it, and the breakdown
+    labels it '{name} (deleted)'."""
+    client.post("/dev/set-simulated-date", json={"date": "2026-07-13"})
+    client.post("/dev/set-savings", json={"balance_cents": 1000000})
+
+    bill = client.post("/line-items/", json={
+        "name": "Rent", "type": "bill", "amount_cents": 200000, "year": 2026, "month": 7,
+    }).json()
+    client.post("/monthly-reserve/top-off")
+    client.post("/transactions/", json={
+        "line_item_id": bill["id"], "amount_cents": 50000, "date": "2026-07-15",
+    })
+
+    assert client.delete(f"/line-items/{bill['id']}").status_code == 200
+
+    txs = client.get("/transactions/").json()
+    assert len(txs) == 1  # SET NULL, not CASCADE — the tx survives
+    assert txs[0]["line_item_id"] is None
+    assert txs[0]["line_item_name"] == "Rent"
+
+    summary = client.get("/monthly-summary", params={"year": 2026, "month": 7}).json()
+    assert summary["actual_spending_cents"] == 50000
+
+    breakdown = client.get("/overview/spending-breakdown", params={"year": 2026, "month": 7}).json()
+    assert any(b["name"] == "Rent (deleted)" and b["spent_cents"] == 50000 for b in breakdown["bills"])
+    helpers["assert_invariant"](client)
+
+
+def test_deleting_fund_breakdown_keeps_name(client, helpers):
+    """Deleting a fund keeps its spends in the breakdown under '{name} (deleted)',
+    recovered from the fund-deletion ledger entry."""
+    client.post("/dev/set-simulated-date", json={"date": "2026-07-13"})
+    client.post("/dev/set-savings", json={"balance_cents": 1000000})
+
+    fund = client.post("/funds/", json={
+        "name": "Vacation", "monthly_contribution_cents": 0, "balance_cents": 80000,
+    }).json()
+    client.post("/transactions/", json={
+        "fund_id": fund["id"], "amount_cents": 20000, "date": "2026-07-15",
+    })
+
+    assert client.delete(f"/funds/{fund['id']}").status_code == 200
+
+    breakdown = client.get("/overview/spending-breakdown", params={"year": 2026, "month": 7}).json()
+    assert any(f["name"] == "Vacation (deleted)" and f["spent_cents"] == 20000 for f in breakdown["funds"])
+    helpers["assert_invariant"](client)
+
+
+def test_fund_flip_does_not_reclassify_past_spends(client, helpers):
+    """Flipping a fund external_spend -> transfer_out AFTER a spend must not
+    reclassify that past spend: /overview/monthly and /monthly-summary both keep
+    the old spend as spending; only spends AFTER the flip count as transfers-out."""
+    client.post("/dev/set-simulated-date", json={"date": "2026-07-13"})
+    client.post("/dev/set-savings", json={"balance_cents": 1000000})
+
+    fund = client.post("/funds/", json={
+        "name": "Roth", "monthly_contribution_cents": 0, "balance_cents": 100000,
+        "destination_type": "external_spend",
+    }).json()
+    # Spent while external_spend — snapshot pins it as ordinary spending.
+    client.post("/transactions/", json={
+        "fund_id": fund["id"], "amount_cents": 20000, "date": "2026-07-05",
+    })
+
+    assert client.patch(f"/funds/{fund['id']}", json={"destination_type": "transfer_out"}).status_code == 200
+
+    # New spend after the flip — this one is a transfer-out.
+    client.post("/transactions/", json={
+        "fund_id": fund["id"], "amount_cents": 15000, "date": "2026-07-09",
+    })
+
+    overview = client.get("/overview/monthly", params={"months": 1}).json()["months"][-1]
+    assert overview["funds_spent_cents"] == 20000     # pre-flip spend unchanged
+    assert overview["transfers_out_cents"] == 15000   # only the post-flip spend
+
+    summary = client.get("/monthly-summary", params={"year": 2026, "month": 7}).json()
+    assert summary["actual_spending_cents"] == 20000
+    assert summary["transfers_out_cents"] == 15000
+
+    helpers["assert_invariant"](client)
+
+
+def test_reset_works_under_fk_on(client, helpers):
+    """Dev reset deletes in an FK-safe order with enforcement ON."""
+    client.post("/dev/set-savings", json={"balance_cents": 100000})
+    fund = client.post("/funds/", json={
+        "name": "F", "monthly_contribution_cents": 0, "balance_cents": 50000,
+    }).json()
+    client.post("/line-items/", json={
+        "name": "Rent", "type": "bill", "amount_cents": 200000, "year": 2026, "month": 7,
+    })
+    client.post("/transactions/", json={
+        "fund_id": fund["id"], "amount_cents": 10000, "date": "2026-07-05",
+    })
+
+    assert client.post("/dev/reset").status_code == 200
+    assert client.get("/transactions/").json() == []
+    assert client.get("/funds/").json() == []
+    helpers["assert_invariant"](client)

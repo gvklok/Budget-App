@@ -13,6 +13,52 @@ from database import get_db
 router = APIRouter()
 
 
+def _fund_id_from_bucket(bucket: Optional[str]) -> Optional[int]:
+    if bucket and bucket.startswith("fund:"):
+        try:
+            return int(bucket.split(":")[1])
+        except (ValueError, IndexError):
+            return None
+    return None
+
+
+_FUND_DELETED_PREFIX = "Fund deleted: "
+
+
+def _deleted_fund_names(db: Session) -> dict[int, str]:
+    """id -> name for deleted funds, recovered from their deletion ledger entries
+    (label 'Fund deleted: {name}', from_bucket 'fund:{id}')."""
+    out: dict[int, str] = {}
+    for e in (
+        db.query(models.LedgerEntry)
+        .filter(models.LedgerEntry.label.like(f"{_FUND_DELETED_PREFIX}%"))
+        .all()
+    ):
+        fid = _fund_id_from_bucket(e.from_bucket)
+        if fid is not None and e.label:
+            out[fid] = e.label[len(_FUND_DELETED_PREFIX):]
+    return out
+
+
+def _snapshot_name_and_destination(tx: models.Transaction, db: Session):
+    """At creation time, capture the line item's name and (for fund spends) the
+    fund's CURRENT destination_type — so later deletion/reclassification of the
+    bill or fund can never rewrite this transaction's history."""
+    line_name = None
+    destination = None
+    if tx.line_item_id is not None:
+        line_item = db.query(models.Expense).filter(models.Expense.id == tx.line_item_id).first()
+        if line_item is not None:
+            line_name = line_item.name
+            if line_item.type == "fund" and line_item.fund_id:
+                fund = db.query(models.Fund).filter(models.Fund.id == line_item.fund_id).first()
+                destination = fund.destination_type if fund else None
+    elif tx.fund_id is not None:
+        fund = db.query(models.Fund).filter(models.Fund.id == tx.fund_id).first()
+        destination = fund.destination_type if fund else None
+    return line_name, destination
+
+
 def _bucket_and_label(tx: models.Transaction, db: Session):
     """Resolve which spendable bucket a transaction hits ('mr' for bill line
     items, 'fund:{id}' for fund line items or direct fund spends) and the label
@@ -117,10 +163,28 @@ def _enrich(transactions: list[models.Transaction], db: Session) -> list[schemas
         for f in db.query(models.Fund).filter(models.Fund.id.in_(fund_ids)).all():
             funds_by_id[f.id] = f
 
+    # Fallbacks for deleted buckets: the spend ledger entry (keyed by tx id) still
+    # names the fund bucket, and the fund-deletion transfer preserves the name.
+    tx_ids = [t.id for t in transactions]
+    spend_fund_by_tx: dict[int, int] = {}
+    if tx_ids:
+        for e in (
+            db.query(models.LedgerEntry)
+            .filter(models.LedgerEntry.kind == "spend", models.LedgerEntry.transaction_id.in_(tx_ids))
+            .order_by(models.LedgerEntry.id.asc())
+            .all()
+        ):
+            if e.transaction_id in spend_fund_by_tx:
+                continue
+            fid = _fund_id_from_bucket(e.from_bucket)
+            if fid is not None:
+                spend_fund_by_tx[e.transaction_id] = fid
+    deleted_fund_names = _deleted_fund_names(db)
+
     out = []
     for t in transactions:
         line_item = expenses_by_id.get(t.line_item_id) if t.line_item_id is not None else None
-        line_item_name = line_item.name if line_item else None
+        line_item_name = line_item.name if line_item else t.line_item_name
 
         fund_name = None
         if t.fund_id is not None:
@@ -129,6 +193,11 @@ def _enrich(transactions: list[models.Transaction], db: Session) -> list[schemas
         elif line_item is not None and line_item.type == "fund" and line_item.fund_id is not None:
             fund = funds_by_id.get(line_item.fund_id)
             fund_name = fund.name if fund else None
+        if fund_name is None:
+            # Deleted fund (fund_id / line_item.fund_id nulled): recover via ledger.
+            fid = spend_fund_by_tx.get(t.id)
+            if fid is not None and fid in deleted_fund_names:
+                fund_name = f"{deleted_fund_names[fid]} (deleted)"
 
         data = schemas.TransactionOut.model_validate(t).model_dump()
         data["line_item_name"] = line_item_name
@@ -206,6 +275,9 @@ def create_transaction(body: schemas.TransactionCreate, db: Session = Depends(ge
     )
     db.add(tx)
     db.flush()
+    line_name, destination = _snapshot_name_and_destination(tx, db)
+    tx.line_item_name = line_name
+    tx.destination_type = destination
     _debit(tx, db)
     bucket, label = _bucket_and_label(tx, db)
     ledger.record(
@@ -217,6 +289,7 @@ def create_transaction(body: schemas.TransactionCreate, db: Session = Depends(ge
         label=label,
         transaction_id=tx.id,
         date=tx.date,
+        destination_type=destination,
     )
     db.commit()
     db.refresh(tx)
@@ -272,6 +345,8 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
 
     # Append-only: never delete the original spend entry — record a reversal
     # whose to_bucket is the bucket ACTUALLY credited.
+    # Give the reversal the SAME destination snapshot as the original spend so
+    # nets stay classified together even after a fund flip or deletion.
     ledger.record(
         db,
         kind="spend_reversal",
@@ -281,6 +356,7 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
         label=label,
         transaction_id=tx.id,
         date=tx.date,
+        destination_type=spend.destination_type if spend is not None else None,
     )
     db.delete(tx)
     db.commit()

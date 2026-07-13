@@ -132,6 +132,7 @@ class TransactionOut(BaseModel):
     fund_id: Optional[int] = None
     line_item_name: Optional[str] = None
     fund_name: Optional[str] = None
+    destination_type: Optional[str] = None
     source: str = "manual"
     external_id: Optional[str] = None
     status: str = "posted"
@@ -155,6 +156,7 @@ class LedgerEntryOut(BaseModel):
     amount_cents: int
     label: Optional[str] = None
     transaction_id: Optional[int] = None
+    destination_type: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
