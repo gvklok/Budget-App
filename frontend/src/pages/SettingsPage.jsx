@@ -3,6 +3,7 @@ import { SlidersHorizontal, Monitor, Sun, Moon, Check } from 'lucide-react'
 import { Card, SectionLabel, Segmented, PrimaryButton } from '../components/ui'
 import { useTheme } from '../useTheme'
 import { apiGet } from '../api'
+import DevOverlay from '../components/DevOverlay'
 import pkg from '../../package.json'
 
 const THEME_OPTIONS = [
@@ -81,12 +82,20 @@ export default function SettingsPage() {
       <SectionLabel>Data</SectionLabel>
       <BackupCard />
 
-      <Card className="p-8 flex flex-col items-center text-center gap-2">
+      <Card className="p-8 flex flex-col items-center text-center gap-2 mb-3">
         <div className="w-12 h-12 rounded-full bg-accent-soft text-accent-ink flex items-center justify-center mb-1">
           <SlidersHorizontal size={20} />
         </div>
         <p className="text-ink font-semibold">Nothing else to configure yet</p>
         <p className="text-sm text-ink-3 max-w-xs">More app-wide preferences will live here.</p>
+      </Card>
+
+      <SectionLabel>Developer Tools</SectionLabel>
+      <Card className="p-4">
+        <p className="text-xs text-ink-3 mb-3">
+          Testing tools — includes a full data reset. Not needed for everyday use.
+        </p>
+        <DevOverlay />
       </Card>
 
       <p className="text-center text-xs text-ink-3 mt-6">Budget v{pkg.version}</p>

@@ -1132,15 +1132,17 @@ export default function OverviewPage() {
         <>
           <PeriodReviewCard months={monthly} rangeMonths={range} />
 
-          {/* Spending Pace is always pinned to the effective current month
-              regardless of the range selector above — its own Jul tag makes
-              that scope explicit, so the old "This Month" group divider no
-              longer earns its place now that Bills Coverage (the divider's
-              other occupant) is gone. */}
-          {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
-            <SpendingPaceChart
-              year={current.year} month={current.month} day={current.day}
-              plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
+          {current && (
+            <WhereItWentCard
+              rangeMonths={range}
+              endYM={{ year: current.year, month: current.month }}
+              breakdown={breakdown}
+              prevBreakdown={prevBreakdown}
+              loading={breakdownLoading}
+              error={breakdownError}
+              onRetry={loadBreakdown}
+              billColorByName={current.billColorByName}
+              fundColorById={current.fundColorById}
             />
           )}
 
@@ -1152,8 +1154,11 @@ export default function OverviewPage() {
           )}
 
           {/* Money Flow / Kept vs Spent / Savings Rate — collapsed by default
-              (owner: "too worky on the top"); Period Review, Spending Pace,
-              and Where It Went stay always-expanded as the page's core read. */}
+              (owner: "too worky on the top"); Period Review and Where It Went
+              stay always-expanded as the page's core read. Spending Pace now
+              sits at the very bottom — owner is reconsidering whether to keep
+              it at all, so it's demoted pending that decision rather than
+              removed outright. */}
           {moneyFlowTeaser && (
             <CollapsibleChartCard storageKey="overview.moneyFlow.open" label="Money Flow" teaser={moneyFlowTeaser}>
               <MoneyFlowContent months={monthly} />
@@ -1168,17 +1173,15 @@ export default function OverviewPage() {
             <SavingsRateContent months={monthly} />
           </CollapsibleChartCard>
 
-          {current && (
-            <WhereItWentCard
-              rangeMonths={range}
-              endYM={{ year: current.year, month: current.month }}
-              breakdown={breakdown}
-              prevBreakdown={prevBreakdown}
-              loading={breakdownLoading}
-              error={breakdownError}
-              onRetry={loadBreakdown}
-              billColorByName={current.billColorByName}
-              fundColorById={current.fundColorById}
+          {/* Spending Pace is always pinned to the effective current month
+              regardless of the range selector above — its own Jul tag makes
+              that scope explicit, so the old "This Month" group divider no
+              longer earns its place now that Bills Coverage (the divider's
+              other occupant) is gone. */}
+          {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
+            <SpendingPaceChart
+              year={current.year} month={current.month} day={current.day}
+              plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
             />
           )}
         </>

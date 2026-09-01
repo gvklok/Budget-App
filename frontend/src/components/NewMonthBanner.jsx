@@ -76,7 +76,12 @@ export default function NewMonthBanner() {
           {summary ? (
             <p className="text-xs font-semibold leading-snug">{summary}</p>
           ) : (
-            <p className="text-xs font-semibold leading-snug">New month — top off Monthly Reserve and distribute Fund contributions?</p>
+            <>
+              <p className="text-xs font-semibold leading-snug">New month — top off Monthly Reserve and distribute Fund contributions?</p>
+              <p className="text-[11px] text-on-ink/60 leading-snug mt-0.5">
+                Refills your bill-paying pool and sends each fund its monthly amount, both from Savings.
+              </p>
+            </>
           )}
           {error && <p className="text-[11px] text-critical mt-1">{error}</p>}
         </div>
@@ -89,7 +94,11 @@ export default function NewMonthBanner() {
             {running ? 'Running…' : 'Run both'}
           </button>
         )}
-        <button onClick={() => setDismissed(true)} className="text-on-ink/50 hover:text-on-ink shrink-0">
+        <button
+          onClick={() => setDismissed(true)}
+          aria-label="Dismiss"
+          className="w-8 h-8 -m-1 flex items-center justify-center rounded-full text-on-ink/50 hover:text-on-ink hover:bg-white/10 transition-colors shrink-0"
+        >
           <X size={14} />
         </button>
       </div>

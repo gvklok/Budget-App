@@ -551,7 +551,7 @@ function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDele
                       if (e.key === 'Enter') commitRename(cat)
                       if (e.key === 'Escape') setRenamingId(null)
                     }}
-                    className="flex-1 border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-accent/40"
+                    className="flex-1 border border-line rounded-lg px-2.5 py-1.5 text-base text-ink outline-none focus:ring-2 focus:ring-accent/40"
                   />
                 ) : (
                   <span className="flex-1 text-sm text-ink">{cat.name}</span>
@@ -1055,14 +1055,14 @@ export default function ExpensesPage() {
   const totalBillPlanned = bills.reduce((s, b) => s + b.amount_cents, 0)
   const totalBillSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
   const totalFundPlanned = funds.reduce((s, f) => s + f.monthly_contribution_cents, 0)
-  const totalFundSpent = funds.filter((f) => f.destination_type !== 'transfer_out').reduce((s, f) => s + fundSpent(f), 0)
+  const totalFundSpent = funds.filter((f) => f.destination_type !== 'transfer_out' && f.monthly_contribution_cents > 0).reduce((s, f) => s + fundSpent(f), 0)
   const transfersOutTotal = funds.filter((f) => f.destination_type === 'transfer_out').reduce((s, f) => s + fundSpent(f), 0)
   const totalPlanned = totalBillPlanned + totalFundPlanned
   const totalSpent = totalBillSpent + totalFundSpent
   const billPct = totalBillPlanned > 0 ? (totalBillSpent / totalBillPlanned) * 100 : 0
   const fundPct = totalFundPlanned > 0 ? (totalFundSpent / totalFundPlanned) * 100 : 0
   const overBillsCount = bills.filter((b) => (txnsByItemId[b.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > b.amount_cents).length
-  const overFundsCount = funds.filter((f) => (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > f.monthly_contribution_cents).length
+  const overFundsCount = funds.filter((f) => f.monthly_contribution_cents > 0 && (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > f.monthly_contribution_cents).length
 
   // Donut chart segments
   const chartSegments = []

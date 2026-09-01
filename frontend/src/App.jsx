@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
-import DevOverlay from './components/DevOverlay'
 import FundsPage from './pages/FundsPage'
 import FundDetailPage from './pages/FundDetailPage'
 import ExpensesPage from './pages/ExpensesPage'
@@ -22,7 +21,6 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
-      <DevOverlay />
     </BrowserRouter>
   )
 }

@@ -49,7 +49,7 @@ function ChecklistRow({ item, onToggle, onRename, onDelete }) {
               if (e.key === 'Enter') { e.preventDefault(); commitRename() }
               if (e.key === 'Escape') { setValue(item.name); setEditing(false) }
             }}
-            className="flex-1 min-w-0 border-b border-line outline-none text-ink text-sm py-0.5 bg-transparent"
+            className="flex-1 min-w-0 border-b border-line outline-none text-ink text-base py-0.5 bg-transparent"
           />
         ) : (
           <p className={`flex-1 min-w-0 truncate text-sm ${item.is_checked ? 'text-ink-3 line-through' : 'text-ink font-medium'}`}>
@@ -113,7 +113,7 @@ function AddItemRow({ onAdd }) {
           value={name}
           onChange={(e) => { setName(e.target.value); if (error) setError('') }}
           placeholder="Add an item…"
-          className="flex-1 min-w-0 outline-none text-sm text-ink bg-transparent placeholder:text-ink-3"
+          className="flex-1 min-w-0 outline-none text-base text-ink bg-transparent placeholder:text-ink-3"
         />
         <button
           type="submit"

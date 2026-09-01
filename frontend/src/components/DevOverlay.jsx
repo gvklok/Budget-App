@@ -366,12 +366,13 @@ export default function DevOverlay() {
       {/* Dev Panel is a deliberately permanent dark "console" surface,
           independent of the app's light/dark mode — `devpanel`/`devcritical`
           are fixed tokens (not redefined under .dark), so this stays exactly
-          the same regardless of the site theme. */}
+          the same regardless of the site theme. It now lives inline on the
+          Settings page: a normal tap opens it, no gesture/timer. */}
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-24 right-4 z-50 bg-devpanel text-white text-[11px] font-bold tracking-wide px-3.5 py-2 rounded-full shadow-pop border border-white/10"
+        onClick={() => setOpen(true)}
+        className="w-full text-sm font-medium text-ink-2 bg-paper hover:bg-line/60 rounded-xl px-4 py-2.5 transition-colors"
       >
-        DEV
+        Show developer tools
       </button>
 
       {open && (
