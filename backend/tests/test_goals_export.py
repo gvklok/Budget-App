@@ -76,7 +76,7 @@ def test_export_returns_all_tables(client):
     client.post("/dev/set-simulated-date", json={"date": "2026-07-10"})
 
     client.post("/funds/", json={"name": "Vacation", "goal_cents": 100000})
-    client.post("/income-sources", json={"name": "Job", "amount_cents": 500000, "frequency": "monthly"})
+    client.post("/income-sources", json={"name": "Job", "amount_cents": 500000, "frequency": "monthly", "anchor_date": "2026-01-01"})
     client.post("/checklist/", json={"name": "Pay rent"})
     client.post("/line-items/categories", json={"name": "Housing"})
     client.post("/line-items/", json={

@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Index, text
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Boolean, Index, text
 from database import Base
 
 
@@ -73,6 +73,13 @@ class IncomeSource(Base):
     name = Column(String, nullable=False)
     amount_cents = Column(Integer, nullable=False)
     frequency = Column(String, nullable=False)  # monthly | semimonthly | biweekly | weekly
+    # Reference point for weekly/biweekly/monthly interval math (nullable: existing
+    # rows predate this and are treated as having no schedule until edited).
+    anchor_date = Column(Date, nullable=True)
+    # Calendar days of month for "semimonthly" only; 31 (or beyond the month's actual
+    # length) means "clamp to the last day of that month" (e.g. "15th and last day").
+    semimonthly_day1 = Column(Integer, nullable=True)
+    semimonthly_day2 = Column(Integer, nullable=True)
 
 
 class Transaction(Base):

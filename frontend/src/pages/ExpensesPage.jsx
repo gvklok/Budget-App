@@ -137,15 +137,36 @@ function IncomeSourceModal({ source, onClose, onSave }) {
   const [name, setName] = useState(source?.name ?? '')
   const [amount, setAmount] = useState(source ? (source.amount_cents / 100).toFixed(2) : '')
   const [frequency, setFrequency] = useState(source?.frequency ?? 'monthly')
+  // anchor_date drives weekly/biweekly/monthly schedules; semimonthly uses two
+  // day-of-month numbers instead. Legacy sources (pre-schedule) come through
+  // with these all null — render empty rather than crash, per spec.
+  const [anchorDate, setAnchorDate] = useState(source?.anchor_date ?? '')
+  const [semiDay1, setSemiDay1] = useState(source?.semimonthly_day1 != null ? String(source.semimonthly_day1) : '')
+  const [semiDay2, setSemiDay2] = useState(source?.semimonthly_day2 != null ? String(source.semimonthly_day2) : '')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  const isSemimonthly = frequency === 'semimonthly'
+  const needsAnchor = frequency === 'monthly' || frequency === 'biweekly' || frequency === 'weekly'
+
+  function validDay(v) {
+    const n = Number(v)
+    return v !== '' && Number.isInteger(n) && n >= 1 && n <= 31
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!name.trim()) return setError('Name is required')
     if (!amount) return setError('Amount is required')
+    if (needsAnchor && !anchorDate) return setError('Next pay date is required')
+    if (isSemimonthly && (!validDay(semiDay1) || !validDay(semiDay2))) {
+      return setError('Enter both pay days (1–31)')
+    }
     setSaving(true); setError('')
-    try { await onSave({ name: name.trim(), amount_cents: toCents(amount), frequency }); onClose() }
+    const payload = { name: name.trim(), amount_cents: toCents(amount), frequency }
+    if (needsAnchor) payload.anchor_date = anchorDate
+    if (isSemimonthly) { payload.semimonthly_day1 = Number(semiDay1); payload.semimonthly_day2 = Number(semiDay2) }
+    try { await onSave(payload); onClose() }
     catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
@@ -168,6 +189,35 @@ function IncomeSourceModal({ source, onClose, onSave }) {
             {FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
         </div>
+        {needsAnchor && (
+          <div>
+            <label className={labelClass}>Next pay date</label>
+            <input type="date" value={anchorDate} onChange={(e) => setAnchorDate(e.target.value)} className={inputClass} />
+            <p className="text-xs text-ink-3 mt-1.5">
+              {frequency === 'monthly' ? 'Repeats on this day every month.' : 'The app counts forward/back from this date.'}
+            </p>
+          </div>
+        )}
+        {isSemimonthly && (
+          <div>
+            <label className={labelClass}>Pay days</label>
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <input type="number" min="1" max="31" step="1" value={semiDay1}
+                  onChange={(e) => setSemiDay1(e.target.value)} placeholder="e.g. 1"
+                  className={inputClass} />
+                <p className="text-[11px] text-ink-3 mt-1">First pay day of month</p>
+              </div>
+              <div className="flex-1">
+                <input type="number" min="1" max="31" step="1" value={semiDay2}
+                  onChange={(e) => setSemiDay2(e.target.value)} placeholder="e.g. 15"
+                  className={inputClass} />
+                <p className="text-[11px] text-ink-3 mt-1">Second pay day of month</p>
+              </div>
+            </div>
+            <p className="text-xs text-ink-3 mt-1.5">Use 31 for "last day of the month" — it'll adjust for shorter months automatically.</p>
+          </div>
+        )}
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit" disabled={saving} className="w-full">
           {saving ? 'Saving…' : source ? 'Save Changes' : 'Add'}
@@ -1238,7 +1288,12 @@ export default function ExpensesPage() {
                   <div className="flex items-center gap-3">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-ink truncate">{s.name}</p>
-                      <p className="text-xs text-ink-3 mt-0.5 tabular">{c(s.amount_cents)} · {freqLabel(s.frequency)}</p>
+                      <p className="text-xs text-ink-3 mt-0.5 tabular">
+                        {c(s.amount_cents)} · {freqLabel(s.frequency)}
+                        {s.next_pay_date
+                          ? ` · Next ${fmtDate(s.next_pay_date)}`
+                          : ' · No schedule set'}
+                      </p>
                     </div>
                     {!locked && (
                       <div className="flex items-center gap-1.5 shrink-0">

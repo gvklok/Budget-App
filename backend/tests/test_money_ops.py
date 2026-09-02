@@ -12,7 +12,8 @@ def test_paycheck(client, helpers):
     r = client.post("/income-sources", json={
         "name": "Job",
         "amount_cents": 500000,
-        "frequency": "monthly"
+        "frequency": "monthly",
+        "anchor_date": "2026-01-01"
     })
     assert r.status_code == 200
 
@@ -37,7 +38,7 @@ def test_paycheck_is_one_check_not_monthly_total(client, helpers):
     """A biweekly source credits amount_cents ONCE (one real paycheck), not a
     monthly-normalized ~2.17x lump."""
     client.post("/income-sources", json={
-        "name": "Biweekly Job", "amount_cents": 100000, "frequency": "biweekly"
+        "name": "Biweekly Job", "amount_cents": 100000, "frequency": "biweekly", "anchor_date": "2026-01-02"
     })
     r = client.post("/dev/simulate-paycheck")
     assert r.status_code == 200
@@ -50,8 +51,8 @@ def test_paycheck_is_one_check_not_monthly_total(client, helpers):
 
 def test_paycheck_multiple_sources_one_each(client, helpers):
     """No body: one paycheck per source, one ledger entry each."""
-    client.post("/income-sources", json={"name": "A", "amount_cents": 200000, "frequency": "biweekly"})
-    client.post("/income-sources", json={"name": "B", "amount_cents": 50000, "frequency": "weekly"})
+    client.post("/income-sources", json={"name": "A", "amount_cents": 200000, "frequency": "biweekly", "anchor_date": "2026-01-02"})
+    client.post("/income-sources", json={"name": "B", "amount_cents": 50000, "frequency": "weekly", "anchor_date": "2026-01-02"})
     r = client.post("/dev/simulate-paycheck")
     assert r.status_code == 200
     body = r.json()
@@ -64,8 +65,8 @@ def test_paycheck_multiple_sources_one_each(client, helpers):
 
 def test_paycheck_single_source_by_id(client, helpers):
     """With source_id: credit only that source."""
-    a = client.post("/income-sources", json={"name": "A", "amount_cents": 200000, "frequency": "biweekly"}).json()
-    client.post("/income-sources", json={"name": "B", "amount_cents": 50000, "frequency": "weekly"})
+    a = client.post("/income-sources", json={"name": "A", "amount_cents": 200000, "frequency": "biweekly", "anchor_date": "2026-01-02"}).json()
+    client.post("/income-sources", json={"name": "B", "amount_cents": 50000, "frequency": "weekly", "anchor_date": "2026-01-02"})
     r = client.post("/dev/simulate-paycheck", json={"source_id": a["id"]})
     assert r.status_code == 200
     body = r.json()

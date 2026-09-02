@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from typing import Optional
 from pydantic import BaseModel
 
@@ -108,6 +109,10 @@ class IncomeSourceOut(BaseModel):
     name: str
     amount_cents: int
     frequency: str
+    anchor_date: Optional[date] = None
+    semimonthly_day1: Optional[int] = None
+    semimonthly_day2: Optional[int] = None
+    next_pay_date: Optional[date] = None  # computed: nearest occurrence on/after "today"
     model_config = {"from_attributes": True}
 
 
@@ -115,12 +120,18 @@ class IncomeSourceCreate(BaseModel):
     name: str
     amount_cents: int
     frequency: str
+    anchor_date: Optional[date] = None
+    semimonthly_day1: Optional[int] = None
+    semimonthly_day2: Optional[int] = None
 
 
 class IncomeSourceUpdate(BaseModel):
     name: Optional[str] = None
     amount_cents: Optional[int] = None
     frequency: Optional[str] = None
+    anchor_date: Optional[date] = None
+    semimonthly_day1: Optional[int] = None
+    semimonthly_day2: Optional[int] = None
 
 
 class TransactionOut(BaseModel):

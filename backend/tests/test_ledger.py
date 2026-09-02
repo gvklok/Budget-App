@@ -10,7 +10,8 @@ def test_ledger_paycheck_entry(client):
     client.post("/income-sources", json={
         "name": "Job",
         "amount_cents": 500000,
-        "frequency": "monthly"
+        "frequency": "monthly",
+        "anchor_date": "2026-01-01"
     })
 
     # Simulate paycheck
@@ -215,7 +216,8 @@ def test_ledger_filters_by_kind(client):
     client.post("/income-sources", json={
         "name": "Job",
         "amount_cents": 500000,
-        "frequency": "monthly"
+        "frequency": "monthly",
+        "anchor_date": "2026-01-01"
     })
     client.post("/dev/simulate-paycheck")
 

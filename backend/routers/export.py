@@ -71,7 +71,7 @@ def export_data(db: Session = Depends(get_db)):
             }
             for e in ledger_entries
         ],
-        "income_sources": [schemas.IncomeSourceOut.model_validate(s).model_dump() for s in income_sources],
+        "income_sources": [schemas.IncomeSourceOut.model_validate(s).model_dump(mode="json") for s in income_sources],
         "checklist_items": [schemas.ChecklistItemOut.model_validate(c).model_dump() for c in checklist_items],
         "expense_categories": [schemas.ExpenseCategoryOut.model_validate(c).model_dump() for c in expense_categories],
         "app_clock": {

@@ -56,6 +56,15 @@ def _migrate() -> None:
         if "goal_cents" not in fund_cols:
             conn.execute(text("ALTER TABLE funds ADD COLUMN goal_cents INTEGER"))
 
+        # income_sources table additions (real per-month paycheck counting)
+        income_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(income_sources)"))}
+        if "anchor_date" not in income_cols:
+            conn.execute(text("ALTER TABLE income_sources ADD COLUMN anchor_date DATE"))
+        if "semimonthly_day1" not in income_cols:
+            conn.execute(text("ALTER TABLE income_sources ADD COLUMN semimonthly_day1 INTEGER"))
+        if "semimonthly_day2" not in income_cols:
+            conn.execute(text("ALTER TABLE income_sources ADD COLUMN semimonthly_day2 INTEGER"))
+
         # monthly_plans table additions (U6)
         plan_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(monthly_plans)"))}
         if "top_off_executed_at" not in plan_cols:

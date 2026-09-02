@@ -161,7 +161,8 @@ def test_overview_monthly(client):
     r = client.post("/income-sources", json={
         "name": "Job",
         "amount_cents": 500000,
-        "frequency": "monthly"
+        "frequency": "monthly",
+        "anchor_date": "2026-01-01"
     })
     client.post("/dev/simulate-paycheck")
 
