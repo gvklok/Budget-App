@@ -94,6 +94,29 @@ docker compose up --build -d    # rebuilds what changed, keeps your data
 
 Database migrations run automatically at backend startup and are idempotent.
 
+## 8. Auto-deploy on push to main
+
+`deploy/auto-deploy.sh` polls `origin/main`; if it's moved, it pulls and
+rebuilds. It's a no-op the rest of the time, so it's safe to run on a tight
+cron schedule:
+
+```bash
+crontab -e
+# add:
+*/5 * * * * /home/YOURUSER/budget-app/deploy/auto-deploy.sh >> /home/YOURUSER/budget-app/deploy/auto-deploy.log 2>&1
+```
+
+Every 5 minutes it checks for a new commit on `main`; if found, it pulls,
+runs `docker compose up --build -d`, and logs the before/after commit to
+`auto-deploy.log`. This means **merging to `main` is a production deploy** —
+treat it with the same care as clicking "deploy": keep in-progress work on a
+feature branch and only merge when you want the Pi to actually pick it up.
+
+This polls rather than reacts to a webhook on purpose — it needs no inbound
+port opened on the Pi, consistent with nothing listening outside the
+Tailscale interface. The tradeoff is a few minutes of lag between push and
+deploy, which is fine for a household app.
+
 ## Notes
 
 - The Dev overlay is still there by design (Phase 1 testing surface) — its
