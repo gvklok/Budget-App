@@ -1,7 +1,16 @@
 import { useEffect } from 'react'
 import { X } from 'lucide-react'
 
-export default function Modal({ title, onClose, children }) {
+// `size="md"` (default) is the standard form-dialog footprint used
+// everywhere else in the app. `size="lg"` is for content that needs real
+// room to breathe — charts, not forms: near-fullscreen height on mobile (this
+// app is mobile-first) and a much wider, taller sheet on larger screens.
+const SIZE_CLASSES = {
+  md: 'sm:max-w-md max-h-[90vh]',
+  lg: 'sm:max-w-3xl max-h-[95vh] sm:h-[85vh]',
+}
+
+export default function Modal({ title, onClose, children, size = 'md' }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -17,7 +26,7 @@ export default function Modal({ title, onClose, children }) {
           off-white in dark mode) — the backdrop must stay dark in both modes. */}
       <div className="absolute inset-0 bg-scrim backdrop-blur-sm" />
       <div
-        className="relative w-full sm:max-w-md bg-card border border-line rounded-t-[28px] sm:rounded-[28px] shadow-pop z-10 max-h-[90vh] flex flex-col rise-in"
+        className={`relative w-full ${SIZE_CLASSES[size]} bg-card border border-line rounded-t-[28px] sm:rounded-[28px] shadow-pop z-10 flex flex-col rise-in`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center pt-3 sm:hidden">

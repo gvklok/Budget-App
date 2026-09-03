@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, ChevronDown, ChevronUp } from 'lucide-react'
+import { LayoutDashboard, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
   entityColor, colorForName, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
   INK, INK_2, INK_3, LINE, PAPER, CARD, areaGradientId,
 } from '../theme'
 import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
+import Modal from '../components/Modal'
 import { useRefetchOnFocus } from '../hooks'
 
 // ── shared money/date helpers ─────────────────────────────────────────────────
@@ -204,16 +205,25 @@ function PeriodReviewCard({ months, rangeMonths }) {
 }
 
 // ── Money Flow — Monarch-style cash-flow sankey for the selected range ──────
-// Single left source "Income $X" fans into right destination nodes: Bills
-// (umber), Funds (blue), Transfers out (stone), Kept (SAVING) — a
-// two-column, hand-rolled SVG sankey (no library). Ribbons are flat fills at
-// ~85% opacity, no gradients — calm by design. Zero income hides the card
-// entirely; a zero-value destination just omits its ribbon/node. When the
-// period is overspent (outflows > income), there is no "Kept" node — instead
-// the diagram fans Income proportionally into the real destinations (which
-// now sum to more than Income), and the resulting shortfall is called out
-// as a dashed red bracket + caption rather than invented as a fake node
-// (never misrepresent a real node's own dollar amount to make room for it).
+// Single left source "Income $X" fans into one right-side arm PER Bill and
+// PER Fund (each keeping its own stable entity color — same colorForName/
+// entityColor formulas as the rest of the app), plus bucket-level "Transfers
+// out" (stone) and "Kept" (SAVING) arms — those two stay bucket-level since
+// they're not per-bill/per-fund concepts. A hand-rolled SVG sankey (no
+// library). Ribbons are flat fills at ~85% opacity, no gradients — calm by
+// design. Zero income hides the card entirely; a zero-value destination just
+// omits its ribbon/node. When the period is overspent (outflows > income),
+// there is no "Kept" node — instead the diagram fans Income proportionally
+// into the real destinations (which now sum to more than Income), and the
+// resulting shortfall is called out as a dashed red bracket + caption rather
+// than invented as a fake node (never misrepresent a real node's own dollar
+// amount to make room for it).
+//
+// Renders in two sizes: 'compact' (the default, inside the page's
+// CollapsibleChartCard) and 'large' (inside the "view larger" Modal — see
+// MoneyFlowModal below). Both read the same underlying arms; 'large' just
+// allows more individual arms before folding into "Other" (more room to
+// breathe) and gives every column more pixels.
 
 // Nodes are sized proportionally to their real dollar amount (honest
 // geometry), but that means a small node (e.g. Transfers out next to a much
@@ -235,34 +245,100 @@ function resolveLabelCenters(naturalCenters, minGap, lo, hi) {
   return centers.map((y) => Math.max(lo, y))
 }
 
+// Builds the right-side arm definitions: one per Bill + one per non-transfer
+// Fund (exploded from the per-item spending-breakdown), plus bucket-level
+// Transfers-out and Kept arms from `agg`. A household can have 8-15 bills +
+// funds combined — showing every single one as its own arm would collapse
+// into unreadable label soup, so the long tail below a minimum dollar share
+// (relative to income) folds into one "Other" arm; a single leftover just
+// stays itself rather than being renamed "Other". `isLarge` (the modal view)
+// relaxes both knobs since it has far more vertical room to work with, so
+// expanding the chart genuinely reveals more detail, not just bigger text.
+// While `breakdown` hasn't loaded yet, falls back to the old bucket-level
+// Bills/Funds totals from `agg` so the diagram never flashes empty.
+function buildMoneyFlowArms(agg, breakdown, billColorByName, fundColorById, isLarge) {
+  const overspent = agg.totalKept < 0
+  const transfersDef = { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT }
+  const keptDef = { key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }
+  const tail = [transfersDef, ...(overspent ? [] : [keptDef])]
+
+  if (!breakdown) {
+    return [
+      { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS },
+      { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE },
+      ...tail,
+    ].filter((d) => d.amount > 0)
+  }
+
+  const bills = breakdown.bills ?? []
+  const spendFunds = (breakdown.funds ?? []).filter((f) => f.destination_type !== 'transfer_out')
+
+  const itemDefs = [
+    ...bills.map((b) => ({
+      key: `bill-${b.line_item_id ?? b.name}`,
+      label: b.name,
+      amount: b.spent_cents,
+      color: billColorByName?.[b.name] || colorForName(b.name),
+    })),
+    ...spendFunds.map((f) => ({
+      key: `fund-${f.fund_id}`,
+      label: f.name ?? 'Deleted fund',
+      amount: f.spent_cents,
+      color: entityColor({ id: f.fund_id, color: fundColorById?.[f.fund_id] }),
+    })),
+  ].filter((d) => d.amount > 0).sort((a, b) => b.amount - a.amount)
+
+  const MAX_INDIVIDUAL = isLarge ? 16 : 8
+  const MIN_FRACTION = isLarge ? 0.012 : 0.03 // below this share of income, an arm reads as noise
+  const minAmount = agg.totalIncome * MIN_FRACTION
+
+  // itemDefs is sorted descending, so both the cap and the threshold cut off
+  // a single contiguous suffix — find where that suffix starts.
+  let cutoff = itemDefs.length
+  for (let i = 0; i < itemDefs.length; i++) {
+    if (i >= MAX_INDIVIDUAL || itemDefs[i].amount < minAmount) { cutoff = i; break }
+  }
+  const individual = itemDefs.slice(0, cutoff)
+  const excluded = itemDefs.slice(cutoff)
+  const explodedDefs = excluded.length === 1
+    ? [...individual, excluded[0]]
+    : excluded.length > 1
+      ? [...individual, { key: 'other', label: 'Other', amount: excluded.reduce((s, d) => s + d.amount, 0), color: INK_3 }]
+      : individual
+
+  return [...explodedDefs, ...tail].filter((d) => d.amount > 0)
+}
+
 // Content only — no Card/SectionLabel chrome, so it can be lazy-rendered
-// inside the page's CollapsibleChartCard wrapper (see below).
-function MoneyFlowContent({ months }) {
+// inside the page's CollapsibleChartCard wrapper (see below), or inside the
+// "view larger" Modal at size="large".
+function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, size = 'compact', onExpand }) {
   const agg = aggregateRange(months)
   if (agg.totalIncome <= 0) return null
 
-  const overspent = agg.totalKept < 0
-
-  const rightDefs = [
-    { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS },
-    { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE },
-    { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT },
-    ...(overspent ? [] : [{ key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }]),
-  ].filter((d) => d.amount > 0)
-
+  const isLarge = size === 'large'
+  const rightDefs = buildMoneyFlowArms(agg, breakdown, billColorByName, fundColorById, isLarge)
   if (rightDefs.length === 0) return null
 
+  const overspent = agg.totalKept < 0
   const leftTotal = agg.totalIncome
   const rightTotal = rightDefs.reduce((s, d) => s + d.amount, 0)
   const scaleTotal = Math.max(leftTotal, rightTotal)
   const gapCents = overspent ? Math.max(0, rightTotal - leftTotal) : 0
 
-  const NODE_W = 8
-  const VBW = 190
-  const LABEL_MIN_GAP = 32 // px between adjacent right-label centers, enough for two lines of 11px text
-  const topPad = 8
-  const bottomPad = 8
-  const VBH = Math.max(120, (rightDefs.length - 1) * LABEL_MIN_GAP + topPad + bottomPad + 24)
+  const n = rightDefs.length
+  const NODE_W = isLarge ? 10 : 8
+  const VBW = isLarge ? 260 : 190
+  // px between adjacent right-label centers, enough for two lines of text —
+  // shrinks as the arm count grows so 12+ arms still fit without the layout
+  // ballooning into an unreasonably tall card.
+  const LABEL_MIN_GAP = isLarge
+    ? (n <= 4 ? 48 : n <= 7 ? 40 : n <= 11 ? 34 : 28)
+    : (n <= 4 ? 32 : n <= 7 ? 26 : n <= 11 ? 21 : 17)
+  const topPad = isLarge ? 14 : 8
+  const bottomPad = isLarge ? 14 : 8
+  const extraHeadroom = isLarge ? 32 : 24
+  const VBH = Math.max(isLarge ? 200 : 120, (n - 1) * LABEL_MIN_GAP + topPad + bottomPad + extraHeadroom)
   const plotH = VBH - topPad - bottomPad
   const scale = plotH / scaleTotal
 
@@ -309,50 +385,60 @@ function MoneyFlowContent({ months }) {
     return { key: node.key, color: node.color, path: d }
   })
 
-  // Fixed pixel budget for all three columns — deliberately NOT flex-1 on
-  // the svg. Absolutely-positioned label children ignore a flex parent's
-  // computed width, so a flexible middle column makes the outer columns'
-  // real available width unpredictable (labels overflowed past the card
-  // edge with flex-1 here). Every column width below is explicit, so the
-  // total is provably within the card's ~318px content box at 390px.
-  const LEFT_COL = 76
-  const SVG_COL = 108
-  const RIGHT_COL = 112
-  const COL_GAP = 6
+  // Fixed pixel budget for the two label columns — deliberately NOT flex-1.
+  // Absolutely-positioned label children ignore a flex parent's computed
+  // width, so a flexible column makes its real available width unpredictable
+  // (labels overflowed past the card edge with flex-1 here). Only the middle
+  // SVG column is allowed to flex (in the 'large'/modal view) — it has no
+  // absolutely-positioned children, so it can safely stretch to fill
+  // whatever width the modal happens to have on that screen.
+  const LEFT_COL = isLarge ? 96 : 76
+  const RIGHT_COL = isLarge ? 150 : 112
+  const COL_GAP = isLarge ? 10 : 6
+  const textSize = isLarge ? 'text-sm' : 'text-xs'
+  const dotSize = isLarge ? 'w-2 h-2' : 'w-1.5 h-1.5'
 
   return (
     <>
-      <div className="flex items-stretch" style={{ gap: COL_GAP }}>
+      <div
+        className={`flex items-stretch ${onExpand ? 'cursor-pointer' : ''}`}
+        style={{ gap: COL_GAP }}
+        onClick={onExpand}
+        role={onExpand ? 'button' : undefined}
+        aria-label={onExpand ? 'View Money Flow larger' : undefined}
+      >
         <div className="relative shrink-0" style={{ width: LEFT_COL, height: VBH }}>
           {/* Absolute children ignore the flex parent's width, so each label
               gets its own explicit width — otherwise long amounts/names can
               silently overflow past the card edge instead of wrapping. */}
           <div className="absolute right-0 text-right -translate-y-1/2" style={{ top: `${((leftY0 + leftH / 2) / VBH) * 100}%`, width: LEFT_COL }}>
-            <p className="text-xs font-semibold text-ink leading-tight">Income</p>
-            <p className="text-xs text-ink-2 tabular leading-tight">{c(leftTotal)}</p>
+            <p className={`${textSize} font-semibold text-ink leading-tight`}>Income</p>
+            <p className={`${textSize} text-ink-2 tabular leading-tight`}>{c(leftTotal)}</p>
           </div>
         </div>
-        <svg width={SVG_COL} height={VBH} viewBox={`0 0 ${VBW} ${VBH}`} preserveAspectRatio="none" className="shrink-0 block overflow-visible">
-          <rect x={leftX0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={INK_2} />
-          {ribbons.map((r) => <path key={r.key} d={r.path} fill={r.color} opacity={0.85} />)}
-          {rightNodes.map((node) => (
-            <rect key={node.key} x={rightX0} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
-          ))}
-          {gapCents > 0 && (
-            <rect
-              x={rightX0 - 2.5} y={topPad + plotH - gapCents * scale} width={NODE_W + 5} height={gapCents * scale}
-              rx={2} fill="none" stroke={CRITICAL} strokeWidth={1.5} strokeDasharray="2 2"
-            />
-          )}
-        </svg>
+        <div className={isLarge ? 'flex-1 min-w-0' : 'shrink-0'} style={!isLarge ? { width: 108 } : undefined}>
+          <svg width="100%" height={VBH} viewBox={`0 0 ${VBW} ${VBH}`} preserveAspectRatio="none" className="block overflow-visible">
+            <rect x={leftX0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={INK_2} />
+            {ribbons.map((r) => <path key={r.key} d={r.path} fill={r.color} opacity={0.85} />)}
+            {rightNodes.map((node) => (
+              <rect key={node.key} x={rightX0} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
+            ))}
+            {gapCents > 0 && (
+              <rect
+                x={rightX0 - 2.5} y={topPad + plotH - gapCents * scale} width={NODE_W + 5} height={gapCents * scale}
+                rx={2} fill="none" stroke={CRITICAL} strokeWidth={1.5} strokeDasharray="2 2"
+              />
+            )}
+          </svg>
+        </div>
         <div className="relative shrink-0" style={{ width: RIGHT_COL, height: VBH }}>
           {rightNodes.map((node, i) => (
-            <div key={node.key} className="absolute left-1 -translate-y-1/2" style={{ top: `${(labelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
-              <p className="text-xs font-semibold text-ink leading-tight flex items-start gap-1">
-                <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-0.5" style={{ background: node.color }} />
-                <span>{node.label}</span>
+            <div key={node.key} className="absolute left-1 -translate-y-1/2 min-w-0" style={{ top: `${(labelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
+              <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0`}>
+                <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
+                <span className="truncate">{node.label}</span>
               </p>
-              <p className="text-xs text-ink-2 tabular leading-tight pl-2.5">{c(node.amount)}</p>
+              <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
             </div>
           ))}
         </div>
@@ -933,8 +1019,12 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
 // tap) — a tap on the header row still collapses it, and the open/closed
 // choice persists per-card in localStorage so the owner's preference sticks
 // across visits. Reuses the same chevron-toggle language as ExpensesPage's
-// collapsible sections rather than inventing a new interaction. ────────────
-function CollapsibleChartCard({ storageKey, label, teaser, children }) {
+// collapsible sections rather than inventing a new interaction. An optional
+// `onExpand` renders a "view larger" icon button next to the chevron (only
+// Money Flow uses this, for its own bigger-modal view) — it's a sibling of
+// the toggle button, not part of it, so tapping it never also collapses the
+// card. ──────────────────────────────────────────────────────────────────
+function CollapsibleChartCard({ storageKey, label, teaser, onExpand, children }) {
   const [open, setOpen] = useState(() => {
     try {
       const stored = localStorage.getItem(storageKey)
@@ -954,13 +1044,24 @@ function CollapsibleChartCard({ storageKey, label, teaser, children }) {
 
   return (
     <Card className="p-5 mb-3">
-      <button onClick={toggle} className="w-full flex items-center justify-between gap-3 text-left" aria-expanded={open}>
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{label}</p>
-          {!open && teaser && <p className="text-sm text-ink-2 mt-1 truncate">{teaser}</p>}
-        </div>
-        {open ? <ChevronUp size={16} className="text-ink-3 shrink-0" /> : <ChevronDown size={16} className="text-ink-3 shrink-0" />}
-      </button>
+      <div className="flex items-center justify-between gap-2">
+        <button onClick={toggle} className="flex-1 min-w-0 flex items-center justify-between gap-3 text-left" aria-expanded={open}>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{label}</p>
+            {!open && teaser && <p className="text-sm text-ink-2 mt-1 truncate">{teaser}</p>}
+          </div>
+          {open ? <ChevronUp size={16} className="text-ink-3 shrink-0" /> : <ChevronDown size={16} className="text-ink-3 shrink-0" />}
+        </button>
+        {open && onExpand && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onExpand() }}
+            aria-label={`View ${label} larger`}
+            className="w-7 h-7 flex items-center justify-center rounded-full bg-paper text-ink-2 hover:bg-line transition-colors shrink-0"
+          >
+            <Maximize2 size={13} />
+          </button>
+        )}
+      </div>
       {open && <div className="mt-4">{children}</div>}
     </Card>
   )
@@ -994,6 +1095,7 @@ export default function OverviewPage() {
   const [currentError, setCurrentError] = useState('')
 
   const [refreshKey, setRefreshKey] = useState(0)
+  const [moneyFlowModalOpen, setMoneyFlowModalOpen] = useState(false)
 
   const loadMain = useCallback(async () => {
     setMainLoading(true)
@@ -1160,9 +1262,32 @@ export default function OverviewPage() {
               it at all, so it's demoted pending that decision rather than
               removed outright. */}
           {moneyFlowTeaser && (
-            <CollapsibleChartCard storageKey="overview.moneyFlow.open" label="Money Flow" teaser={moneyFlowTeaser}>
-              <MoneyFlowContent months={monthly} />
+            <CollapsibleChartCard
+              storageKey="overview.moneyFlow.open"
+              label="Money Flow"
+              teaser={moneyFlowTeaser}
+              onExpand={() => setMoneyFlowModalOpen(true)}
+            >
+              <MoneyFlowContent
+                months={monthly}
+                breakdown={breakdown}
+                billColorByName={current?.billColorByName}
+                fundColorById={current?.fundColorById}
+                onExpand={() => setMoneyFlowModalOpen(true)}
+              />
             </CollapsibleChartCard>
+          )}
+
+          {moneyFlowModalOpen && (
+            <Modal title="Money Flow" onClose={() => setMoneyFlowModalOpen(false)} size="lg">
+              <MoneyFlowContent
+                months={monthly}
+                breakdown={breakdown}
+                billColorByName={current?.billColorByName}
+                fundColorById={current?.fundColorById}
+                size="large"
+              />
+            </Modal>
           )}
 
           <CollapsibleChartCard storageKey="overview.keptVsSpent.open" label="Kept vs Spent" teaser={keptVsSpentTeaser}>

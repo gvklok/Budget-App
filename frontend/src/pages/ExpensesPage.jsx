@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown } from 'lucide-react'
+import { useSearchParams, Link } from 'react-router-dom'
+import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown, List } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
 import Modal from '../components/Modal'
@@ -379,10 +379,8 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>
-                  Merchant <span className="text-ink-3 font-normal">(optional)</span>
-                </label>
-                <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="e.g. Walmart" className={inputClass} />
+                <label className={labelClass}>Merchant</label>
+                <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Optional — e.g. Walmart" className={inputClass} />
               </div>
             </div>
           </>
@@ -1142,14 +1140,24 @@ export default function ExpensesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-ink tracking-tight">Expenses</h1>
-        {!locked && (
-          // Ink-black — the one sanctioned black pill, reserved for buttons
-          // that LOG money, deliberately distinct from the accent language.
-          <button onClick={() => setLogTx({})}
-            className="flex items-center gap-1.5 bg-ink hover:bg-ink/90 text-on-ink text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
-            <Receipt size={15} />Log
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <Link
+            to="/transactions"
+            title="All transactions"
+            aria-label="All transactions"
+            className="w-8 h-8 flex items-center justify-center rounded-full text-ink-3 hover:bg-paper hover:text-ink-2 transition-colors"
+          >
+            <List size={17} />
+          </Link>
+          {!locked && (
+            // Ink-black — the one sanctioned black pill, reserved for buttons
+            // that LOG money, deliberately distinct from the accent language.
+            <button onClick={() => setLogTx({})}
+              className="flex items-center gap-1.5 bg-ink hover:bg-ink/90 text-on-ink text-sm font-semibold px-4 py-2 rounded-full active:scale-[0.98] transition-transform">
+              <Receipt size={15} />Log
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Month selector (U3) */}
