@@ -482,28 +482,31 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
     return children.length > 0 ? fanRibbons(g.y0, g.h, g.amount, children, NODE_X1 + NODE_W, NODE_X2) : []
   })
 
-  // Fixed pixel budget for the Income/item label columns — deliberately NOT
-  // flex-1. Absolutely-positioned label children ignore a flex parent's
-  // computed width, so a flexible column makes its real available width
-  // unpredictable (labels overflowed past the card edge with flex-1 here).
-  // Group (column-2) labels instead float as an overlay ON TOP of the single
-  // combined SVG (a small opaque-backed pill anchored just right of the
-  // group node's x-position) rather than claiming their own fixed column —
-  // there are only ever up to 4 short group labels, so this keeps the
-  // mobile-critical budget to exactly 2 fixed columns, same as before, even
-  // though there's now a 3rd node column to fit.
-  const LEFT_COL = isLarge ? 88 : 64
-  const RIGHT_COL = isLarge ? 140 : 100
+  // Fixed pixel budget for the Income/group-label/item label columns —
+  // deliberately NOT flex-1: absolutely-positioned label children ignore a
+  // flex parent's computed width, so a flexible column makes its real
+  // available width unpredictable (labels overflowed past the card edge with
+  // flex-1 here). All three label columns (Income, Groups, Items) claim their
+  // own real fixed-width flex column — group (column-2) labels used to float
+  // as an overlay directly on top of the combined SVG's ribbon fan-out point,
+  // which obscured the ribbon shape; they now sit in a genuine gap between
+  // two separate SVGs (see render below), so nothing is ever drawn under
+  // them. Shrunk from their original values to make room for that new real
+  // column on a narrow mobile card without horizontal overflow — verified
+  // against a 390px viewport.
+  const LEFT_COL = isLarge ? 64 : 52
+  const RIGHT_COL = isLarge ? 110 : 84
   const MID_LABEL_W = isLarge ? 92 : 66
-  const COL_GAP = isLarge ? 10 : 6
-  // Physical width of the combined SVG — deliberately smaller than VBW in
-  // compact mode (VBW is just the internal viewBox unit system that shapes
-  // ribbon curvature; preserveAspectRatio="none" stretches it to fit
-  // whatever physical width it's given). Keeping this narrow is what keeps
-  // the whole row's fixed-column budget (LEFT_COL + this + RIGHT_COL) close
-  // to what the single-ribbon version used, so the now-3-column diagram
-  // still fits inside a narrow mobile card without horizontal overflow.
-  const SVG_W = 150
+  const COL_GAP = isLarge ? 6 : 4
+  // The two ribbon SVGs split whatever width is left in the row after the
+  // three fixed label columns, via flex-grow in proportion to each stage's
+  // own viewBox span (NODE_X1+NODE_W for stage 1, the remainder for stage
+  // 2) — so ribbon curvature stays proportionally correct and the split
+  // adapts automatically to the container: cramped on a narrow mobile card,
+  // roomy inside the wide desktop "view larger" modal, with no separate
+  // pixel math needed per breakpoint.
+  const svgAGrow = NODE_X1 + NODE_W
+  const svgBGrow = VBW - NODE_X1 - NODE_W
   const textSize = isLarge ? 'text-sm' : 'text-xs'
   const dotSize = isLarge ? 'w-2 h-2' : 'w-1.5 h-1.5'
 
@@ -528,8 +531,11 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
           </div>
         </div>
 
-        <div className={`relative ${isLarge ? 'flex-1 min-w-0' : 'shrink-0'}`} style={!isLarge ? { width: SVG_W } : undefined}>
-          <svg width="100%" height={VBH} viewBox={`0 0 ${VBW} ${VBH}`} preserveAspectRatio="none" className="block overflow-visible">
+        {/* Stage 1: Income → Groups. Its own SVG, cropped (via viewBox) to
+            just this stage's span — ribbons2/itemNodes are never drawn here,
+            so there is real empty space for the group labels to sit in next. */}
+        <div className="relative min-w-0" style={{ flexGrow: svgAGrow, flexBasis: 0 }}>
+          <svg width="100%" height={VBH} viewBox={`0 0 ${NODE_X1 + NODE_W} ${VBH}`} preserveAspectRatio="none" className="block overflow-visible">
             <rect x={NODE_X0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={INK_2} />
             {ribbons1.map((r) => <path key={`r1-${r.key}`} d={r.path} fill={r.color} opacity={0.85} />)}
             {groupNodes.map((node) => (
@@ -541,21 +547,19 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
                 rx={2} fill="none" stroke={CRITICAL} strokeWidth={1.5} strokeDasharray="2 2"
               />
             )}
-            {ribbons2.map((r) => <path key={`r2-${r.key}`} d={r.path} fill={r.color} opacity={0.85} />)}
-            {itemNodes.map((node) => (
-              <rect key={node.key} x={NODE_X2} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
-            ))}
           </svg>
+        </div>
 
-          {/* Column-2 group labels float over the combined SVG rather than
-              claiming their own fixed flex column (see LEFT_COL/RIGHT_COL
-              comment above) — an opaque pill background keeps them legible
-              over whichever ribbon passes underneath. */}
+        {/* Column-2 group labels — a genuine flex column between the two
+            SVGs (same pattern as the Income/item label columns), not an
+            overlay: there is nothing drawn underneath it, so no ribbon or
+            node color is ever obscured. */}
+        <div className="relative shrink-0" style={{ width: MID_LABEL_W, height: VBH }}>
           {groupNodes.map((node, i) => (
             <div
               key={node.key}
-              className="absolute -translate-y-1/2 min-w-0 bg-card/95 rounded px-1"
-              style={{ left: `${((NODE_X1 + NODE_W + 4) / VBW) * 100}%`, top: `${(midLabelCenters[i] / VBH) * 100}%`, width: MID_LABEL_W }}
+              className="absolute left-0 -translate-y-1/2 min-w-0"
+              style={{ top: `${(midLabelCenters[i] / VBH) * 100}%`, width: MID_LABEL_W }}
             >
               <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0`}>
                 <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
@@ -564,6 +568,19 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
               <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
             </div>
           ))}
+        </div>
+
+        {/* Stage 2: Groups → Items. A second, separate SVG with a non-zero
+            min-x viewBox that crops into the same absolute coordinate system
+            ribbons2/itemNodes were already computed in — no coordinate math
+            changes, just a different crop window. */}
+        <div className="relative min-w-0" style={{ flexGrow: svgBGrow, flexBasis: 0 }}>
+          <svg width="100%" height={VBH} viewBox={`${NODE_X1 + NODE_W} 0 ${VBW - NODE_X1 - NODE_W} ${VBH}`} preserveAspectRatio="none" className="block overflow-visible">
+            {ribbons2.map((r) => <path key={`r2-${r.key}`} d={r.path} fill={r.color} opacity={0.85} />)}
+            {itemNodes.map((node) => (
+              <rect key={node.key} x={NODE_X2} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
+            ))}
+          </svg>
         </div>
 
         <div className="relative shrink-0" style={{ width: RIGHT_COL, height: VBH }}>
