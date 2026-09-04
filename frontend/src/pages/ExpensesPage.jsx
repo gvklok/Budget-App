@@ -562,7 +562,7 @@ function SourceLabelModal({ prompt, bills, onCancel, onReallocate, onTransfer })
 
 function ManageCategoriesModal({
   categories, onClose, onCreate, onRename, onDelete,
-  reordering, reorderList, reorderError, reorderSaving, onStartReorder, onMoveReorder, onFinishReorder,
+  reordering, reorderList, reorderError, reorderSaving, populatedCatIds = new Set(), onStartReorder, onMoveReorder, onFinishReorder,
 }) {
   const [newName, setNewName] = useState('')
   const [adding, setAdding] = useState(false)
@@ -612,11 +612,18 @@ function ManageCategoriesModal({
 
         {reordering ? (
           <div className="rounded-2xl border border-line divide-y divide-line overflow-hidden">
-            {reorderList.map((cat, index) => (
-              <ReorderRow key={cat.id} name={cat.name}
-                first={index === 0} last={index === reorderList.length - 1}
-                onUp={() => onMoveReorder(index, -1)} onDown={() => onMoveReorder(index, 1)} />
-            ))}
+            {reorderList.map((cat, index) => {
+              // Disable a direction once there's no *populated* (has bills this
+              // month) category left to swap with that way — otherwise the
+              // button looks live but the click has zero visible effect.
+              const noUp = !reorderList.slice(0, index).some((c) => populatedCatIds.has(c.id))
+              const noDown = !reorderList.slice(index + 1).some((c) => populatedCatIds.has(c.id))
+              return (
+                <ReorderRow key={cat.id} name={cat.name}
+                  first={noUp} last={noDown}
+                  onUp={() => onMoveReorder(index, -1)} onDown={() => onMoveReorder(index, 1)} />
+              )
+            })}
           </div>
         ) : categories.length === 0 ? (
           <p className="text-sm text-ink-3">No categories yet — add one below.</p>
@@ -733,7 +740,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
 
 // ── Bill group (collapsible by category) ─────────────────────────────────────
 
-function GroupSummary({ label, planned, spent }) {
+function GroupSummary({ label, planned, spent, color }) {
   const pct = planned > 0 ? (spent / planned) * 100 : 0
   const remaining = planned - spent
   const over = spent > planned
@@ -742,7 +749,7 @@ function GroupSummary({ label, planned, spent }) {
       <p className="text-xs font-semibold uppercase tracking-wide text-ink-2 truncate">{label}</p>
       {spent > 0 && (
         <div className="flex-1 max-w-[120px]">
-          <Bar pct={pct} color={billStatusColor(pct)} height={5} animate={false} />
+          <Bar pct={pct} color={pct > 100 ? CRITICAL : color} height={5} animate={false} />
         </div>
       )}
       <span className="text-xs font-semibold text-ink-2 tabular shrink-0 ml-auto">
@@ -753,10 +760,14 @@ function GroupSummary({ label, planned, spent }) {
 }
 
 function BillGroup({ label, bills, txnsByItemId, onEdit, onLogTx, onDeleteTx }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const totalPlanned = bills.reduce((s, b) => s + b.amount_cents, 0)
   const totalSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
   const totalRemaining = totalPlanned - totalSpent
+  // Collapsed summary bar reads as the topmost (first-in-order) bill's own
+  // identity color, not a shared status color — so each category's collapsed
+  // bar is visually distinct rather than every one looking the same.
+  const topBillColor = bills.length > 0 ? billColor(bills[0]) : BILLS
 
   return (
     <Card className="overflow-hidden">
@@ -767,7 +778,7 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onLogTx, onDeleteTx }) 
         </div>
         {open
           ? <p className="text-xs font-semibold uppercase tracking-wide text-ink-3">{label}</p>
-          : <GroupSummary label={label} planned={totalPlanned} spent={totalSpent} />}
+          : <GroupSummary label={label} planned={totalPlanned} spent={totalSpent} color={topBillColor} />}
       </button>
       {open && (
         <>
@@ -1102,8 +1113,20 @@ export default function ExpensesPage() {
     setCatReordering(true)
   }
   function moveCatReorder(index, dir) {
+    // Categories with zero bills this month render no Bill group at all, so a
+    // plain adjacent-index swap can silently land on one of those — the click
+    // "succeeds" (order data changes) but nothing visibly moves on Expenses,
+    // which reads as completely broken. Skip past empty categories so a click
+    // always swaps with the next category that's actually showing on screen
+    // (or does nothing, if there is no such neighbor in that direction).
+    const populatedIds = new Set(
+      lineItems.filter((i) => i.type === 'bill' && i.category_id).map((i) => i.category_id)
+    )
     setCatReorderList((prev) => {
-      const target = index + dir
+      let target = index + dir
+      while (target >= 0 && target < prev.length && !populatedIds.has(prev[target].id)) {
+        target += dir
+      }
       if (target < 0 || target >= prev.length) return prev
       const next = [...prev]
       ;[next[index], next[target]] = [next[target], next[index]]
@@ -1181,6 +1204,10 @@ export default function ExpensesPage() {
   // group's own Subtotal already shows the identical number.
   const populatedBillGroupCount = Object.values(grouped).filter((g) => g.length > 0).length + (uncategorized.length > 0 ? 1 : 0)
   const billTotalRedundant = populatedBillGroupCount === 1 && bills.length > 1
+  // Which categories actually render a Bill group right now — drives the
+  // reorder Up/Down disabled state so a button never looks clickable when
+  // it would silently do nothing (see moveCatReorder).
+  const populatedCatIds = new Set(Object.keys(grouped).map(Number))
 
   // Totals
   // U1: transfer-out Funds (401k, Roth, HSA, ...) don't count as spending — the
@@ -1616,6 +1643,7 @@ export default function ExpensesPage() {
           reorderList={catReorderList}
           reorderError={catReorderError}
           reorderSaving={catReorderSaving}
+          populatedCatIds={populatedCatIds}
           onStartReorder={startCatReorder}
           onMoveReorder={moveCatReorder}
           onFinishReorder={finishCatReorder}
