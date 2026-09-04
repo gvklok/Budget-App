@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, ChevronDown, ChevronUp, ChevronLeft, Maximize2 } from 'lucide-react'
+import { LayoutDashboard, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
   entityColor, colorForName, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
@@ -205,36 +205,43 @@ function PeriodReviewCard({ months, rangeMonths }) {
 }
 
 // ── Money Flow — Monarch-style cash-flow sankey for the selected range ──────
-// Simple by default: Income fans into exactly four bucket-level arms —
-// Bills, Funds, Transfers out (stone), Kept (SAVING). A hand-rolled SVG
-// sankey (no library). Ribbons are flat fills at ~85% opacity, no
-// gradients — calm by design. Zero income hides the card entirely; a
-// zero-value destination just omits its arm. When the period is overspent
-// (outflows > income), there is no "Kept" node — instead the diagram fans
-// Income proportionally into the real destinations (which now sum to more
-// than Income), and the resulting shortfall is called out as a dashed red
-// bracket + caption rather than invented as a fake node.
+// A STATIC, always-fully-expanded 3-column hierarchical sankey — no
+// click-to-drill, no single-level flat explosion. Column 1: Income (single
+// node). Column 2: the four bucket-level groups — Bills, Funds, Transfers
+// out (stone), Kept (SAVING) — using the same bucket colors as the rest of
+// the app. Column 3: individual line items nested under their group — only
+// Bills and Funds fan out further (one bar per Bill, or one per non-transfer
+// Fund, each keeping its own stable entity color — same colorForName/
+// entityColor formulas as everywhere else in the app); Transfers out and
+// Kept have no sub-items and terminate at column 2, exactly like "Savings"
+// does in the Monarch reference this was modeled on. Every level is visible
+// simultaneously — nothing here is interactive except the existing
+// background-click "view larger" affordance (onExpand), which opens the
+// bigger modal for a bigger static read, not a drill-in.
 //
-// Bills and Funds are the only DRILLABLE arms — clicking one swaps the whole
-// diagram to that single category's own breakdown (one arm per Bill, or one
-// per non-transfer Fund, each keeping its own stable entity color — same
-// colorForName/entityColor formulas as the rest of the app), with a small
-// back control above the chart to return to the 4-arm view. Only one
-// category is ever exploded at a time — never both simultaneously. Transfers
-// out and Kept have no sub-items, so they're never clickable. The drilled
-// view has no "overspent" concept of its own (that's a top-level idea), so
-// the dashed shortfall indicator only ever appears at the top level.
+// A hand-rolled SVG sankey (no library). Ribbons are flat fills at ~85%
+// opacity, no gradients — calm by design. Zero income hides the card
+// entirely; a zero-value group just omits its node (and its column-3
+// children with it). When the period is overspent (outflows > income),
+// there is no "Kept" node — instead the diagram fans Income proportionally
+// into the real groups (which now sum to more than Income), and the
+// resulting shortfall is called out as a dashed red bracket + caption.
 //
-// Drill state (`null | 'bills' | 'funds'`) lives locally inside
-// MoneyFlowContent (a plain useState) — the compact card and the "view
-// larger" modal each get their own component instance and therefore their
-// own independent drill state; the modal always mounts fresh at the top
-// level since it's only rendered while open.
+// Column 3 is a SECOND stage of the same proportional-fan math as column 2:
+// each group's own node fans into its own children, scoped independently
+// (Bills' long tail folds into its own "Other"; Funds' long tail folds into
+// a separate "Other" — never combined). A group's children are stacked
+// exactly within that group's own y0..y0+h band (normalized so their
+// heights sum exactly to it), so the middle node's vertical span always
+// aligns with its own children's span, reading as "these items belong to
+// this group" the way the reference does — even though, per this app's
+// color rule (colors are stable per entity id, not shade-of-parent-hue),
+// the children's colors don't relate to their group's color.
 //
 // Renders in two sizes: 'compact' (the default, inside the page's
-// CollapsibleChartCard) and 'large' (inside the "view larger" Modal — see
-// MoneyFlowModal below). 'large' just allows more individual arms before
-// folding into "Other" (more room to breathe) and gives every column more
+// CollapsibleChartCard, which folds a long tail into "Other") and 'large'
+// (inside the "view larger" Modal — see MoneyFlowModal below), which shows
+// every single bill/fund with no cap or fold and gives every column more
 // pixels.
 
 // Nodes are sized proportionally to their real dollar amount (honest
@@ -257,35 +264,40 @@ function resolveLabelCenters(naturalCenters, minGap, lo, hi) {
   return centers.map((y) => Math.max(lo, y))
 }
 
-// Builds the top-level 4 arms straight off `agg` — no per-item detail.
-// Bills/Funds carry `drillKey` so the caller knows which arms are clickable;
-// Transfers out/Kept never do (they have no sub-items to drill into).
-function buildTopLevelArms(agg) {
+// Builds the column-2 groups straight off `agg` — no per-item detail.
+// Bills/Funds are the only groups that fan out further into column 3 (see
+// buildGroupChildren) — Transfers out and Kept always terminate here,
+// exactly like "Savings" does in the Monarch reference this was modeled on.
+function buildGroups(agg) {
   const overspent = agg.totalKept < 0
   const defs = [
-    { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS, drillKey: 'bills' },
-    { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE, drillKey: 'funds' },
+    { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS },
+    { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE },
     { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT },
     ...(overspent ? [] : [{ key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }]),
   ]
   return defs.filter((d) => d.amount > 0)
 }
 
-// Builds one drilled-in category's exploded arms — one per Bill, or one per
-// non-transfer Fund — from the per-item spending-breakdown. A household can
-// have 8-15 bills or funds — showing every single one as its own arm would
-// collapse into unreadable label soup, so the long tail below a minimum
-// dollar share (relative to income) folds into one "Other" arm; a single
-// leftover just stays itself rather than being renamed "Other". `isLarge`
-// (the modal view) relaxes both knobs since it has far more vertical room to
-// work with, so expanding the chart genuinely reveals more detail, not just
-// bigger text. Returns [] while `breakdown` hasn't loaded yet — the caller
-// only offers the drill click once breakdown is ready, so this shouldn't
-// normally be reached empty.
-function buildDrilledArms(category, breakdown, billColorByName, fundColorById, agg, isLarge) {
-  if (!breakdown) return []
+// Builds one group's individual line items — one per Bill, or one per
+// non-transfer Fund — from the per-item spending-breakdown; this is column
+// 3. In the COMPACT card, a household can have 8-15 bills or funds — showing
+// every single one as its own bar would collapse into unreadable label soup,
+// so the long tail below a minimum dollar share of INCOME (not of the
+// group's own total — a $40 bill is noise against a $6,000 income even if
+// it's 20% of a small Bills total) folds into one "Other" item; a single
+// leftover just stays itself rather than being renamed "Other". Folding is
+// scoped independently per group — Bills' long tail and Funds' long tail
+// never combine into a shared "Other". The LARGE (modal, "view larger") view
+// is the deliberate escape hatch from that condensing — it shows literally
+// every item, uncapped and unfolded, guaranteed; it's expected to grow tall
+// and scrollable for a household with many bills/funds rather than ever fold
+// a real item away. Returns [] for a group that never fans out (Transfers
+// out, Kept), or while `breakdown` hasn't loaded yet.
+function buildGroupChildren(groupKey, breakdown, billColorByName, fundColorById, agg, isLarge) {
+  if (!breakdown || (groupKey !== 'bills' && groupKey !== 'funds')) return []
 
-  const itemDefs = (category === 'bills'
+  const itemDefs = (groupKey === 'bills'
     ? (breakdown.bills ?? []).map((b) => ({
         key: `bill-${b.line_item_id ?? b.name}`,
         label: b.name,
@@ -300,8 +312,14 @@ function buildDrilledArms(category, breakdown, billColorByName, fundColorById, a
       }))
   ).filter((d) => d.amount > 0).sort((a, b) => b.amount - a.amount)
 
-  const MAX_INDIVIDUAL = isLarge ? 16 : 8
-  const MIN_FRACTION = isLarge ? 0.012 : 0.03 // below this share of income, an arm reads as noise
+  // The large/modal view is the "show me everything" escape hatch — no cap,
+  // no fold, every bill and every fund gets its own arm, no matter how small
+  // or how many. Only the compact card (limited real estate) folds a long
+  // tail into "Other".
+  if (isLarge) return itemDefs
+
+  const MAX_INDIVIDUAL = 8
+  const MIN_FRACTION = 0.03 // below this share of income, an item reads as noise
   const minAmount = agg.totalIncome * MIN_FRACTION
 
   // itemDefs is sorted descending, so both the cap and the threshold cut off
@@ -315,129 +333,184 @@ function buildDrilledArms(category, breakdown, billColorByName, fundColorById, a
   return excluded.length === 1
     ? [...individual, excluded[0]]
     : excluded.length > 1
-      ? [...individual, { key: 'other', label: 'Other', amount: excluded.reduce((s, d) => s + d.amount, 0), color: INK_3 }]
+      ? [...individual, { key: `${groupKey}-other`, label: 'Other', amount: excluded.reduce((s, d) => s + d.amount, 0), color: INK_3 }]
       : individual
+}
+
+// Fans a single source slice [sourceY0, sourceY0+sourceH] (worth
+// sourceTotal dollars) into a list of target nodes that already have their
+// own y0/h assigned, proportionally by each target's CUMULATIVE DOLLAR
+// AMOUNT — the same math whether the source is Income fanning into groups
+// (stage 1) or a group fanning into its own line items (stage 2). Cumulative
+// fraction MUST be tracked in dollar amount, not pixel height — mixing the
+// two units collapses every ribbon's source slice to ~0 height, so ribbons
+// appear to droop from the very top of the source node instead of fanning
+// out from their own proportional slice.
+function fanRibbons(sourceY0, sourceH, sourceTotal, targetNodes, x0, x1) {
+  if (sourceTotal <= 0) return []
+  let cum = 0
+  const midX = (x0 + x1) / 2
+  return targetNodes.map((node) => {
+    const f0 = cum / sourceTotal
+    const f1 = (cum + node.amount) / sourceTotal
+    cum += node.amount
+    const y0a = sourceY0 + f0 * sourceH
+    const y1a = sourceY0 + f1 * sourceH
+    const y0b = node.y0
+    const y1b = node.y0 + node.h
+    const d = `M ${x0} ${y0a.toFixed(1)} C ${midX} ${y0a.toFixed(1)} ${midX} ${y0b.toFixed(1)} ${x1} ${y0b.toFixed(1)} `
+      + `L ${x1} ${y1b.toFixed(1)} C ${midX} ${y1b.toFixed(1)} ${midX} ${y1a.toFixed(1)} ${x0} ${y1a.toFixed(1)} Z`
+    return { key: node.key, color: node.color, path: d }
+  })
 }
 
 // Content only — no Card/SectionLabel chrome, so it can be lazy-rendered
 // inside the page's CollapsibleChartCard wrapper (see below), or inside the
-// "view larger" Modal at size="large".
+// "view larger" Modal at size="large". Fully static — no interaction of its
+// own beyond the existing onExpand background-click affordance.
 function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, size = 'compact', onExpand }) {
-  // null | 'bills' | 'funds' — which category (if any) is currently exploded.
-  // Local to this component instance, so the compact card and the "view
-  // larger" modal never share drill state.
-  const [drill, setDrill] = useState(null)
   const agg = aggregateRange(months)
   if (agg.totalIncome <= 0) return null
 
   const isLarge = size === 'large'
-  const canDrill = !!breakdown // don't offer to explode a category before there's anything to explode into
+  const groups = buildGroups(agg)
+  if (groups.length === 0) return null
 
-  const rightDefs = drill
-    ? buildDrilledArms(drill, breakdown, billColorByName, fundColorById, agg, isLarge)
-    : buildTopLevelArms(agg)
-  if (rightDefs.length === 0) return null
+  const overspent = agg.totalKept < 0
+  const leftTotal = agg.totalIncome
+  const groupsTotal = groups.reduce((s, g) => s + g.amount, 0)
+  const scaleTotal = Math.max(leftTotal, groupsTotal)
+  const gapCents = overspent ? Math.max(0, groupsTotal - leftTotal) : 0
 
-  // Overspend is a top-level-only concept — a per-item breakdown of Bills or
-  // Funds doesn't have its own separate "overspent" beyond what's already
-  // shown at the top level.
-  const overspent = !drill && agg.totalKept < 0
-  const leftLabel = drill === 'bills' ? 'Bills' : drill === 'funds' ? 'Funds' : 'Income'
-  const leftColor = drill === 'bills' ? BILLS : drill === 'funds' ? FUNDS_HUE : INK_2
-  const leftTotal = drill === 'bills' ? agg.totalBills : drill === 'funds' ? agg.totalFunds : agg.totalIncome
-  const rightTotal = rightDefs.reduce((s, d) => s + d.amount, 0)
-  const scaleTotal = Math.max(leftTotal, rightTotal)
-  const gapCents = overspent ? Math.max(0, rightTotal - leftTotal) : 0
+  // Column-3 children, computed up front (per group, independently folded)
+  // so sizing decisions below can see the true item counts before layout.
+  const groupsWithChildren = groups.map((g) => ({
+    ...g,
+    children: buildGroupChildren(g.key, breakdown, billColorByName, fundColorById, agg, isLarge),
+  }))
+  const totalItems = groupsWithChildren.reduce((s, g) => s + g.children.length, 0)
 
-  const n = rightDefs.length
   const NODE_W = isLarge ? 10 : 8
-  const VBW = isLarge ? 260 : 190
-  // px between adjacent right-label centers, enough for two lines of text —
-  // shrinks as the arm count grows so 12+ arms still fit without the layout
-  // ballooning into an unreasonably tall card.
-  const LABEL_MIN_GAP = isLarge
+  const nMid = groups.length
+  // px between adjacent label centers, enough for two lines of text. In the
+  // COMPACT card this shrinks as the row count grows so 12+ rows still fit
+  // without the card ballooning to an unreasonable height — but compact's
+  // item column is folding-capped at 16 total (2 groups x MAX_INDIVIDUAL 8)
+  // so it never needs to shrink past the n<=11 tier anyway. In the LARGE
+  // (modal) view, items are never capped or folded (every bill/fund gets its
+  // own row, however many there are), so its tiers bottom out at a floor —
+  // 28px, still enough room for two lines of text-sm — rather than
+  // continuing to shrink for very large households; the modal is expected to
+  // just grow taller (and scroll) rather than crowd labels together. Same
+  // tiering applied to both the (small, <=4) group column and the (larger)
+  // item column.
+  const gapTier = (n) => isLarge
     ? (n <= 4 ? 48 : n <= 7 ? 40 : n <= 11 ? 34 : 28)
     : (n <= 4 ? 32 : n <= 7 ? 26 : n <= 11 ? 21 : 17)
+  const MID_GAP = gapTier(nMid)
+  const ITEM_GAP = totalItems > 0 ? gapTier(totalItems) : 0
+
   const topPad = isLarge ? 14 : 8
   const bottomPad = isLarge ? 14 : 8
   const extraHeadroom = isLarge ? 32 : 24
-  const VBH = Math.max(isLarge ? 200 : 120, (n - 1) * LABEL_MIN_GAP + topPad + bottomPad + extraHeadroom)
+  const VBH = Math.max(
+    isLarge ? 200 : 120,
+    (nMid - 1) * MID_GAP + topPad + bottomPad + extraHeadroom,
+    totalItems > 0 ? (totalItems - 1) * ITEM_GAP + topPad + bottomPad + extraHeadroom : 0,
+  )
   const plotH = VBH - topPad - bottomPad
   const scale = plotH / scaleTotal
 
   const leftH = leftTotal * scale
   const leftY0 = topPad + (plotH - leftH) / 2
-  const leftX0 = 0
-  const rightX0 = VBW - NODE_W
 
+  // Single combined viewBox spans all 3 node columns + both ribbon stages.
+  const VBW = isLarge ? 260 : 190
+  const NODE_X0 = 0 // Income
+  const NODE_X1 = Math.round(VBW * 0.46) // groups (column 2)
+  const NODE_X2 = VBW - NODE_W // items (column 3)
+
+  // Column 2 (groups) — stacked by true dollar proportion, exactly as the
+  // single-stage version did.
   let cursor = topPad
-  const rightNodes = rightDefs.map((d) => {
-    const h = Math.max(d.amount * scale, 1)
-    const node = { ...d, y0: cursor, h }
+  const groupNodes = groupsWithChildren.map((g) => {
+    const h = Math.max(g.amount * scale, 1)
+    const node = { ...g, y0: cursor, h }
     cursor += h
     return node
   })
-  const labelCenters = resolveLabelCenters(
-    rightNodes.map((n) => n.y0 + n.h / 2),
-    LABEL_MIN_GAP, topPad + 12, VBH - bottomPad - 12
+  const midLabelCenters = resolveLabelCenters(
+    groupNodes.map((n) => n.y0 + n.h / 2),
+    MID_GAP, topPad + 12, VBH - bottomPad - 12
   )
 
-  // Proportional fan from the single Income source: each ribbon's source
-  // slice is that node's cumulative-fraction-of-rightTotal remapped onto
-  // Income's own (possibly shorter, when overspent) height. When the period
-  // isn't overspent, rightTotal === leftTotal and this is an exact 1:1,
-  // edge-to-edge match — no compression. Cumulative fraction MUST be tracked
-  // in dollar amount (node.amount), not pixel height (node.h) — mixing the
-  // two units made every ribbon's source slice collapse to ~0, so all
-  // ribbons appeared to droop from the very top of the Income node instead
-  // of fanning out from their own proportional slice.
-  let cum = 0
-  const ribbons = rightNodes.map((node) => {
-    const f0 = cum / rightTotal
-    const f1 = (cum + node.amount) / rightTotal
-    cum += node.amount
-    const midX = (leftX0 + NODE_W + rightX0) / 2
-    const y0a = leftY0 + f0 * leftH
-    const y1a = leftY0 + f1 * leftH
-    const y0b = node.y0
-    const y1b = node.y0 + node.h
-    const x0 = leftX0 + NODE_W
-    const x1 = rightX0
-    const d = `M ${x0} ${y0a.toFixed(1)} C ${midX} ${y0a.toFixed(1)} ${midX} ${y0b.toFixed(1)} ${x1} ${y0b.toFixed(1)} `
-      + `L ${x1} ${y1b.toFixed(1)} C ${midX} ${y1b.toFixed(1)} ${midX} ${y1a.toFixed(1)} ${x0} ${y1a.toFixed(1)} Z`
-    return { key: node.key, color: node.color, path: d }
+  // Column 3 — each group's own children stacked WITHIN that group's exact
+  // y0..y0+h band (not a fresh column-wide cursor), so the middle node's
+  // vertical span always aligns with its own children's span — reading as
+  // "these items belong to this group." Raw dollar-proportional heights are
+  // normalized to sum exactly to the parent's height — without this, the
+  // Math.max(...,1) floor on tiny items can drift the last child past the
+  // parent's band.
+  const itemNodes = []
+  for (const g of groupNodes) {
+    if (g.children.length === 0) continue
+    const raw = g.children.map((child) => Math.max(child.amount * scale, 1))
+    const rawSum = raw.reduce((s, v) => s + v, 0)
+    const factor = rawSum > 0 ? g.h / rawSum : 0
+    let childCursor = g.y0
+    g.children.forEach((child, i) => {
+      const h = raw[i] * factor
+      itemNodes.push({ ...child, groupKey: g.key, y0: childCursor, h })
+      childCursor += h
+    })
+  }
+  const itemLabelCenters = resolveLabelCenters(
+    itemNodes.map((n) => n.y0 + n.h / 2),
+    ITEM_GAP, topPad + 12, VBH - bottomPad - 12
+  )
+
+  // Stage 1: Income fans into the column-2 groups. When the period isn't
+  // overspent, groupsTotal === leftTotal and this is an exact 1:1,
+  // edge-to-edge match — no compression.
+  const ribbons1 = fanRibbons(leftY0, leftH, groupsTotal, groupNodes, NODE_X0 + NODE_W, NODE_X1)
+  // Stage 2: each group with children fans into its own line items — scoped
+  // independently per group (a group's children always sum exactly to its
+  // own amount, so this is always an exact edge-to-edge match, never a
+  // shortfall/gap the way stage 1 can be).
+  const ribbons2 = groupNodes.flatMap((g) => {
+    const children = itemNodes.filter((n) => n.groupKey === g.key)
+    return children.length > 0 ? fanRibbons(g.y0, g.h, g.amount, children, NODE_X1 + NODE_W, NODE_X2) : []
   })
 
-  // Fixed pixel budget for the two label columns — deliberately NOT flex-1.
-  // Absolutely-positioned label children ignore a flex parent's computed
-  // width, so a flexible column makes its real available width unpredictable
-  // (labels overflowed past the card edge with flex-1 here). Only the middle
-  // SVG column is allowed to flex (in the 'large'/modal view) — it has no
-  // absolutely-positioned children, so it can safely stretch to fill
-  // whatever width the modal happens to have on that screen.
-  const LEFT_COL = isLarge ? 96 : 76
-  const RIGHT_COL = isLarge ? 150 : 112
+  // Fixed pixel budget for the Income/item label columns — deliberately NOT
+  // flex-1. Absolutely-positioned label children ignore a flex parent's
+  // computed width, so a flexible column makes its real available width
+  // unpredictable (labels overflowed past the card edge with flex-1 here).
+  // Group (column-2) labels instead float as an overlay ON TOP of the single
+  // combined SVG (a small opaque-backed pill anchored just right of the
+  // group node's x-position) rather than claiming their own fixed column —
+  // there are only ever up to 4 short group labels, so this keeps the
+  // mobile-critical budget to exactly 2 fixed columns, same as before, even
+  // though there's now a 3rd node column to fit.
+  const LEFT_COL = isLarge ? 88 : 64
+  const RIGHT_COL = isLarge ? 140 : 100
+  const MID_LABEL_W = isLarge ? 92 : 66
   const COL_GAP = isLarge ? 10 : 6
+  // Physical width of the combined SVG — deliberately smaller than VBW in
+  // compact mode (VBW is just the internal viewBox unit system that shapes
+  // ribbon curvature; preserveAspectRatio="none" stretches it to fit
+  // whatever physical width it's given). Keeping this narrow is what keeps
+  // the whole row's fixed-column budget (LEFT_COL + this + RIGHT_COL) close
+  // to what the single-ribbon version used, so the now-3-column diagram
+  // still fits inside a narrow mobile card without horizontal overflow.
+  const SVG_W = 150
   const textSize = isLarge ? 'text-sm' : 'text-xs'
   const dotSize = isLarge ? 'w-2 h-2' : 'w-1.5 h-1.5'
 
-  // Only the top level ever hands off to onExpand (the "view larger" modal
-  // trigger) on background click — once drilled in, clicking the background
-  // does nothing so it never fights with the back control, and individual
-  // item labels inside a drilled view aren't interactive at all (nothing
-  // further to drill into).
-  const bgClickable = !drill && !!onExpand
+  const bgClickable = !!onExpand
 
   return (
     <>
-      {drill && (
-        <button
-          onClick={() => setDrill(null)}
-          className="inline-flex items-center gap-1 text-xs font-semibold text-ink-2 hover:text-ink mb-2"
-        >
-          <ChevronLeft size={14} /> Cash Flow
-        </button>
-      )}
       <div
         className={`flex items-stretch ${bgClickable ? 'cursor-pointer' : ''}`}
         style={{ gap: COL_GAP }}
@@ -445,58 +518,64 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
         role={bgClickable ? 'button' : undefined}
         aria-label={bgClickable ? 'View Money Flow larger' : undefined}
       >
+        {/* Absolute children ignore the flex parent's width, so each label
+            gets its own explicit width — otherwise long amounts/names can
+            silently overflow past the card edge instead of wrapping. */}
         <div className="relative shrink-0" style={{ width: LEFT_COL, height: VBH }}>
-          {/* Absolute children ignore the flex parent's width, so each label
-              gets its own explicit width — otherwise long amounts/names can
-              silently overflow past the card edge instead of wrapping. */}
           <div className="absolute right-0 text-right -translate-y-1/2" style={{ top: `${((leftY0 + leftH / 2) / VBH) * 100}%`, width: LEFT_COL }}>
-            <p className={`${textSize} font-semibold text-ink leading-tight`}>{leftLabel}</p>
+            <p className={`${textSize} font-semibold text-ink leading-tight`}>Income</p>
             <p className={`${textSize} text-ink-2 tabular leading-tight`}>{c(leftTotal)}</p>
           </div>
         </div>
-        <div className={isLarge ? 'flex-1 min-w-0' : 'shrink-0'} style={!isLarge ? { width: 108 } : undefined}>
+
+        <div className={`relative ${isLarge ? 'flex-1 min-w-0' : 'shrink-0'}`} style={!isLarge ? { width: SVG_W } : undefined}>
           <svg width="100%" height={VBH} viewBox={`0 0 ${VBW} ${VBH}`} preserveAspectRatio="none" className="block overflow-visible">
-            <rect x={leftX0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={leftColor} />
-            {ribbons.map((r) => <path key={r.key} d={r.path} fill={r.color} opacity={0.85} />)}
-            {rightNodes.map((node) => (
-              <rect key={node.key} x={rightX0} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
+            <rect x={NODE_X0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={INK_2} />
+            {ribbons1.map((r) => <path key={`r1-${r.key}`} d={r.path} fill={r.color} opacity={0.85} />)}
+            {groupNodes.map((node) => (
+              <rect key={`mid-${node.key}`} x={NODE_X1} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
             ))}
             {gapCents > 0 && (
               <rect
-                x={rightX0 - 2.5} y={topPad + plotH - gapCents * scale} width={NODE_W + 5} height={gapCents * scale}
+                x={NODE_X1 - 2.5} y={topPad + plotH - gapCents * scale} width={NODE_W + 5} height={gapCents * scale}
                 rx={2} fill="none" stroke={CRITICAL} strokeWidth={1.5} strokeDasharray="2 2"
               />
             )}
+            {ribbons2.map((r) => <path key={`r2-${r.key}`} d={r.path} fill={r.color} opacity={0.85} />)}
+            {itemNodes.map((node) => (
+              <rect key={node.key} x={NODE_X2} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
+            ))}
           </svg>
+
+          {/* Column-2 group labels float over the combined SVG rather than
+              claiming their own fixed flex column (see LEFT_COL/RIGHT_COL
+              comment above) — an opaque pill background keeps them legible
+              over whichever ribbon passes underneath. */}
+          {groupNodes.map((node, i) => (
+            <div
+              key={node.key}
+              className="absolute -translate-y-1/2 min-w-0 bg-card/95 rounded px-1"
+              style={{ left: `${((NODE_X1 + NODE_W + 4) / VBW) * 100}%`, top: `${(midLabelCenters[i] / VBH) * 100}%`, width: MID_LABEL_W }}
+            >
+              <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0`}>
+                <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
+                <span className="truncate">{node.label}</span>
+              </p>
+              <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
+            </div>
+          ))}
         </div>
+
         <div className="relative shrink-0" style={{ width: RIGHT_COL, height: VBH }}>
-          {rightNodes.map((node, i) => {
-            // Only Bills/Funds arms at the top level are drillable — and only
-            // once breakdown has loaded, so a click never lands on nothing.
-            const drillable = !drill && canDrill && node.drillKey
-            const label = (
-              <>
-                <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0 ${drillable ? 'group-hover:underline' : ''}`}>
-                  <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
-                  <span className="truncate">{node.label}</span>
-                </p>
-                <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
-              </>
-            )
-            return (
-              <div key={node.key} className="absolute left-1 -translate-y-1/2 min-w-0" style={{ top: `${(labelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
-                {drillable ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setDrill(node.drillKey) }}
-                    className="group text-left w-full -m-1 p-1 rounded-lg hover:bg-paper transition-colors"
-                    aria-label={`See ${node.label} breakdown`}
-                  >
-                    {label}
-                  </button>
-                ) : label}
-              </div>
-            )
-          })}
+          {itemNodes.map((node, i) => (
+            <div key={node.key} className="absolute left-1 -translate-y-1/2 min-w-0" style={{ top: `${(itemLabelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
+              <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0`}>
+                <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
+                <span className="truncate">{node.label}</span>
+              </p>
+              <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
+            </div>
+          ))}
         </div>
       </div>
       {gapCents > 0 && (
