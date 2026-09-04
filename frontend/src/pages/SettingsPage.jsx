@@ -1,10 +1,60 @@
-import { useState } from 'react'
-import { SlidersHorizontal, Monitor, Sun, Moon, Check } from 'lucide-react'
-import { Card, SectionLabel, Segmented, PrimaryButton } from '../components/ui'
+import { useEffect, useState } from 'react'
+import { Monitor, Sun, Moon, Check } from 'lucide-react'
+import { Card, SectionLabel, Segmented, PrimaryButton, BucketColorPicker } from '../components/ui'
 import { useTheme } from '../useTheme'
+import { useBucketColors } from '../useBucketColors'
+import { BUCKET_COLOR_PRESETS, DEFAULT_BUCKET_PRESET } from '../bucketColorPresets'
 import { apiGet } from '../api'
 import DevOverlay from '../components/DevOverlay'
 import pkg from '../../package.json'
+
+// Tracks the resolved `.dark` class on <html> — separate from useTheme's own
+// 'system'/'light'/'dark' preference string — so the bucket-color swatch
+// previews always reflect what's actually on screen, including when
+// 'system' silently flips with the OS.
+function useIsDarkResolved() {
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'))
+  useEffect(() => {
+    const observer = new MutationObserver(() => setIsDark(document.documentElement.classList.contains('dark')))
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [])
+  return isDark
+}
+
+const BUCKET_FIELDS = [
+  { key: 'bills', label: 'Bills' },
+  { key: 'funds', label: 'Funds' },
+  { key: 'savings', label: 'Savings' },
+]
+
+function BucketColorsCard() {
+  const [selection, setBucketPreset] = useBucketColors()
+  const isDark = useIsDarkResolved()
+
+  return (
+    <Card className="p-4 mb-3">
+      <p className="text-sm font-medium text-ink mb-1">Bucket Colors</p>
+      <p className="text-xs text-ink-3 mb-4">
+        Bills, Funds, and Savings each get one color, used everywhere that concept shows up —
+        Overview charts, Funds page, Expenses bars. Pick a preset per bucket, or reset to default.
+      </p>
+      <div className="flex flex-col gap-4">
+        {BUCKET_FIELDS.map(({ key, label }) => (
+          <BucketColorPicker
+            key={key}
+            label={label}
+            presets={BUCKET_COLOR_PRESETS}
+            value={selection[key]}
+            defaultKey={DEFAULT_BUCKET_PRESET[key]}
+            onChange={(presetKey) => setBucketPreset(key, presetKey)}
+            isDark={isDark}
+          />
+        ))}
+      </div>
+    </Card>
+  )
+}
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System', icon: <Monitor size={13} /> },
@@ -55,7 +105,8 @@ function BackupCard() {
       </PrimaryButton>
       {error && <p className="text-xs text-critical mt-2.5">{error}</p>}
       <p className="text-xs text-ink-3 mt-3">
-        Everything — balances, plans, transactions, history — as one JSON file. Keep it somewhere safe.
+        Download your data — balances, plans, transactions, history — as one JSON file. Backup to computer, cloud, or external drive.
+    
       </p>
     </Card>
   )
@@ -79,21 +130,15 @@ export default function SettingsPage() {
         </p>
       </Card>
 
+      <BucketColorsCard />
+
       <SectionLabel>Data</SectionLabel>
       <BackupCard />
-
-      <Card className="p-8 flex flex-col items-center text-center gap-2 mb-3">
-        <div className="w-12 h-12 rounded-full bg-accent-soft text-accent-ink flex items-center justify-center mb-1">
-          <SlidersHorizontal size={20} />
-        </div>
-        <p className="text-ink font-semibold">Nothing else to configure yet</p>
-        <p className="text-sm text-ink-3 max-w-xs">More app-wide preferences will live here.</p>
-      </Card>
 
       <SectionLabel>Developer Tools</SectionLabel>
       <Card className="p-4">
         <p className="text-xs text-ink-3 mb-3">
-          Testing tools — includes a full data reset. Not needed for everyday use.
+          This is for overiding values and testing things that aren't normally exposed in the UI. Use with caution.
         </p>
         <DevOverlay />
       </Card>

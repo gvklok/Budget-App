@@ -25,6 +25,49 @@
         } catch (e) {}
       })();
     </script>
+    <!-- Applied before first paint to avoid a flash of the default bucket
+         colors — mirrors src/bucketColorPresets.js + src/useBucketColors.js
+         (kept in sync manually, same reasoning as the theme script above:
+         this must run before any module import). Only non-default choices
+         need an entry here — a bucket left at its default already matches
+         index.css's compiled-in :root/.dark values, so there's nothing to
+         override before paint. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('bucketColors');
+          if (!stored) return;
+          var selection = JSON.parse(stored);
+          var PRESETS = {
+            umber: { light: { base: '125 81 25', ink: '138 86 24', soft: '241 232 220' }, dark: { base: '168 118 58', ink: '224 181 127', soft: '51 38 25' } },
+            terracotta: { light: { base: '155 53 68', ink: '128 27 47', soft: '255 228 229' }, dark: { base: '181 78 90', ink: '253 149 158', soft: '56 21 25' } },
+            olive: { light: { base: '110 114 0', ink: '73 76 0', soft: '235 238 215' }, dark: { base: '137 141 9', ink: '185 191 91', soft: '34 36 0' } },
+            sage: { light: { base: '47 138 92', ink: '40 107 73', soft: '231 243 237' }, dark: { base: '69 168 115', ink: '126 203 158', soft: '28 51 39' } },
+            teal: { light: { base: '0 136 113', ink: '0 85 69', soft: '216 242 234' }, dark: { base: '0 136 113', ink: '74 209 179', soft: '0 41 32' } },
+            slate: { light: { base: '0 151 168', ink: '0 82 91', soft: '213 241 246' }, dark: { base: '0 158 175', ink: '48 205 225', soft: '0 39 44' } },
+            ocean: { light: { base: '47 95 158', ink: '47 95 158', soft: '230 237 246' }, dark: { base: '74 127 201', ink: '111 159 224', soft: '24 38 54' } },
+            violet: { light: { base: '156 106 191', ink: '94 44 125', soft: '241 230 251' }, dark: { base: '138 88 172', ink: '208 160 243', soft: '42 25 53' } },
+            berry: { light: { base: '155 68 126', ink: '117 32 92', soft: '250 228 241' }, dark: { base: '188 98 157', ink: '238 150 206', soft: '51 22 41' } },
+          };
+          var VARS = {
+            bills: ['--bills', '--bills-ink', '--bills-soft'],
+            funds: ['--funds', '--funds-ink', '--funds-soft'],
+            savings: ['--saving', '--saving-ink', '--saving-soft'],
+          };
+          var dark = document.documentElement.classList.contains('dark');
+          var root = document.documentElement.style;
+          Object.keys(VARS).forEach(function (bucket) {
+            var preset = PRESETS[selection[bucket]];
+            if (!preset) return;
+            var v = dark ? preset.dark : preset.light;
+            var vars = VARS[bucket];
+            root.setProperty(vars[0], v.base);
+            root.setProperty(vars[1], v.ink);
+            root.setProperty(vars[2], v.soft);
+          });
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

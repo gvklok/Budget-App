@@ -352,6 +352,55 @@ export function ColorSwatchPicker({ value, onChange, autoColor, label = 'Color' 
   )
 }
 
+// ── BucketColorPicker — semantic bucket color preference (Settings) ─────────
+// Distinct from ColorSwatchPicker above: that one picks a single flat hex for
+// a Fund/Bill's identity dot. This one picks a PRESET — each swatch carries a
+// full light+dark {base,ink,soft} triple (see bucketColorPresets.js) applied
+// as the app-wide CSS vars for a whole bucket concept (Bills/Funds/Savings),
+// not a single entity. `isDark` selects which variant each swatch previews
+// (so the preview always matches the mode you're actually looking at).
+export function BucketColorPicker({ label, presets, value, defaultKey, onChange, isDark }) {
+  const isDefault = value === defaultKey
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="block text-sm font-medium text-ink-2">{label}</span>
+        {!isDefault && (
+          <button
+            type="button"
+            onClick={() => onChange(defaultKey)}
+            className="text-xs font-medium text-accent-ink hover:underline"
+          >
+            Reset to default
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {presets.map((preset) => {
+          const rgb = isDark ? preset.dark.base : preset.light.base
+          const selected = value === preset.key
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              onClick={() => onChange(preset.key)}
+              title={preset.key === defaultKey ? `${preset.name} (Default)` : preset.name}
+              aria-label={preset.name}
+              aria-pressed={selected}
+              className={`w-8 h-8 rounded-full shrink-0 flex items-center justify-center transition-transform active:scale-90 ${
+                preset.key === defaultKey ? 'border-2 border-dashed border-line-strong' : ''
+              } ${selected ? 'ring-2 ring-ink ring-offset-2 ring-offset-card' : ''}`}
+              style={{ background: `rgb(${rgb})` }}
+            >
+              {selected && <Check size={14} className="text-white" strokeWidth={3} style={{ filter: 'drop-shadow(0 0 1.5px rgb(0 0 0 / 0.5))' }} />}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Segmented (2-way tab toggle) ─────────────────────────────────────────────
 
 export function Segmented({ options, value, onChange }) {
