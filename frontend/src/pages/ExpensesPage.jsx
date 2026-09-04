@@ -983,10 +983,21 @@ export default function ExpensesPage() {
     setBillsReorderError('')
     setBillsReordering(true)
   }
+  // Positions (in the flattened list) of every bill sharing `categoryId`, in
+  // list order — used to keep Up/Down moves confined to one category's block
+  // even if that block isn't contiguous (e.g. after past corrupted saves).
+  function billsCategorySlots(list, categoryId) {
+    const slots = []
+    list.forEach((b, i) => { if (b.category_id === categoryId) slots.push(i) })
+    return slots
+  }
   function moveBillsReorder(index, dir) {
     setBillsReorderList((prev) => {
-      const target = index + dir
-      if (target < 0 || target >= prev.length) return prev
+      const slots = billsCategorySlots(prev, prev[index].category_id)
+      const pos = slots.indexOf(index)
+      const targetPos = pos + dir
+      if (targetPos < 0 || targetPos >= slots.length) return prev
+      const target = slots[targetPos]
       const next = [...prev]
       ;[next[index], next[target]] = [next[target], next[index]]
       return next
@@ -1368,11 +1379,15 @@ export default function ExpensesPage() {
 
         {billsReordering ? (
           <Card className="overflow-hidden divide-y divide-line">
-            {billsReorderList.map((b, index) => (
-              <ReorderRow key={b.id} name={b.name} amountCents={b.amount_cents}
-                first={index === 0} last={index === billsReorderList.length - 1}
-                onUp={() => moveBillsReorder(index, -1)} onDown={() => moveBillsReorder(index, 1)} />
-            ))}
+            {billsReorderList.map((b, index) => {
+              const slots = billsCategorySlots(billsReorderList, b.category_id)
+              const pos = slots.indexOf(index)
+              return (
+                <ReorderRow key={b.id} name={b.name} amountCents={b.amount_cents}
+                  first={pos === 0} last={pos === slots.length - 1}
+                  onUp={() => moveBillsReorder(index, -1)} onDown={() => moveBillsReorder(index, 1)} />
+              )
+            })}
           </Card>
         ) : billsOpen && (
           <>
