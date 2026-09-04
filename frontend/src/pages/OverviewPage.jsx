@@ -1248,6 +1248,10 @@ export default function OverviewPage() {
 
   const [refreshKey, setRefreshKey] = useState(0)
   const [moneyFlowModalOpen, setMoneyFlowModalOpen] = useState(false)
+  // Pulled from production view while the 3-column sankey layout is reworked
+  // further (owner: "looks like trash", still iterating) — code stays intact
+  // and keeps developing on fableFun; flip this back on once it's ready.
+  const SHOW_MONEY_FLOW = false
 
   const loadMain = useCallback(async () => {
     setMainLoading(true)
@@ -1413,7 +1417,7 @@ export default function OverviewPage() {
               sits at the very bottom — owner is reconsidering whether to keep
               it at all, so it's demoted pending that decision rather than
               removed outright. */}
-          {moneyFlowTeaser && (
+          {SHOW_MONEY_FLOW && moneyFlowTeaser && (
             <CollapsibleChartCard
               storageKey="overview.moneyFlow.open"
               label="Money Flow"
@@ -1430,7 +1434,7 @@ export default function OverviewPage() {
             </CollapsibleChartCard>
           )}
 
-          {moneyFlowModalOpen && (
+          {SHOW_MONEY_FLOW && moneyFlowModalOpen && (
             <Modal title="Money Flow" onClose={() => setMoneyFlowModalOpen(false)} size="lg">
               <MoneyFlowContent
                 months={monthly}
