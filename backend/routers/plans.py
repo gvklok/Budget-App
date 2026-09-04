@@ -13,9 +13,20 @@ def _plan_response(db: Session, year: int, month: int):
     plan = plans_lib.get_plan(db, year, month)
     if not plan:
         return {"year": year, "month": month, "planned": False, "plan_id": None, "line_items": []}
-    items = db.query(models.Expense).filter(models.Expense.plan_id == plan.id).order_by(
-        models.Expense.category_id.nullslast(), models.Expense.sort_order, models.Expense.id
-    ).all()
+    # Category display order is driven by the category's own sort_order (user-
+    # reorderable), not by category_id/creation order — outerjoin so items with
+    # no category (category_id NULL) still come through, sorted last.
+    items = (
+        db.query(models.Expense)
+        .outerjoin(models.ExpenseCategory, models.Expense.category_id == models.ExpenseCategory.id)
+        .filter(models.Expense.plan_id == plan.id)
+        .order_by(
+            models.ExpenseCategory.sort_order.nullslast(),
+            models.Expense.sort_order,
+            models.Expense.id,
+        )
+        .all()
+    )
     return {
         "year": year,
         "month": month,

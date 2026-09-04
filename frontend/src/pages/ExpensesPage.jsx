@@ -560,7 +560,10 @@ function SourceLabelModal({ prompt, bills, onCancel, onReallocate, onTransfer })
 
 // ── Manage Categories Modal — list + rename + delete + add, all in one place ──
 
-function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDelete }) {
+function ManageCategoriesModal({
+  categories, onClose, onCreate, onRename, onDelete,
+  reordering, reorderList, reorderError, reorderSaving, onStartReorder, onMoveReorder, onFinishReorder,
+}) {
   const [newName, setNewName] = useState('')
   const [adding, setAdding] = useState(false)
   const [renamingId, setRenamingId] = useState(null)
@@ -585,7 +588,37 @@ function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDele
   return (
     <Modal title="Manage Categories" onClose={onClose}>
       <div className="space-y-4">
-        {categories.length === 0 ? (
+        {categories.length > 1 && (
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-ink-3">
+              {reordering ? 'Sets the order Bill groups appear in on Expenses.' : 'Order controls how Bill groups appear on Expenses.'}
+            </p>
+            {reordering ? (
+              <button
+                onClick={onFinishReorder}
+                disabled={reorderSaving}
+                className="text-xs font-semibold bg-accent text-white rounded-full px-3.5 py-1.5 disabled:opacity-40 active:scale-[0.98] transition-transform shrink-0"
+              >
+                {reorderSaving ? 'Saving…' : 'Done'}
+              </button>
+            ) : (
+              <button onClick={onStartReorder} className="flex items-center gap-1 text-xs font-semibold text-ink-2 shrink-0">
+                <ArrowUpDown size={13} />Reorder
+              </button>
+            )}
+          </div>
+        )}
+        {reorderError && <p className="text-xs text-critical -mt-2">{reorderError}</p>}
+
+        {reordering ? (
+          <div className="rounded-2xl border border-line divide-y divide-line overflow-hidden">
+            {reorderList.map((cat, index) => (
+              <ReorderRow key={cat.id} name={cat.name}
+                first={index === 0} last={index === reorderList.length - 1}
+                onUp={() => onMoveReorder(index, -1)} onDown={() => onMoveReorder(index, 1)} />
+            ))}
+          </div>
+        ) : categories.length === 0 ? (
           <p className="text-sm text-ink-3">No categories yet — add one below.</p>
         ) : (
           <div className="rounded-2xl border border-line divide-y divide-line overflow-hidden">
@@ -610,11 +643,13 @@ function ManageCategoriesModal({ categories, onClose, onCreate, onRename, onDele
             ))}
           </div>
         )}
-        <form onSubmit={handleAdd} className="flex gap-2">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New category name"
-            className={`${inputClass} flex-1`} />
-          <PrimaryButton type="submit" disabled={adding || !newName.trim()} className="px-4 shrink-0">Add</PrimaryButton>
-        </form>
+        {!reordering && (
+          <form onSubmit={handleAdd} className="flex gap-2">
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New category name"
+              className={`${inputClass} flex-1`} />
+            <PrimaryButton type="submit" disabled={adding || !newName.trim()} className="px-4 shrink-0">Add</PrimaryButton>
+          </form>
+        )}
       </div>
     </Modal>
   )
@@ -777,7 +812,7 @@ function ReorderRow({ name, amountCents, first, last, onUp, onDown }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 transition-transform duration-[120ms]">
       <p className="flex-1 min-w-0 text-sm font-medium text-ink truncate">{name}</p>
-      <span className="text-xs text-ink-3 tabular shrink-0">{c(amountCents)}</span>
+      {amountCents != null && <span className="text-xs text-ink-3 tabular shrink-0">{c(amountCents)}</span>}
       <div className="flex items-center shrink-0 gap-1">
         <button
           onClick={onUp}
@@ -852,6 +887,13 @@ export default function ExpensesPage() {
   const [fundsReorderList, setFundsReorderList] = useState([])
   const [fundsReorderError, setFundsReorderError] = useState('')
   const [fundsReorderSaving, setFundsReorderSaving] = useState(false)
+  // Categories — controls which order Bill groups appear in on this page (see
+  // ManageCategoriesModal below); same up/down interaction, lives here rather
+  // than in the modal so it follows the Bills/Funds precedent exactly.
+  const [catReordering, setCatReordering] = useState(false)
+  const [catReorderList, setCatReorderList] = useState([])
+  const [catReorderError, setCatReorderError] = useState('')
+  const [catReorderSaving, setCatReorderSaving] = useState(false)
 
   // Resolve the effective "today" once on mount, then default the viewed month to it
   // (unless the URL already names one).
@@ -1048,6 +1090,39 @@ export default function ExpensesPage() {
       setFundsReordering(false)
     } finally {
       setFundsReorderSaving(false)
+    }
+  }
+
+  // Categories reorder mode — same flat-list up/down pattern as Funds; this
+  // order is what the backend groups Bills by on this page (and everywhere
+  // categories are used), so reordering here visibly reorders Bill groups.
+  function startCatReorder() {
+    setCatReorderList(categories)
+    setCatReorderError('')
+    setCatReordering(true)
+  }
+  function moveCatReorder(index, dir) {
+    setCatReorderList((prev) => {
+      const target = index + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+  async function finishCatReorder() {
+    setCatReorderSaving(true)
+    setCatReorderError('')
+    try {
+      await apiPost('/line-items/categories/reorder', { ordered_ids: catReorderList.map((cat) => cat.id) })
+      await load()
+      setCatReordering(false)
+    } catch (err) {
+      setCatReorderError(err.message || 'Reorder failed — order restored')
+      await load()
+      setCatReordering(false)
+    } finally {
+      setCatReorderSaving(false)
     }
   }
 
@@ -1537,6 +1612,13 @@ export default function ExpensesPage() {
           onCreate={handleCreateCat}
           onRename={handleUpdateCat}
           onDelete={handleDeleteCat}
+          reordering={catReordering}
+          reorderList={catReorderList}
+          reorderError={catReorderError}
+          reorderSaving={catReorderSaving}
+          onStartReorder={startCatReorder}
+          onMoveReorder={moveCatReorder}
+          onFinishReorder={finishCatReorder}
         />
       )}
       {editFundContrib && <FundContributionModal fund={editFundContrib} onClose={() => setEditFundContrib(null)} onSave={(d) => handleUpdateFundContrib(editFundContrib.id, d)} />}
