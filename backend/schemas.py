@@ -60,6 +60,7 @@ class FundUpdate(BaseModel):
 class ExpenseCategoryOut(BaseModel):
     id: int
     name: str
+    sort_order: int
     model_config = {"from_attributes": True}
 
 

@@ -39,6 +39,7 @@ class ExpenseCategory(Base):
     __tablename__ = "expense_categories"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
 
 
 class MonthlyPlan(Base):

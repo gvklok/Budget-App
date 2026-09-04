@@ -62,14 +62,15 @@ def reallocate(body: ReallocateBody, db: Session = Depends(get_db)):
 
 @router.get("/categories", response_model=list[schemas.ExpenseCategoryOut])
 def list_categories(db: Session = Depends(get_db)):
-    return db.query(models.ExpenseCategory).order_by(models.ExpenseCategory.id).all()
+    return db.query(models.ExpenseCategory).order_by(models.ExpenseCategory.sort_order, models.ExpenseCategory.id).all()
 
 
 @router.post("/categories", response_model=schemas.ExpenseCategoryOut)
 def create_category(body: schemas.ExpenseCategoryCreate, db: Session = Depends(get_db)):
     if not body.name.strip():
         raise HTTPException(400, "Name is required")
-    cat = models.ExpenseCategory(name=body.name.strip())
+    max_sort_order = db.query(func.max(models.ExpenseCategory.sort_order)).scalar() or 0
+    cat = models.ExpenseCategory(name=body.name.strip(), sort_order=max_sort_order + 1)
     db.add(cat)
     db.commit()
     db.refresh(cat)
@@ -85,6 +86,22 @@ def update_category(cat_id: int, body: schemas.ExpenseCategoryCreate, db: Sessio
     db.commit()
     db.refresh(cat)
     return cat
+
+
+class ReorderCategoriesBody(BaseModel):
+    ordered_ids: list[int]
+
+
+@router.post("/categories/reorder", response_model=list[schemas.ExpenseCategoryOut])
+def reorder_categories(body: ReorderCategoriesBody, db: Session = Depends(get_db)):
+    existing_ids = {c.id for c in db.query(models.ExpenseCategory.id).all()}
+    if set(body.ordered_ids) != existing_ids:
+        raise HTTPException(400, "ordered_ids must contain exactly the full set of existing category ids")
+    categories_by_id = {c.id: c for c in db.query(models.ExpenseCategory).all()}
+    for index, cat_id in enumerate(body.ordered_ids):
+        categories_by_id[cat_id].sort_order = index
+    db.commit()
+    return db.query(models.ExpenseCategory).order_by(models.ExpenseCategory.sort_order, models.ExpenseCategory.id).all()
 
 
 @router.delete("/categories/{cat_id}")

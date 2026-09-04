@@ -56,6 +56,15 @@ def _migrate() -> None:
         if "goal_cents" not in fund_cols:
             conn.execute(text("ALTER TABLE funds ADD COLUMN goal_cents INTEGER"))
 
+        # expense_categories table additions
+        cat_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(expense_categories)"))}
+        if "sort_order" not in cat_cols:
+            conn.execute(text("ALTER TABLE expense_categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"))
+            conn.commit()
+            # New column defaults every existing row to 0 — backfill so current
+            # (id) order is preserved instead of collapsing to a single tie.
+            conn.execute(text("UPDATE expense_categories SET sort_order = id WHERE sort_order = 0"))
+
         # income_sources table additions (real per-month paycheck counting)
         income_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(income_sources)"))}
         if "anchor_date" not in income_cols:
