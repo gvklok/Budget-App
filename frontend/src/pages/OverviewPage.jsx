@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react'
+import { LayoutDashboard, ChevronDown, ChevronUp, ChevronLeft, Maximize2 } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
   entityColor, colorForName, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
@@ -205,25 +205,37 @@ function PeriodReviewCard({ months, rangeMonths }) {
 }
 
 // ── Money Flow — Monarch-style cash-flow sankey for the selected range ──────
-// Single left source "Income $X" fans into one right-side arm PER Bill and
-// PER Fund (each keeping its own stable entity color — same colorForName/
-// entityColor formulas as the rest of the app), plus bucket-level "Transfers
-// out" (stone) and "Kept" (SAVING) arms — those two stay bucket-level since
-// they're not per-bill/per-fund concepts. A hand-rolled SVG sankey (no
-// library). Ribbons are flat fills at ~85% opacity, no gradients — calm by
-// design. Zero income hides the card entirely; a zero-value destination just
-// omits its ribbon/node. When the period is overspent (outflows > income),
-// there is no "Kept" node — instead the diagram fans Income proportionally
-// into the real destinations (which now sum to more than Income), and the
-// resulting shortfall is called out as a dashed red bracket + caption rather
-// than invented as a fake node (never misrepresent a real node's own dollar
-// amount to make room for it).
+// Simple by default: Income fans into exactly four bucket-level arms —
+// Bills, Funds, Transfers out (stone), Kept (SAVING). A hand-rolled SVG
+// sankey (no library). Ribbons are flat fills at ~85% opacity, no
+// gradients — calm by design. Zero income hides the card entirely; a
+// zero-value destination just omits its arm. When the period is overspent
+// (outflows > income), there is no "Kept" node — instead the diagram fans
+// Income proportionally into the real destinations (which now sum to more
+// than Income), and the resulting shortfall is called out as a dashed red
+// bracket + caption rather than invented as a fake node.
+//
+// Bills and Funds are the only DRILLABLE arms — clicking one swaps the whole
+// diagram to that single category's own breakdown (one arm per Bill, or one
+// per non-transfer Fund, each keeping its own stable entity color — same
+// colorForName/entityColor formulas as the rest of the app), with a small
+// back control above the chart to return to the 4-arm view. Only one
+// category is ever exploded at a time — never both simultaneously. Transfers
+// out and Kept have no sub-items, so they're never clickable. The drilled
+// view has no "overspent" concept of its own (that's a top-level idea), so
+// the dashed shortfall indicator only ever appears at the top level.
+//
+// Drill state (`null | 'bills' | 'funds'`) lives locally inside
+// MoneyFlowContent (a plain useState) — the compact card and the "view
+// larger" modal each get their own component instance and therefore their
+// own independent drill state; the modal always mounts fresh at the top
+// level since it's only rendered while open.
 //
 // Renders in two sizes: 'compact' (the default, inside the page's
 // CollapsibleChartCard) and 'large' (inside the "view larger" Modal — see
-// MoneyFlowModal below). Both read the same underlying arms; 'large' just
-// allows more individual arms before folding into "Other" (more room to
-// breathe) and gives every column more pixels.
+// MoneyFlowModal below). 'large' just allows more individual arms before
+// folding into "Other" (more room to breathe) and gives every column more
+// pixels.
 
 // Nodes are sized proportionally to their real dollar amount (honest
 // geometry), but that means a small node (e.g. Transfers out next to a much
@@ -245,48 +257,48 @@ function resolveLabelCenters(naturalCenters, minGap, lo, hi) {
   return centers.map((y) => Math.max(lo, y))
 }
 
-// Builds the right-side arm definitions: one per Bill + one per non-transfer
-// Fund (exploded from the per-item spending-breakdown), plus bucket-level
-// Transfers-out and Kept arms from `agg`. A household can have 8-15 bills +
-// funds combined — showing every single one as its own arm would collapse
-// into unreadable label soup, so the long tail below a minimum dollar share
-// (relative to income) folds into one "Other" arm; a single leftover just
-// stays itself rather than being renamed "Other". `isLarge` (the modal view)
-// relaxes both knobs since it has far more vertical room to work with, so
-// expanding the chart genuinely reveals more detail, not just bigger text.
-// While `breakdown` hasn't loaded yet, falls back to the old bucket-level
-// Bills/Funds totals from `agg` so the diagram never flashes empty.
-function buildMoneyFlowArms(agg, breakdown, billColorByName, fundColorById, isLarge) {
+// Builds the top-level 4 arms straight off `agg` — no per-item detail.
+// Bills/Funds carry `drillKey` so the caller knows which arms are clickable;
+// Transfers out/Kept never do (they have no sub-items to drill into).
+function buildTopLevelArms(agg) {
   const overspent = agg.totalKept < 0
-  const transfersDef = { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT }
-  const keptDef = { key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }
-  const tail = [transfersDef, ...(overspent ? [] : [keptDef])]
+  const defs = [
+    { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS, drillKey: 'bills' },
+    { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE, drillKey: 'funds' },
+    { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT },
+    ...(overspent ? [] : [{ key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }]),
+  ]
+  return defs.filter((d) => d.amount > 0)
+}
 
-  if (!breakdown) {
-    return [
-      { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS },
-      { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE },
-      ...tail,
-    ].filter((d) => d.amount > 0)
-  }
+// Builds one drilled-in category's exploded arms — one per Bill, or one per
+// non-transfer Fund — from the per-item spending-breakdown. A household can
+// have 8-15 bills or funds — showing every single one as its own arm would
+// collapse into unreadable label soup, so the long tail below a minimum
+// dollar share (relative to income) folds into one "Other" arm; a single
+// leftover just stays itself rather than being renamed "Other". `isLarge`
+// (the modal view) relaxes both knobs since it has far more vertical room to
+// work with, so expanding the chart genuinely reveals more detail, not just
+// bigger text. Returns [] while `breakdown` hasn't loaded yet — the caller
+// only offers the drill click once breakdown is ready, so this shouldn't
+// normally be reached empty.
+function buildDrilledArms(category, breakdown, billColorByName, fundColorById, agg, isLarge) {
+  if (!breakdown) return []
 
-  const bills = breakdown.bills ?? []
-  const spendFunds = (breakdown.funds ?? []).filter((f) => f.destination_type !== 'transfer_out')
-
-  const itemDefs = [
-    ...bills.map((b) => ({
-      key: `bill-${b.line_item_id ?? b.name}`,
-      label: b.name,
-      amount: b.spent_cents,
-      color: billColorByName?.[b.name] || colorForName(b.name),
-    })),
-    ...spendFunds.map((f) => ({
-      key: `fund-${f.fund_id}`,
-      label: f.name ?? 'Deleted fund',
-      amount: f.spent_cents,
-      color: entityColor({ id: f.fund_id, color: fundColorById?.[f.fund_id] }),
-    })),
-  ].filter((d) => d.amount > 0).sort((a, b) => b.amount - a.amount)
+  const itemDefs = (category === 'bills'
+    ? (breakdown.bills ?? []).map((b) => ({
+        key: `bill-${b.line_item_id ?? b.name}`,
+        label: b.name,
+        amount: b.spent_cents,
+        color: billColorByName?.[b.name] || colorForName(b.name),
+      }))
+    : (breakdown.funds ?? []).filter((f) => f.destination_type !== 'transfer_out').map((f) => ({
+        key: `fund-${f.fund_id}`,
+        label: f.name ?? 'Deleted fund',
+        amount: f.spent_cents,
+        color: entityColor({ id: f.fund_id, color: fundColorById?.[f.fund_id] }),
+      }))
+  ).filter((d) => d.amount > 0).sort((a, b) => b.amount - a.amount)
 
   const MAX_INDIVIDUAL = isLarge ? 16 : 8
   const MIN_FRACTION = isLarge ? 0.012 : 0.03 // below this share of income, an arm reads as noise
@@ -300,28 +312,39 @@ function buildMoneyFlowArms(agg, breakdown, billColorByName, fundColorById, isLa
   }
   const individual = itemDefs.slice(0, cutoff)
   const excluded = itemDefs.slice(cutoff)
-  const explodedDefs = excluded.length === 1
+  return excluded.length === 1
     ? [...individual, excluded[0]]
     : excluded.length > 1
       ? [...individual, { key: 'other', label: 'Other', amount: excluded.reduce((s, d) => s + d.amount, 0), color: INK_3 }]
       : individual
-
-  return [...explodedDefs, ...tail].filter((d) => d.amount > 0)
 }
 
 // Content only — no Card/SectionLabel chrome, so it can be lazy-rendered
 // inside the page's CollapsibleChartCard wrapper (see below), or inside the
 // "view larger" Modal at size="large".
 function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, size = 'compact', onExpand }) {
+  // null | 'bills' | 'funds' — which category (if any) is currently exploded.
+  // Local to this component instance, so the compact card and the "view
+  // larger" modal never share drill state.
+  const [drill, setDrill] = useState(null)
   const agg = aggregateRange(months)
   if (agg.totalIncome <= 0) return null
 
   const isLarge = size === 'large'
-  const rightDefs = buildMoneyFlowArms(agg, breakdown, billColorByName, fundColorById, isLarge)
+  const canDrill = !!breakdown // don't offer to explode a category before there's anything to explode into
+
+  const rightDefs = drill
+    ? buildDrilledArms(drill, breakdown, billColorByName, fundColorById, agg, isLarge)
+    : buildTopLevelArms(agg)
   if (rightDefs.length === 0) return null
 
-  const overspent = agg.totalKept < 0
-  const leftTotal = agg.totalIncome
+  // Overspend is a top-level-only concept — a per-item breakdown of Bills or
+  // Funds doesn't have its own separate "overspent" beyond what's already
+  // shown at the top level.
+  const overspent = !drill && agg.totalKept < 0
+  const leftLabel = drill === 'bills' ? 'Bills' : drill === 'funds' ? 'Funds' : 'Income'
+  const leftColor = drill === 'bills' ? BILLS : drill === 'funds' ? FUNDS_HUE : INK_2
+  const leftTotal = drill === 'bills' ? agg.totalBills : drill === 'funds' ? agg.totalFunds : agg.totalIncome
   const rightTotal = rightDefs.reduce((s, d) => s + d.amount, 0)
   const scaleTotal = Math.max(leftTotal, rightTotal)
   const gapCents = overspent ? Math.max(0, rightTotal - leftTotal) : 0
@@ -398,27 +421,42 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
   const textSize = isLarge ? 'text-sm' : 'text-xs'
   const dotSize = isLarge ? 'w-2 h-2' : 'w-1.5 h-1.5'
 
+  // Only the top level ever hands off to onExpand (the "view larger" modal
+  // trigger) on background click — once drilled in, clicking the background
+  // does nothing so it never fights with the back control, and individual
+  // item labels inside a drilled view aren't interactive at all (nothing
+  // further to drill into).
+  const bgClickable = !drill && !!onExpand
+
   return (
     <>
+      {drill && (
+        <button
+          onClick={() => setDrill(null)}
+          className="inline-flex items-center gap-1 text-xs font-semibold text-ink-2 hover:text-ink mb-2"
+        >
+          <ChevronLeft size={14} /> Cash Flow
+        </button>
+      )}
       <div
-        className={`flex items-stretch ${onExpand ? 'cursor-pointer' : ''}`}
+        className={`flex items-stretch ${bgClickable ? 'cursor-pointer' : ''}`}
         style={{ gap: COL_GAP }}
-        onClick={onExpand}
-        role={onExpand ? 'button' : undefined}
-        aria-label={onExpand ? 'View Money Flow larger' : undefined}
+        onClick={bgClickable ? onExpand : undefined}
+        role={bgClickable ? 'button' : undefined}
+        aria-label={bgClickable ? 'View Money Flow larger' : undefined}
       >
         <div className="relative shrink-0" style={{ width: LEFT_COL, height: VBH }}>
           {/* Absolute children ignore the flex parent's width, so each label
               gets its own explicit width — otherwise long amounts/names can
               silently overflow past the card edge instead of wrapping. */}
           <div className="absolute right-0 text-right -translate-y-1/2" style={{ top: `${((leftY0 + leftH / 2) / VBH) * 100}%`, width: LEFT_COL }}>
-            <p className={`${textSize} font-semibold text-ink leading-tight`}>Income</p>
+            <p className={`${textSize} font-semibold text-ink leading-tight`}>{leftLabel}</p>
             <p className={`${textSize} text-ink-2 tabular leading-tight`}>{c(leftTotal)}</p>
           </div>
         </div>
         <div className={isLarge ? 'flex-1 min-w-0' : 'shrink-0'} style={!isLarge ? { width: 108 } : undefined}>
           <svg width="100%" height={VBH} viewBox={`0 0 ${VBW} ${VBH}`} preserveAspectRatio="none" className="block overflow-visible">
-            <rect x={leftX0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={INK_2} />
+            <rect x={leftX0} y={leftY0} width={NODE_W} height={Math.max(leftH, 1)} rx={2} fill={leftColor} />
             {ribbons.map((r) => <path key={r.key} d={r.path} fill={r.color} opacity={0.85} />)}
             {rightNodes.map((node) => (
               <rect key={node.key} x={rightX0} y={node.y0} width={NODE_W} height={node.h} rx={2} fill={node.color} />
@@ -432,15 +470,33 @@ function MoneyFlowContent({ months, breakdown, billColorByName, fundColorById, s
           </svg>
         </div>
         <div className="relative shrink-0" style={{ width: RIGHT_COL, height: VBH }}>
-          {rightNodes.map((node, i) => (
-            <div key={node.key} className="absolute left-1 -translate-y-1/2 min-w-0" style={{ top: `${(labelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
-              <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0`}>
-                <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
-                <span className="truncate">{node.label}</span>
-              </p>
-              <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
-            </div>
-          ))}
+          {rightNodes.map((node, i) => {
+            // Only Bills/Funds arms at the top level are drillable — and only
+            // once breakdown has loaded, so a click never lands on nothing.
+            const drillable = !drill && canDrill && node.drillKey
+            const label = (
+              <>
+                <p className={`${textSize} font-semibold text-ink leading-tight flex items-start gap-1 min-w-0 ${drillable ? 'group-hover:underline' : ''}`}>
+                  <span className={`${dotSize} rounded-full shrink-0 mt-0.5`} style={{ background: node.color }} />
+                  <span className="truncate">{node.label}</span>
+                </p>
+                <p className={`${textSize} text-ink-2 tabular leading-tight pl-2.5`}>{c(node.amount)}</p>
+              </>
+            )
+            return (
+              <div key={node.key} className="absolute left-1 -translate-y-1/2 min-w-0" style={{ top: `${(labelCenters[i] / VBH) * 100}%`, width: RIGHT_COL - 4 }}>
+                {drillable ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDrill(node.drillKey) }}
+                    className="group text-left w-full -m-1 p-1 rounded-lg hover:bg-paper transition-colors"
+                    aria-label={`See ${node.label} breakdown`}
+                  >
+                    {label}
+                  </button>
+                ) : label}
+              </div>
+            )
+          })}
         </div>
       </div>
       {gapCents > 0 && (
