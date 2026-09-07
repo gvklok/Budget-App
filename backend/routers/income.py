@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
@@ -272,6 +273,20 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
         for s in sources
     )
 
+    # Actual (not projected) income logged so far this month — same two-kind
+    # aggregation as overview.monthly()'s income_cents, just scoped to a single
+    # requested/effective-current month instead of a rolling window.
+    month_prefix = f"{year:04d}-{month:02d}"
+    actual_income = (
+        db.query(func.coalesce(func.sum(models.LedgerEntry.amount_cents), 0))
+        .filter(
+            models.LedgerEntry.kind.in_(["paycheck", "misc_income"]),
+            models.LedgerEntry.date.like(f"{month_prefix}%"),
+        )
+        .scalar()
+        or 0
+    )
+
     bills_total = sum(e.amount_cents for e in bills)
     fund_total = sum(f.monthly_contribution_cents for f in funds)
     expenses_total = bills_total + fund_total
@@ -280,7 +295,6 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
     # transactions don't count as spending — they moved to another account you
     # own, not out of your net worth.
     bill_line_item_ids = {e.id for e in bills}
-    month_prefix = f"{year:04d}-{month:02d}"
     month_txns = db.query(models.Transaction).filter(models.Transaction.date.like(f"{month_prefix}%")).all()
     actual_bills_spent = 0
     actual_fund_spent = 0
@@ -318,6 +332,7 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
         "year": year,
         "month": month,
         "expected_income_cents": expected_income,
+        "actual_income_cents": actual_income,
         "expected_bills_total_cents": bills_total,
         "expected_fund_contributions_total_cents": fund_total,
         "expected_expenses_total_cents": expenses_total,
