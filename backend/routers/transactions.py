@@ -384,7 +384,7 @@ def create_split_transaction(body: schemas.SplitTransactionCreate, db: Session =
     for split in body.splits:
         transactions.append(
             _create_leg(
-                split.amount_cents, body.date, body.merchant,
+                split.amount_cents, body.date, split.merchant if split.merchant else body.merchant,
                 split.line_item_id, split.fund_id, db,
             )
         )
