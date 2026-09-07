@@ -192,6 +192,12 @@ class LogPaycheckBody(BaseModel):
     amount_cents: Optional[int] = None  # override for a bonus/odd check; default = source amount
 
 
+class LogMiscIncomeBody(BaseModel):
+    amount_cents: int
+    label: Optional[str] = None
+    date: Optional[str] = None  # YYYY-MM-DD; defaults to effective-today via ledger.record
+
+
 @router.post("/paycheck")
 def log_paycheck(body: LogPaycheckBody, db: Session = Depends(get_db)):
     """Real (non-dev) income entry: a paycheck lands in Savings. Mirrors the
@@ -211,6 +217,35 @@ def log_paycheck(body: LogPaycheckBody, db: Session = Depends(get_db)):
     ledger.record(db, kind="paycheck", amount_cents=amount, from_bucket="external", to_bucket="savings", label=source.name)
     db.commit()
     return {"ok": True, "added_cents": amount, "source_id": source.id, "name": source.name}
+
+
+@router.post("/income/misc")
+def log_misc_income(body: LogMiscIncomeBody, db: Session = Depends(get_db)):
+    """One-off, non-recurring income (a cash gift, a Zelle from a friend, etc.).
+    Deliberately never touches IncomeSource — routing this through a fake
+    recurring source would inflate future months' expected-income projections,
+    and there's no real schedule to attach it to. Lands in Savings exactly like
+    a paycheck (Savings and Real Cash rise together), but under its own ledger
+    kind so it stays honestly distinguishable from real recurring paychecks."""
+    if body.amount_cents <= 0:
+        raise HTTPException(400, "Amount must be positive")
+
+    label = body.label or "Other income"
+    savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
+    savings.balance_cents += body.amount_cents
+    rc.balance_cents += body.amount_cents
+    ledger.record(
+        db,
+        kind="misc_income",
+        amount_cents=body.amount_cents,
+        from_bucket="external",
+        to_bucket="savings",
+        label=label,
+        date=body.date,
+    )
+    db.commit()
+    return {"ok": True, "added_cents": body.amount_cents, "label": label}
 
 
 # ── Monthly summary ───────────────────────────────────────────────────────────
