@@ -946,16 +946,13 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
 
 // ── Bill group (collapsible by category) ─────────────────────────────────────
 
-function GroupSummary({ label, planned, spent, color, negative }) {
+function GroupSummary({ label, planned, spent, color }) {
   const pct = planned > 0 ? (spent / planned) * 100 : 0
   const remaining = planned - spent
   const over = spent > planned
   return (
     <div className="flex items-center gap-3 flex-1 min-w-0">
-      <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-ink-2 flex items-center gap-1.5">
-        {negative && <AlertTriangle size={12} className="text-critical shrink-0" />}
-        <span className="truncate">{label}</span>
-      </p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-ink-2 truncate">{label}</p>
       {spent > 0 && (
         <div className="flex-1 max-w-[120px]">
           <Bar pct={pct} color={pct > 100 ? CRITICAL : color} height={5} animate={false} />
@@ -1019,56 +1016,6 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onLogTx, onDeleteTx }) 
             </div>
           )}
         </>
-      )}
-    </Card>
-  )
-}
-
-// ── Fund group (collapsible, one fund per group) ─────────────────────────────
-// Mirrors BillGroup's exact collapse/expand chrome, applied to a single Fund
-// instead of a category's Bills — closed by default, tap to reveal the full
-// ItemRow (unchanged) with its detail/actions.
-
-function FundSummaryBar({ fund, spent, color, negative }) {
-  // A fund with a monthly contribution reads like a Bill group summary
-  // (budget vs spent, GroupSummary as-is). A fund with no contribution set
-  // has no meaningful "budget" — showing "$0 spent / $0.00" would be
-  // misleading — so its collapsed bar shows the running balance instead.
-  if (fund.monthly_contribution_cents > 0) {
-    return <GroupSummary label={fund.name} planned={fund.monthly_contribution_cents} spent={spent} color={color} negative={negative} />
-  }
-  return (
-    <div className="flex items-center gap-3 flex-1 min-w-0">
-      <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-ink-2 flex items-center gap-1.5">
-        {negative && <AlertTriangle size={12} className="text-critical shrink-0" />}
-        <span className="truncate">{fund.name}</span>
-      </p>
-      <span className={`text-xs font-semibold tabular shrink-0 ml-auto ${negative ? 'text-critical' : 'text-ink-2'}`}>
-        {c(fund.balance_cents)}
-      </span>
-    </div>
-  )
-}
-
-function FundGroup({ fund, spent, txns, color, subtitle, negative, recoveryNote, onEdit, onLogTx, onDeleteTx }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <Card className="overflow-hidden">
-      <button onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-3 bg-paper/70 border-b border-line">
-        <div className="w-5 shrink-0 flex items-center justify-center text-ink-3">
-          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        </div>
-        {open
-          ? <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 truncate">{fund.name}</p>
-          : <FundSummaryBar fund={fund} spent={spent} color={color} negative={negative} />}
-      </button>
-      {open && (
-        <div className="divide-y divide-line">
-          <ItemRow name={fund.name} subtitle={subtitle} negative={negative} recoveryNote={recoveryNote}
-            budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={txns} color={color}
-            onEdit={onEdit} onLogTx={onLogTx} onDeleteTx={onDeleteTx} />
-        </div>
       )}
     </Card>
   )
@@ -1848,40 +1795,43 @@ export default function ExpensesPage() {
               ))}
             </Card>
           ) : fundsOpen && (
-            <div className="space-y-3">
-              {funds.map((fund) => {
-                const fundTxns = txnsByFundId[fund.id] ?? []
-                const spent = fundTxns.reduce((s, t) => s + t.amount_cents, 0)
-                const subtitle = fund.destination_type === 'transfer_out'
-                  ? 'Transfer out — not counted as spending'
-                  : fund.monthly_contribution_cents === 0 ? 'No contribution set' : null
-                // U9: recovery timeline for Funds allowed to go negative
-                const isNegative = fund.balance_cents < 0
-                let recoveryNote = null
-                if (isNegative) {
-                  recoveryNote = fund.monthly_contribution_cents > 0
-                    ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
-                    : 'No contribution set — will not recover automatically'
-                }
-                // Transfer-out funds hitting their target is SUCCESS (money moved to an
-                // account you own), never danger — so they always wear the neutral
-                // TRANSFER_OUT stone rather than the warn/critical fundStatusColor
-                // zones a discretionary Fund would at the same percentage.
-                const isTransferOut = fund.destination_type === 'transfer_out'
-                // Bar fill reads as the fund's own identity color (matching its
-                // dot everywhere else) rather than the semantic FUNDS_HUE blue —
-                // that blue is reserved for aggregates (Funds ring, allocation
-                // bar, Overview charts). Overspend still escalates to CRITICAL —
-                // honesty over identity.
-                const fundPct = fund.monthly_contribution_cents > 0 ? (spent / fund.monthly_contribution_cents) * 100 : 0
-                const fundColor = isTransferOut ? TRANSFER_OUT : (fundPct > 100 ? CRITICAL : entityColor(fund))
-                return <FundGroup key={fund.id} fund={fund} spent={spent} txns={fundTxns}
-                  color={fundColor} subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
-                  onEdit={locked ? undefined : () => setEditFundContrib(fund)}
-                  onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
-                  onDeleteTx={locked ? undefined : handleDeleteTx} />
-              })}
-            </div>
+            <Card className="overflow-hidden">
+              <div className="divide-y divide-line">
+                {funds.map((fund) => {
+                  const fundTxns = txnsByFundId[fund.id] ?? []
+                  const spent = fundTxns.reduce((s, t) => s + t.amount_cents, 0)
+                  const subtitle = fund.destination_type === 'transfer_out'
+                    ? 'Transfer out — not counted as spending'
+                    : fund.monthly_contribution_cents === 0 ? 'No contribution set' : null
+                  // U9: recovery timeline for Funds allowed to go negative
+                  const isNegative = fund.balance_cents < 0
+                  let recoveryNote = null
+                  if (isNegative) {
+                    recoveryNote = fund.monthly_contribution_cents > 0
+                      ? `At ${c(fund.monthly_contribution_cents)}/mo, back to $0 in ~${Math.ceil(Math.abs(fund.balance_cents) / fund.monthly_contribution_cents)} months`
+                      : 'No contribution set — will not recover automatically'
+                  }
+                  // Transfer-out funds hitting their target is SUCCESS (money moved to an
+                  // account you own), never danger — so they always wear the neutral
+                  // TRANSFER_OUT stone rather than the warn/critical fundStatusColor
+                  // zones a discretionary Fund would at the same percentage.
+                  const isTransferOut = fund.destination_type === 'transfer_out'
+                  // Bar fill reads as the fund's own identity color (matching its
+                  // dot everywhere else) rather than the semantic FUNDS_HUE blue —
+                  // that blue is reserved for aggregates (Funds ring, allocation
+                  // bar, Overview charts). Overspend still escalates to CRITICAL —
+                  // honesty over identity.
+                  const fundPct = fund.monthly_contribution_cents > 0 ? (spent / fund.monthly_contribution_cents) * 100 : 0
+                  return <ItemRow key={fund.id} name={fund.name}
+                    subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
+                    budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
+                    color={isTransferOut ? TRANSFER_OUT : (fundPct > 100 ? CRITICAL : entityColor(fund))}
+                    onEdit={locked ? undefined : () => setEditFundContrib(fund)}
+                    onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
+                    onDeleteTx={locked ? undefined : handleDeleteTx} />
+                })}
+              </div>
+            </Card>
           )}
         </div>
       )}
