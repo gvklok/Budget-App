@@ -277,19 +277,39 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
   // split can be a different type than the main selection), and whatever's
   // left implicitly stays with the main bucket. Collapsed by default — this
   // is a power feature, not part of the default logging flow.
+  // Within a split row, the amount itself is itemized: each row holds a list
+  // of {name, price} entries (e.g. "gum $3", "new toy $20") so the split's
+  // total is computed from items, zero mental math — and the item names are
+  // preserved as that split's merchant on submit, not just used then discarded.
   const [splitOpen, setSplitOpen] = useState(false)
   const [splitRows, setSplitRows] = useState([])
+
+  function makeItem() {
+    return { key: Math.random().toString(36).slice(2), name: '', price: '' }
+  }
+  function makeSplitRow(rowMode) {
+    return { key: Math.random().toString(36).slice(2), mode: rowMode, itemId: '', items: [makeItem()] }
+  }
+  function rowSumCents(row) {
+    return row.items.reduce((s, it) => s + (it.price && Number(it.price) > 0 ? toCents(it.price) : 0), 0)
+  }
+  function rowValidItems(row) {
+    return row.items.filter((it) => it.price && Number(it.price) > 0)
+  }
+  function rowHasContent(row) {
+    return row.itemId !== '' || row.items.some((it) => (it.name && it.name.trim() !== '') || it.price !== '')
+  }
 
   function toggleSplit() {
     setSplitOpen((v) => {
       const next = !v
-      if (next && splitRows.length === 0) setSplitRows([{ key: Math.random().toString(36).slice(2), mode, itemId: '', amount: '' }])
+      if (next && splitRows.length === 0) setSplitRows([makeSplitRow(mode)])
       if (!next) setSplitRows([])
       return next
     })
   }
   function addSplitRow() {
-    setSplitRows((rows) => [...rows, { key: Math.random().toString(36).slice(2), mode, itemId: '', amount: '' }])
+    setSplitRows((rows) => [...rows, makeSplitRow(mode)])
   }
   function updateSplitRow(key, patch) {
     setSplitRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
@@ -297,13 +317,25 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
   function removeSplitRow(key) {
     setSplitRows((rows) => rows.filter((r) => r.key !== key))
   }
+  function addItemToRow(rowKey) {
+    setSplitRows((rows) => rows.map((r) => (r.key === rowKey ? { ...r, items: [...r.items, makeItem()] } : r)))
+  }
+  function updateItemInRow(rowKey, itemKey, patch) {
+    setSplitRows((rows) => rows.map((r) =>
+      r.key === rowKey ? { ...r, items: r.items.map((it) => (it.key === itemKey ? { ...it, ...patch } : it)) } : r
+    ))
+  }
+  function removeItemFromRow(rowKey, itemKey) {
+    setSplitRows((rows) => rows.map((r) => (r.key === rowKey ? { ...r, items: r.items.filter((it) => it.key !== itemKey) } : r)))
+  }
 
-  // Live remainder — sums whatever's typed so far (even an incomplete row),
-  // so the "X gets: $Y" math updates as he types, before he's picked a bucket.
-  const splitsSumCents = splitRows.reduce((s, r) => s + (r.amount && Number(r.amount) > 0 ? toCents(r.amount) : 0), 0)
+  // Live remainder — sums whatever's typed so far across every split row's
+  // items (even an incomplete row), so the "X gets: $Y" math updates as he
+  // types, before he's picked a bucket or finished itemizing.
+  const splitsSumCents = splitRows.reduce((s, r) => s + rowSumCents(r), 0)
   const splitRemainderCents = toCents(amount || '0') - splitsSumCents
-  const filledSplitRows = splitRows.filter((r) => r.itemId !== '' || r.amount !== '')
-  const incompleteSplitRow = filledSplitRows.some((r) => !r.itemId || !r.amount || Number(r.amount) <= 0)
+  const filledSplitRows = splitRows.filter(rowHasContent)
+  const incompleteSplitRow = filledSplitRows.some((r) => !r.itemId || rowValidItems(r).length === 0)
   const splitInvalid = splitOpen && (incompleteSplitRow || splitRemainderCents < 0)
   const mainSplitLabel = mode === 'category'
     ? (bills.find((b) => String(b.id) === String(lineItemId))?.name ?? 'The main Bill')
@@ -357,11 +389,11 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
     if (!amount) return setError('Amount is required')
 
     if (splitOpen) {
-      if (incompleteSplitRow) return setError('Every split needs a bucket and a positive amount')
-      const validSplitRows = splitRows.filter((r) => r.itemId && r.amount && Number(r.amount) > 0)
+      if (incompleteSplitRow) return setError('Every split needs a bucket and at least one priced item')
+      const validSplitRows = splitRows.filter((r) => r.itemId && rowValidItems(r).length > 0)
       if (validSplitRows.length > 0) {
         const totalCents = toCents(amount)
-        const splitsSum = validSplitRows.reduce((s, r) => s + toCents(r.amount), 0)
+        const splitsSum = validSplitRows.reduce((s, r) => s + rowSumCents(r), 0)
         if (splitsSum > totalCents) return setError('Splits add up to more than the total amount')
         setSaving(true); setError('')
         try {
@@ -369,10 +401,16 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
             date, merchant: merchant.trim() || null,
             total_amount_cents: totalCents,
             main: mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) },
-            splits: validSplitRows.map((r) => ({
-              amount_cents: toCents(r.amount),
-              ...(r.mode === 'category' ? { line_item_id: Number(r.itemId) } : { fund_id: Number(r.itemId) }),
-            })),
+            splits: validSplitRows.map((r) => {
+              const validItems = rowValidItems(r)
+              const amount_cents = validItems.reduce((s, it) => s + toCents(it.price), 0)
+              const names = validItems.filter((it) => it.name && it.name.trim() !== '').map((it) => it.name.trim())
+              return {
+                amount_cents,
+                ...(r.mode === 'category' ? { line_item_id: Number(r.itemId) } : { fund_id: Number(r.itemId) }),
+                ...(names.length > 0 ? { merchant: names.join(', ') } : {}),
+              }
+            }),
           }
           await onSaveSplit(payload); onClose()
         } catch (err) { setError(err.message) } finally { setSaving(false) }
@@ -496,14 +534,35 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
                           <X size={14} />
                         </button>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <select value={row.itemId} onChange={(e) => updateSplitRow(row.key, { itemId: e.target.value })} className={inputClass}>
-                          <option value="">Select…</option>
-                          {rowItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-                        </select>
-                        <input type="number" step="0.01" min="0" value={row.amount}
-                          onChange={(e) => updateSplitRow(row.key, { amount: e.target.value })}
-                          placeholder="0.00" className={inputClass} />
+                      <select value={row.itemId} onChange={(e) => updateSplitRow(row.key, { itemId: e.target.value })} className={inputClass}>
+                        <option value="">Select…</option>
+                        {rowItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                      </select>
+                      {/* Itemized within this split — a name (optional, kept as this
+                          split's merchant on submit) + a price (required to count),
+                          summed live so the row's total needs zero mental math. */}
+                      <div className="space-y-1.5 pt-0.5">
+                        {row.items.map((item) => (
+                          <div key={item.key} className="flex items-center gap-1.5">
+                            <input type="text" value={item.name}
+                              onChange={(e) => updateItemInRow(row.key, item.key, { name: e.target.value })}
+                              placeholder="e.g. gum"
+                              className={`${inputClass} flex-1 !py-1.5 !px-2.5 text-sm`} />
+                            <input type="number" step="0.01" min="0" value={item.price}
+                              onChange={(e) => updateItemInRow(row.key, item.key, { price: e.target.value })}
+                              placeholder="0.00" className={`${inputClass} !w-24 !py-1.5 !px-2.5 text-sm shrink-0`} />
+                            <button type="button" onClick={() => removeItemFromRow(row.key, item.key)}
+                              className="w-6 h-6 flex items-center justify-center rounded-full text-ink-3 hover:bg-critical-soft hover:text-critical shrink-0">
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => addItemToRow(row.key)} className="text-xs font-semibold text-accent-ink">
+                          + Add item
+                        </button>
+                        <p className="text-xs font-semibold text-ink-2 tabular">
+                          Total: {c(rowSumCents(row))}
+                        </p>
                       </div>
                     </div>
                   )
