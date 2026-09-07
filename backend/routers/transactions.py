@@ -296,6 +296,105 @@ def create_transaction(body: schemas.TransactionCreate, db: Session = Depends(ge
     return tx
 
 
+def _validate_bucket_ref(line_item_id: Optional[int], fund_id: Optional[int], db: Session, what: str):
+    """Same XOR-and-exists rule as create_transaction, reused for the split
+    endpoint's main leg and every split leg."""
+    if line_item_id is None and fund_id is None:
+        raise HTTPException(400, f"{what} must provide either line_item_id or fund_id")
+    if line_item_id is not None and fund_id is not None:
+        raise HTTPException(400, f"{what} must provide only one of line_item_id or fund_id")
+    if line_item_id is not None:
+        if not db.query(models.Expense).filter(models.Expense.id == line_item_id).first():
+            raise HTTPException(404, f"{what}: line item not found")
+    if fund_id is not None:
+        if not db.query(models.Fund).filter(models.Fund.id == fund_id).first():
+            raise HTTPException(404, f"{what}: fund not found")
+
+
+def _create_leg(
+    amount_cents: int,
+    date: str,
+    merchant: Optional[str],
+    line_item_id: Optional[int],
+    fund_id: Optional[int],
+    db: Session,
+) -> models.Transaction:
+    """Mirrors create_transaction's per-transaction sequence, minus the commit —
+    callers batch-commit once across every leg for atomicity."""
+    tx = models.Transaction(
+        amount_cents=amount_cents,
+        date=date,
+        merchant=merchant or None,
+        line_item_id=line_item_id,
+        fund_id=fund_id,
+    )
+    db.add(tx)
+    db.flush()
+    line_name, destination = _snapshot_name_and_destination(tx, db)
+    tx.line_item_name = line_name
+    tx.destination_type = destination
+    _debit(tx, db)
+    bucket, label = _bucket_and_label(tx, db)
+    ledger.record(
+        db,
+        kind="spend",
+        amount_cents=tx.amount_cents,
+        from_bucket=bucket,
+        to_bucket="external",
+        label=label,
+        transaction_id=tx.id,
+        date=tx.date,
+        destination_type=destination,
+    )
+    return tx
+
+
+@router.post("/split")
+def create_split_transaction(body: schemas.SplitTransactionCreate, db: Session = Depends(get_db)):
+    try:
+        date_type.fromisoformat(body.date)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    if body.total_amount_cents <= 0:
+        raise HTTPException(400, "Total amount must be positive")
+
+    _validate_bucket_ref(body.main.line_item_id, body.main.fund_id, db, "main")
+    for i, split in enumerate(body.splits, start=1):
+        if split.amount_cents <= 0:
+            raise HTTPException(400, f"Split #{i} amount must be positive")
+        _validate_bucket_ref(split.line_item_id, split.fund_id, db, f"split #{i}")
+
+    splits_total = sum(s.amount_cents for s in body.splits)
+    if splits_total > body.total_amount_cents:
+        raise HTTPException(
+            400,
+            f"Splits total ${splits_total / 100:.2f}, more than the "
+            f"${body.total_amount_cents / 100:.2f} receipt total",
+        )
+    main_amount_cents = body.total_amount_cents - splits_total
+
+    transactions = []
+    if main_amount_cents > 0:
+        transactions.append(
+            _create_leg(
+                main_amount_cents, body.date, body.merchant,
+                body.main.line_item_id, body.main.fund_id, db,
+            )
+        )
+    for split in body.splits:
+        transactions.append(
+            _create_leg(
+                split.amount_cents, body.date, body.merchant,
+                split.line_item_id, split.fund_id, db,
+            )
+        )
+
+    db.commit()
+    for tx in transactions:
+        db.refresh(tx)
+    return {"ok": True, "transactions": _enrich(transactions, db)}
+
+
 @router.delete("/{tx_id}")
 def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
     tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()

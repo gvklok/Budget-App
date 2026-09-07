@@ -159,6 +159,25 @@ class TransactionCreate(BaseModel):
     fund_id: Optional[int] = None  # set this OR line_item_id, not both
 
 
+class SplitTransactionMain(BaseModel):
+    line_item_id: Optional[int] = None
+    fund_id: Optional[int] = None  # set this OR line_item_id, not both
+
+
+class SplitTransactionSplit(BaseModel):
+    line_item_id: Optional[int] = None
+    fund_id: Optional[int] = None  # set this OR line_item_id, not both
+    amount_cents: int
+
+
+class SplitTransactionCreate(BaseModel):
+    date: str  # YYYY-MM-DD
+    merchant: Optional[str] = None
+    total_amount_cents: int
+    main: SplitTransactionMain
+    splits: list[SplitTransactionSplit] = []
+
+
 class LedgerEntryOut(BaseModel):
     id: int
     date: str
