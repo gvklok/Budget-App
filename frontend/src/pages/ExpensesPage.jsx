@@ -261,7 +261,7 @@ function FundContributionModal({ fund, onClose, onSave }) {
 
 // ── Log Transaction Modal ─────────────────────────────────────────────────────
 
-function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, defaultFundId, defaultSourceId, defaultDate, onClose, onSave, onLogPaycheck }) {
+function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, defaultFundId, defaultSourceId, defaultDate, onClose, onSave, onLogPaycheck, onLogMiscIncome }) {
   const today = defaultDate ?? new Date().toISOString().slice(0, 10)
   const [mode, setMode] = useState(defaultSourceId ? 'paycheck' : defaultFundId ? 'fund' : 'category')
   const [lineItemId, setLineItemId] = useState(defaultLineItemId ?? '')
@@ -271,6 +271,12 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
   const [merchant, setMerchant] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Other income mode — one-off, non-recurring income (gift, Zelle, etc).
+  // Lands in Savings, no source_id.
+  const [miscAmount, setMiscAmount] = useState('')
+  const [miscLabel, setMiscLabel] = useState('')
+  const [miscDate, setMiscDate] = useState(today)
 
   // Paycheck mode — no fund/date/merchant, money lands on Savings now. Amount
   // pre-fills from the selected source (editable — bonus/odd checks) and
@@ -300,6 +306,15 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
       } catch (err) { setError(err.message) } finally { setSaving(false) }
       return
     }
+    if (mode === 'other') {
+      if (!miscAmount) return setError('Amount is required')
+      setSaving(true); setError('')
+      try {
+        await onLogMiscIncome({ amount_cents: toCents(miscAmount), label: miscLabel.trim() || null, date: miscDate })
+        onClose()
+      } catch (err) { setError(err.message) } finally { setSaving(false) }
+      return
+    }
     if (mode === 'category' && !lineItemId) return setError('Select a line item')
     if (mode === 'fund' && !fundId) return setError('Select a fund')
     if (!amount) return setError('Amount is required')
@@ -317,7 +332,7 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
     <Modal title="Log Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Segmented
-          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'paycheck', label: 'Paycheck' }]}
+          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'paycheck', label: 'Paycheck' }, { value: 'other', label: 'Other Income' }]}
           value={mode} onChange={setMode}
         />
         {mode === 'category' && (
@@ -365,7 +380,31 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
             <p className="text-sm text-ink-3">Add an income source below first.</p>
           )
         )}
-        {mode !== 'paycheck' && (
+        {mode === 'other' && (
+          <>
+            <div>
+              <label className={labelClass}>Amount</label>
+              <input autoFocus type="number" step="0.01" min="0" value={miscAmount}
+                onChange={(e) => setMiscAmount(e.target.value)} placeholder="0.00"
+                className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Description</label>
+              <input value={miscLabel} onChange={(e) => setMiscLabel(e.target.value)}
+                placeholder="e.g. Birthday gift from Mom, Zelle from Dave" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Date</label>
+              <input type="date" value={miscDate} onChange={(e) => setMiscDate(e.target.value)} className={inputClass} />
+            </div>
+            {miscAmount && Number(miscAmount) > 0 && (
+              <p className="text-sm font-semibold" style={{ color: SAVING_TEXT }}>
+                + {c(toCents(miscAmount))} → Savings
+              </p>
+            )}
+          </>
+        )}
+        {mode !== 'paycheck' && mode !== 'other' && (
           <>
             <div>
               <label className={labelClass}>Amount</label>
@@ -389,7 +428,7 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
         <PrimaryButton type="submit"
           disabled={saving || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
           className="w-full">
-          {saving ? 'Saving…' : mode === 'paycheck' ? 'Log paycheck' : 'Log'}
+          {saving ? 'Saving…' : mode === 'paycheck' ? 'Log paycheck' : mode === 'other' ? 'Log income' : 'Log'}
         </PrimaryButton>
       </form>
     </Modal>
@@ -998,6 +1037,11 @@ export default function ExpensesPage() {
   async function handleLogTx(data) { await apiPost('/transactions/', data); await load() }
   async function handleLogPaycheck(data) {
     await apiPost('/paycheck', data)
+    await load()
+    window.dispatchEvent(new Event('dev-refresh'))
+  }
+  async function handleLogMiscIncome(data) {
+    await apiPost('/income/misc', data)
     await load()
     window.dispatchEvent(new Event('dev-refresh'))
   }
@@ -1617,6 +1661,7 @@ export default function ExpensesPage() {
           defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultSourceId={logTx.sourceId}
           defaultDate={logTxDefaultDate}
           onClose={() => setLogTx(null)} onSave={handleLogTx} onLogPaycheck={handleLogPaycheck}
+          onLogMiscIncome={handleLogMiscIncome}
         />
       )}
       {reallocatePrompt && (
