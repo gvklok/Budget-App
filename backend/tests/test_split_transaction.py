@@ -287,6 +287,38 @@ def test_split_zero_total_rejected(client, helpers):
     assert r.status_code == 400
 
 
+def test_split_per_split_merchant_overrides_shared_merchant(client, helpers):
+    """A split can itemize its own description (e.g. 'gum, new toy, climbing
+    tape'); a split without one falls back to the shared receipt merchant, and
+    main always uses the shared merchant regardless."""
+    client.post("/dev/set-real-cash", json={"balance_cents": 500000})
+    fund_main = _make_fund(client, "Main", balance_cents=100000)
+    fund_itemized = _make_fund(client, "Gabe's Fund", balance_cents=100000)
+    fund_plain = _make_fund(client, "Plain Fund", balance_cents=100000)
+
+    r = client.post("/transactions/split", json={
+        "date": "2026-07-05",
+        "merchant": "Walmart",
+        "total_amount_cents": 10000,
+        "main": {"fund_id": fund_main},
+        "splits": [
+            {"fund_id": fund_itemized, "amount_cents": 3700, "merchant": "gum, new toy, climbing tape"},
+            {"fund_id": fund_plain, "amount_cents": 1000},
+        ],
+    })
+    assert r.status_code == 200, r.text
+    txs = r.json()["transactions"]
+
+    main_tx = next(t for t in txs if t["fund_id"] == fund_main)
+    itemized_tx = next(t for t in txs if t["fund_id"] == fund_itemized)
+    plain_tx = next(t for t in txs if t["fund_id"] == fund_plain)
+
+    assert main_tx["merchant"] == "Walmart"
+    assert itemized_tx["merchant"] == "gum, new toy, climbing tape"
+    assert plain_tx["merchant"] == "Walmart"
+    helpers["assert_invariant"](client)
+
+
 def test_split_zero_amount_split_rejected(client, helpers):
     client.post("/dev/set-real-cash", json={"balance_cents": 500000})
     fund_main = _make_fund(client, "Main", balance_cents=100000)

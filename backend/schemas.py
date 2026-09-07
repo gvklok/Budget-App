@@ -168,6 +168,7 @@ class SplitTransactionSplit(BaseModel):
     line_item_id: Optional[int] = None
     fund_id: Optional[int] = None  # set this OR line_item_id, not both
     amount_cents: int
+    merchant: Optional[str] = None  # itemized description for this split leg; falls back to the receipt merchant
 
 
 class SplitTransactionCreate(BaseModel):
