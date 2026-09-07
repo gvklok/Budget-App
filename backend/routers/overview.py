@@ -54,14 +54,14 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
 
     entries = (
         db.query(models.LedgerEntry)
-        .filter(models.LedgerEntry.kind.in_(["paycheck", "spend", "spend_reversal"]))
+        .filter(models.LedgerEntry.kind.in_(["paycheck", "misc_income", "spend", "spend_reversal"]))
         .all()
     )
     for e in entries:
         month_totals = totals.get(e.date[:7])
         if month_totals is None:
             continue
-        if e.kind == "paycheck":
+        if e.kind in ("paycheck", "misc_income"):
             month_totals["income_cents"] += e.amount_cents
             continue
         # spend: the fund-side bucket is from_bucket; spend_reversal: to_bucket.
