@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown, List } from 'lucide-react'
+import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown, List, X } from 'lucide-react'
 import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
 import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
 import Modal from '../components/Modal'
@@ -261,7 +261,7 @@ function FundContributionModal({ fund, onClose, onSave }) {
 
 // ── Log Transaction Modal ─────────────────────────────────────────────────────
 
-function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, defaultFundId, defaultSourceId, defaultDate, onClose, onSave, onLogPaycheck, onLogMiscIncome }) {
+function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, defaultFundId, defaultSourceId, defaultDate, onClose, onSave, onSaveSplit, onLogPaycheck, onLogMiscIncome }) {
   const today = defaultDate ?? new Date().toISOString().slice(0, 10)
   const [mode, setMode] = useState(defaultSourceId ? 'paycheck' : defaultFundId ? 'fund' : 'category')
   const [lineItemId, setLineItemId] = useState(defaultLineItemId ?? '')
@@ -271,6 +271,43 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
   const [merchant, setMerchant] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Split — the receipt total (above) is entered whole; each split row peels
+  // off an exact amount to a DIFFERENT bucket (own Bill/Fund picker, since a
+  // split can be a different type than the main selection), and whatever's
+  // left implicitly stays with the main bucket. Collapsed by default — this
+  // is a power feature, not part of the default logging flow.
+  const [splitOpen, setSplitOpen] = useState(false)
+  const [splitRows, setSplitRows] = useState([])
+
+  function toggleSplit() {
+    setSplitOpen((v) => {
+      const next = !v
+      if (next && splitRows.length === 0) setSplitRows([{ key: Math.random().toString(36).slice(2), mode, itemId: '', amount: '' }])
+      if (!next) setSplitRows([])
+      return next
+    })
+  }
+  function addSplitRow() {
+    setSplitRows((rows) => [...rows, { key: Math.random().toString(36).slice(2), mode, itemId: '', amount: '' }])
+  }
+  function updateSplitRow(key, patch) {
+    setSplitRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  }
+  function removeSplitRow(key) {
+    setSplitRows((rows) => rows.filter((r) => r.key !== key))
+  }
+
+  // Live remainder — sums whatever's typed so far (even an incomplete row),
+  // so the "X gets: $Y" math updates as he types, before he's picked a bucket.
+  const splitsSumCents = splitRows.reduce((s, r) => s + (r.amount && Number(r.amount) > 0 ? toCents(r.amount) : 0), 0)
+  const splitRemainderCents = toCents(amount || '0') - splitsSumCents
+  const filledSplitRows = splitRows.filter((r) => r.itemId !== '' || r.amount !== '')
+  const incompleteSplitRow = filledSplitRows.some((r) => !r.itemId || !r.amount || Number(r.amount) <= 0)
+  const splitInvalid = splitOpen && (incompleteSplitRow || splitRemainderCents < 0)
+  const mainSplitLabel = mode === 'category'
+    ? (bills.find((b) => String(b.id) === String(lineItemId))?.name ?? 'The main Bill')
+    : (funds.find((f) => String(f.id) === String(fundId))?.name ?? 'The main Fund')
 
   // Other income mode — one-off, non-recurring income (gift, Zelle, etc).
   // Lands in Savings, no source_id.
@@ -318,6 +355,31 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
     if (mode === 'category' && !lineItemId) return setError('Select a line item')
     if (mode === 'fund' && !fundId) return setError('Select a fund')
     if (!amount) return setError('Amount is required')
+
+    if (splitOpen) {
+      if (incompleteSplitRow) return setError('Every split needs a bucket and a positive amount')
+      const validSplitRows = splitRows.filter((r) => r.itemId && r.amount && Number(r.amount) > 0)
+      if (validSplitRows.length > 0) {
+        const totalCents = toCents(amount)
+        const splitsSum = validSplitRows.reduce((s, r) => s + toCents(r.amount), 0)
+        if (splitsSum > totalCents) return setError('Splits add up to more than the total amount')
+        setSaving(true); setError('')
+        try {
+          const payload = {
+            date, merchant: merchant.trim() || null,
+            total_amount_cents: totalCents,
+            main: mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) },
+            splits: validSplitRows.map((r) => ({
+              amount_cents: toCents(r.amount),
+              ...(r.mode === 'category' ? { line_item_id: Number(r.itemId) } : { fund_id: Number(r.itemId) }),
+            })),
+          }
+          await onSaveSplit(payload); onClose()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+        return
+      }
+    }
+
     setSaving(true); setError('')
     try {
       const payload = {
@@ -409,9 +471,55 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
             <div>
               <label className={labelClass}>Amount</label>
               <input autoFocus type="number" step="0.01" min="0" value={amount}
-                onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
+                onChange={(e) => setAmount(e.target.value)} placeholder="0.00 — full receipt total"
                 className={inputClass} />
             </div>
+
+            <button type="button" onClick={toggleSplit} className="text-xs font-semibold text-accent-ink">
+              {splitOpen ? 'Cancel split' : '+ Split this'}
+            </button>
+
+            {splitOpen && (
+              <div className="space-y-3 rounded-2xl border border-line p-3.5 bg-paper/50">
+                <p className="text-xs text-ink-3">Splits go to their own bucket — whatever's left stays with the main one.</p>
+                {splitRows.map((row) => {
+                  const rowItems = row.mode === 'category' ? bills : funds
+                  return (
+                    <div key={row.key} className="space-y-2 rounded-xl bg-card border border-line p-2.5">
+                      <div className="flex items-center gap-2">
+                        <Segmented
+                          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }]}
+                          value={row.mode} onChange={(v) => updateSplitRow(row.key, { mode: v, itemId: '' })}
+                        />
+                        <button type="button" onClick={() => removeSplitRow(row.key)}
+                          className="ml-auto w-7 h-7 flex items-center justify-center rounded-full text-ink-3 hover:bg-critical-soft hover:text-critical shrink-0">
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <select value={row.itemId} onChange={(e) => updateSplitRow(row.key, { itemId: e.target.value })} className={inputClass}>
+                          <option value="">Select…</option>
+                          {rowItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                        </select>
+                        <input type="number" step="0.01" min="0" value={row.amount}
+                          onChange={(e) => updateSplitRow(row.key, { amount: e.target.value })}
+                          placeholder="0.00" className={inputClass} />
+                      </div>
+                    </div>
+                  )
+                })}
+                <button type="button" onClick={addSplitRow} className="text-xs font-semibold text-accent-ink">
+                  + Add another split
+                </button>
+                <p className={`text-sm font-semibold ${splitRemainderCents < 0 ? 'text-critical' : 'text-ink'}`}>
+                  {mainSplitLabel} gets: {c(splitRemainderCents)}
+                </p>
+                {splitRemainderCents < 0 && (
+                  <p className="text-xs text-critical -mt-2">Splits add up to more than the total — reduce one.</p>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>Date</label>
@@ -426,7 +534,7 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
         )}
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit"
-          disabled={saving || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
+          disabled={saving || splitInvalid || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
           className="w-full">
           {saving ? 'Saving…' : mode === 'paycheck' ? 'Log paycheck' : mode === 'other' ? 'Log income' : 'Log'}
         </PrimaryButton>
@@ -1035,6 +1143,7 @@ export default function ExpensesPage() {
   async function handleDeleteCat(cat) { if (!confirm(`Delete "${cat.name}"? Bills become uncategorized.`)) return; await apiDel(`/line-items/categories/${cat.id}`); await load() }
   async function handleUpdateFundContrib(id, data) { await apiPatch(`/funds/${id}`, data); await load() }
   async function handleLogTx(data) { await apiPost('/transactions/', data); await load() }
+  async function handleLogSplitTx(data) { await apiPost('/transactions/split', data); await load() }
   async function handleLogPaycheck(data) {
     await apiPost('/paycheck', data)
     await load()
@@ -1674,7 +1783,7 @@ export default function ExpensesPage() {
           bills={bills} funds={funds} incomeSources={incomeSources}
           defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultSourceId={logTx.sourceId}
           defaultDate={logTxDefaultDate}
-          onClose={() => setLogTx(null)} onSave={handleLogTx} onLogPaycheck={handleLogPaycheck}
+          onClose={() => setLogTx(null)} onSave={handleLogTx} onSaveSplit={handleLogSplitTx} onLogPaycheck={handleLogPaycheck}
           onLogMiscIncome={handleLogMiscIncome}
         />
       )}
