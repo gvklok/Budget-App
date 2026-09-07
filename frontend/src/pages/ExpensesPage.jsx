@@ -1378,6 +1378,20 @@ export default function ExpensesPage() {
             funds={summary.expected_fund_contributions_total_cents}
             net={summary.expected_savings_cents}
           />
+
+          {/* Income received so far this month — kept minimal (a line + thin
+              bar, no new card) per owner's explicit ask not to clutter this
+              section. */}
+          <div className="pt-3 border-t border-line">
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="text-ink-2">Income received so far</span>
+              <span className="tabular font-semibold" style={{ color: SAVING_TEXT }}>
+                {c(summary.actual_income_cents ?? 0)}
+                <span className="text-ink-3 font-normal"> of {c(summary.expected_income_cents)}</span>
+              </span>
+            </div>
+            <Bar pct={((summary.actual_income_cents ?? 0) / summary.expected_income_cents) * 100} color={SAVING} height={4} animate={false} />
+          </div>
         </Card>
       )}
 
