@@ -204,47 +204,6 @@ function PeriodReviewCard({ months, rangeMonths }) {
   )
 }
 
-// ── Income Progress — prominent hero stat for the effective current month.
-// Owner's explicit placement call: bigger/more prominent than the compact
-// version on Expenses. Mirrors PeriodReviewCard's hero language (giant %
-// figure, calm SAVING green, plain-language sentence + bar underneath). No
-// income sources configured (expected == 0) degrades gracefully to a plain
-// dollar figure — a percentage/bar against a zero denominator would be
-// meaningless, per the owner's spec.
-function IncomeProgressCard({ expectedCents, actualCents, monthLabel }) {
-  const hasExpected = expectedCents > 0
-  const pct = hasExpected ? (actualCents / expectedCents) * 100 : null
-
-  return (
-    <Card className="p-5 mb-3">
-      <SectionLabel>Income This Month</SectionLabel>
-      {hasExpected ? (
-        <div className="mb-1">
-          <span className="hero-figure text-5xl font-bold tabular" style={{ color: SAVING }}>
-            {Math.round(pct)}%
-          </span>
-          <p className="text-xs text-ink-3 mt-0.5">of expected income received · {monthLabel}</p>
-          <p className="text-sm text-ink-2 mt-2">
-            <span className="tabular font-semibold text-ink">{c(actualCents)}</span> of{' '}
-            <span className="tabular">{c(expectedCents)}</span> expected
-          </p>
-          <div className="mt-4">
-            <Bar pct={pct} color={SAVING} height={8} />
-          </div>
-        </div>
-      ) : (
-        <div className="mb-1">
-          <span className="hero-figure text-5xl font-bold tabular" style={{ color: SAVING }}>
-            {c(actualCents)}
-          </span>
-          <p className="text-xs text-ink-3 mt-0.5">income received · {monthLabel}</p>
-          <p className="text-sm text-ink-2 mt-2">No income sources configured yet — add one to track progress against expected income.</p>
-        </div>
-      )}
-    </Card>
-  )
-}
-
 // ── Money Flow — Monarch-style cash-flow sankey for the selected range ──────
 // A STATIC, always-fully-expanded 3-column hierarchical sankey — no
 // click-to-drill, no single-level flat explosion. Column 1: Income (single
@@ -1418,14 +1377,6 @@ export default function OverviewPage() {
         <h1 className="text-3xl font-bold text-ink tracking-tight">Overview</h1>
         <Segmented value={range} onChange={setRange} options={RANGE_OPTIONS} />
       </div>
-
-      {current && (current.expectedIncomeCents > 0 || current.actualIncomeCents > 0) && (
-        <IncomeProgressCard
-          expectedCents={current.expectedIncomeCents}
-          actualCents={current.actualIncomeCents}
-          monthLabel={monthShortLabel(current.year, current.month)}
-        />
-      )}
 
       {!hasActivity && (breakdown?.bills?.length ?? 0) === 0 && (breakdown?.funds?.length ?? 0) === 0 ? (
         <Card className="p-8 flex flex-col items-center text-center gap-2">
