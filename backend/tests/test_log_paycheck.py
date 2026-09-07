@@ -91,3 +91,25 @@ def test_log_misc_income_never_affects_expected_income_projection(client):
     assert after["expected_income_cents"] == before["expected_income_cents"]
     # still only the one real recurring source
     assert len(client.get("/income-sources").json()) == 1
+
+
+def test_monthly_summary_actual_income_sums_paycheck_and_misc_income(client):
+    client.post("/dev/set-simulated-date", json={"date": "2026-01-02"})
+    r = client.post("/income-sources", json={"name": "Job", "amount_cents": 250000, "frequency": "biweekly", "anchor_date": "2026-01-02"})
+    source_id = r.json()["id"]
+
+    before = client.get("/monthly-summary", params={"year": 2026, "month": 1}).json()
+    assert before["actual_income_cents"] == 0
+
+    client.post("/paycheck", json={"source_id": source_id})  # dated via effective-today (2026-01-02), lands in January
+    client.post("/income/misc", json={"amount_cents": 5000, "label": "Gift", "date": "2026-01-15"})
+    # Out-of-month misc income must not bleed into January's actual total.
+    client.post("/income/misc", json={"amount_cents": 777777, "label": "Later", "date": "2026-02-01"})
+
+    after = client.get("/monthly-summary", params={"year": 2026, "month": 1}).json()
+    assert after["actual_income_cents"] == 250000 + 5000
+    # Expected (projected) income stays untouched by real logging.
+    assert after["expected_income_cents"] == before["expected_income_cents"]
+
+    february = client.get("/monthly-summary", params={"year": 2026, "month": 2}).json()
+    assert february["actual_income_cents"] == 777777
