@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight } from 'lucide-react'
 import { fmt, apiGet, monthLabel } from '../api'
-import { entityColor, colorForName, TRANSFER_OUT } from '../theme'
+import { entityColor, colorForName, TRANSFER_OUT, SAVING } from '../theme'
 import { Card, SectionLabel, Badge, EmptyState, PrimaryButton } from '../components/ui'
 import { useRefetchOnFocus } from '../hooks'
 
@@ -35,19 +35,31 @@ function groupByMonth(transactions) {
 }
 
 function TransactionRow({ tx, fundColorById, billColorByName }) {
+  // Income entries (paychecks + one-off "Other Income" gifts) arrive in the
+  // same list as spend rows (`?include_income=true`) — they carry no
+  // fund/bill identity, so they get their own treatment: SAVING green (the
+  // app's one "money kept/coming in" hue) instead of an entity color, and an
+  // inflow arrow instead of an identity dot.
+  const isIncome = tx.kind === 'paycheck' || tx.kind === 'misc_income'
   // A transaction that resolved a fund_name is fund-routed (direct fund spend,
   // or a fund-type line item) — same precedence FundsPage/ExpensesPage use to
   // decide "is this row a Fund or a Bill." Bills only ever resolve line_item_name.
   const isFund = !!tx.fund_name
-  const name = tx.fund_name || tx.line_item_name || 'Uncategorized'
+  const name = isIncome
+    ? (tx.kind === 'paycheck' ? 'Paycheck' : 'Other Income')
+    : (tx.fund_name || tx.line_item_name || 'Uncategorized')
   const isTransferOut = tx.destination_type === 'transfer_out'
-  const color = isFund
-    ? entityColor({ id: tx.fund_id, color: fundColorById[tx.fund_id] })
-    : (billColorByName[stripDeletedSuffix(name)] || colorForName(stripDeletedSuffix(name)))
+  const color = isIncome
+    ? SAVING
+    : isFund
+      ? entityColor({ id: tx.fund_id, color: fundColorById[tx.fund_id] })
+      : (billColorByName[stripDeletedSuffix(name)] || colorForName(stripDeletedSuffix(name)))
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+      {isIncome
+        ? <ArrowUpRight size={14} className="shrink-0" style={{ color }} />
+        : <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <p className="text-sm font-medium text-ink truncate">{name}</p>
@@ -59,8 +71,11 @@ function TransactionRow({ tx, fundColorById, billColorByName }) {
           {tx.merchant ? `${tx.merchant} · ${fmtDate(tx.date)}` : fmtDate(tx.date)}
         </p>
       </div>
-      <span className="text-sm font-semibold tabular shrink-0" style={isTransferOut ? { color: TRANSFER_OUT } : undefined}>
-        {c(tx.amount_cents)}
+      <span
+        className="text-sm font-semibold tabular shrink-0"
+        style={isIncome ? { color } : isTransferOut ? { color: TRANSFER_OUT } : undefined}
+      >
+        {isIncome ? '+' : ''}{c(tx.amount_cents)}
       </span>
     </div>
   )
@@ -80,7 +95,7 @@ export default function TransactionsPage() {
       const clock = await apiGet('/dev/current-date')
       const [y, m] = clock.effective_date.split('-').map(Number)
       const [txData, fundsData, lineItems] = await Promise.all([
-        apiGet('/transactions/'),
+        apiGet('/transactions/?include_income=true'),
         apiGet('/funds/'),
         apiGet(`/line-items/?year=${y}&month=${m}`),
       ])
@@ -148,7 +163,7 @@ export default function TransactionsPage() {
             <SectionLabel>{monthLabel(group.ym)}</SectionLabel>
             <Card className="overflow-hidden divide-y divide-line">
               {group.entries.map((tx) => (
-                <TransactionRow key={tx.id} tx={tx} fundColorById={fundColorById} billColorByName={billColorByName} />
+                <TransactionRow key={`${tx.kind}-${tx.id}`} tx={tx} fundColorById={fundColorById} billColorByName={billColorByName} />
               ))}
             </Card>
           </div>
