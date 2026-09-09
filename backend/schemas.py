@@ -148,6 +148,7 @@ class TransactionOut(BaseModel):
     source: str = "manual"
     external_id: Optional[str] = None
     status: str = "posted"
+    kind: str = "spend"
     model_config = {"from_attributes": True}
 
 

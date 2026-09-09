@@ -202,7 +202,34 @@ def _enrich(transactions: list[models.Transaction], db: Session) -> list[schemas
         data = schemas.TransactionOut.model_validate(t).model_dump()
         data["line_item_name"] = line_item_name
         data["fund_name"] = fund_name
+        data["kind"] = "spend"
         out.append(schemas.TransactionOut(**data))
+    return out
+
+
+def _income_as_transactions(entries: list[models.LedgerEntry]) -> list[schemas.TransactionOut]:
+    """Reshape paycheck/misc_income LedgerEntry rows into TransactionOut for the
+    combined All Transactions feed. Income isn't tied to a line item or fund, so
+    those fields (and destination_type) are always None."""
+    out = []
+    for e in entries:
+        out.append(
+            schemas.TransactionOut(
+                id=e.id,
+                amount_cents=e.amount_cents,
+                date=e.date,
+                merchant=e.label,
+                line_item_id=None,
+                fund_id=None,
+                line_item_name=None,
+                fund_name=None,
+                destination_type=None,
+                source="manual",
+                external_id=None,
+                status="posted",
+                kind=e.kind,
+            )
+        )
     return out
 
 
@@ -213,6 +240,7 @@ def list_transactions(
     year: Optional[int] = None,
     month: Optional[int] = None,
     limit: Optional[int] = None,
+    include_income: bool = False,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Transaction)
@@ -239,11 +267,26 @@ def list_transactions(
 
     query = query.order_by(models.Transaction.date.desc(), models.Transaction.id.desc())
 
-    if limit is not None:
-        query = query.limit(limit)
-
     transactions = query.all()
-    return _enrich(transactions, db)
+    results = _enrich(transactions, db)
+
+    # Income isn't tied to a specific bucket, so a bucket-scoped query (fund_id
+    # or line_item_id) always falls back to spend-only, regardless of the flag.
+    if include_income and fund_id is None and line_item_id is None:
+        income_query = db.query(models.LedgerEntry).filter(
+            models.LedgerEntry.kind.in_(["paycheck", "misc_income"])
+        )
+        if year is not None and month is not None:
+            prefix = f"{year:04d}-{month:02d}"
+            income_query = income_query.filter(models.LedgerEntry.date.like(f"{prefix}%"))
+        income_entries = income_query.all()
+        results = results + _income_as_transactions(income_entries)
+        results.sort(key=lambda r: r.date, reverse=True)
+
+    if limit is not None:
+        results = results[:limit]
+
+    return results
 
 
 @router.post("/", response_model=schemas.TransactionOut)
