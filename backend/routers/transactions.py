@@ -334,7 +334,6 @@ def _apply_cover(cover: schemas.CoverSource, overage: int, bill, fund, tx_id: in
     before _debit, uncommitted, so a failing spend rolls the cover back too.
     Deleting the spend later does NOT undo the cover — it stands like any
     transfer/rebalance. Returns the source's human label."""
-    savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
 
     if bill is not None:
         plan = (
@@ -344,27 +343,19 @@ def _apply_cover(cover: schemas.CoverSource, overage: int, bill, fund, tx_id: in
         if plan is None or (plan.year, plan.month) != plans_lib.current_year_month(db):
             raise HTTPException(400, "Can only cover overspending in the current month")
         if cover.from_fund_id is not None:
-            raise HTTPException(400, "A Bill can't be covered from a Fund — pick another Bill or Savings")
+            raise HTTPException(400, "A Bill can't be covered from a Fund — pick another Bill")
         if cover.from_line_item_id is not None:
             src = db.query(models.Expense).filter(models.Expense.id == cover.from_line_item_id).first()
             if not src:
                 raise HTTPException(404, "Line item not found")
             if src.type != "bill":
-                raise HTTPException(400, "A Bill can only be covered from another Bill or Savings")
+                raise HTTPException(400, "A Bill can only be covered from another Bill")
             move_bill_budget(db, src, bill, overage)
             return src.name
-        if savings.balance_cents < overage:
-            raise HTTPException(
-                400, f"Savings only has {_dollars(savings.balance_cents)} — can't cover {_dollars(overage)}"
-            )
-        mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
-        bill.amount_cents += overage
-        _cover_transfer(db, savings, "savings", mr, "mr", overage, bill.name, tx_id)
-        plans_lib.sync_mr_target(db)
-        return "Savings"
+        raise HTTPException(400, "A Bill can only be covered from another Bill")
 
     if cover.from_line_item_id is not None:
-        raise HTTPException(400, "A Fund can't be covered from a Bill — pick another Fund or Savings")
+        raise HTTPException(400, "A Fund can't be covered from a Bill — pick another Fund")
     if cover.from_fund_id is not None:
         if cover.from_fund_id == fund.id:
             raise HTTPException(400, f"Can't cover {fund.name} from itself")
@@ -377,13 +368,7 @@ def _apply_cover(cover: schemas.CoverSource, overage: int, bill, fund, tx_id: in
             )
         _cover_transfer(db, src, f"fund:{src.id}", fund, f"fund:{fund.id}", overage, fund.name, tx_id)
         return src.name
-    # Owner ruling: Savings may never go negative.
-    if savings.balance_cents < overage:
-        raise HTTPException(
-            400, f"Savings only has {_dollars(savings.balance_cents)} — can't cover {_dollars(overage)}"
-        )
-    _cover_transfer(db, savings, "savings", fund, f"fund:{fund.id}", overage, fund.name, tx_id)
-    return "Savings"
+    raise HTTPException(400, "A Fund can only be covered from another Fund")
 
 
 @router.get("/", response_model=list[schemas.TransactionOut])
@@ -458,9 +443,14 @@ def create_transaction(body: schemas.TransactionCreate, db: Session = Depends(ge
     if cover is not None:
         if body.from_savings:
             raise HTTPException(400, "A Savings Withdrawal can't be covered — it already comes from Savings")
-        sources = sum([cover.from_line_item_id is not None, cover.from_fund_id is not None, bool(cover.from_savings)])
+        # Owner ruling: Savings is never a cover source.
+        if cover.from_savings:
+            raise HTTPException(
+                400, "Savings can't cover overspending — leave it over, or cover it from another Bill/Fund"
+            )
+        sources = sum([cover.from_line_item_id is not None, cover.from_fund_id is not None])
         if sources != 1:
-            raise HTTPException(400, "cover must name exactly one of from_line_item_id, from_fund_id, or from_savings")
+            raise HTTPException(400, "cover must name exactly one of from_line_item_id or from_fund_id")
     # Computed before the tx is flushed so its own amount isn't double-counted.
     overage, bill, fund = _overage(body, db) if cover is not None else (0, None, None)
 

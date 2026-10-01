@@ -136,13 +136,14 @@ def test_reused_id_with_cover_transfer_ignored(client, helpers):
     for the spend, and deleting the spend leaves the cover standing."""
     bill = _setup(client)
     fund = _fund(client, "Gifts", 10000)
+    src = _fund(client, "Car", 10000)
 
     old = _spend(client, line_item_id=bill["id"], amount_cents=2000)
     assert client.delete(f"/transactions/{old['id']}").status_code == 200
     _force_legacy_id_reuse(old["id"])
 
-    # Overspend the fund, covered from Savings; reuses the id.
-    new = _spend(client, fund_id=fund["id"], amount_cents=15000, cover={"from_savings": True})
+    # Overspend the fund, covered from another Fund; reuses the id.
+    new = _spend(client, fund_id=fund["id"], amount_cents=15000, cover={"from_fund_id": src["id"]})
     assert new["id"] == old["id"]
     helpers["assert_invariant"](client)
 
@@ -150,6 +151,7 @@ def test_reused_id_with_cover_transfer_ignored(client, helpers):
     assert client.delete(f"/transactions/{new['id']}").status_code == 200
     after = helpers["get_state"](client)
     assert _fund_bal(after, fund["id"]) == _fund_bal(before, fund["id"]) + 15000
+    assert _fund_bal(after, src["id"]) == _fund_bal(before, src["id"]) == 5000  # cover stands
     assert after["monthly_reserve"] == before["monthly_reserve"]
     assert after["savings"] == before["savings"]
     helpers["assert_invariant"](client)

@@ -61,26 +61,6 @@ def test_bill_from_bill(client, helpers):
     helpers["assert_invariant"](client)
 
 
-def test_bill_from_savings(client, helpers):
-    pc, _ = _setup(client)
-    before = helpers["get_state"](client)
-    r = _spend(client, line_item_id=pc["id"], amount_cents=10000, cover={"from_savings": True})
-    assert r.status_code == 200, r.text
-    tx = r.json()
-    assert tx["covered_cents"] == 2000 and tx["covered_from"] == "Savings"
-    assert _items(client)["Personal Care"]["amount_cents"] == 10000
-    after = helpers["get_state"](client)
-    assert after["monthly_reserve"]["target_cents"] == 40000
-    assert after["savings"]["balance_cents"] == before["savings"]["balance_cents"] - 2000
-    # MR got +2000 from Savings then -10000 for the spend.
-    assert after["monthly_reserve"]["balance_cents"] == before["monthly_reserve"]["balance_cents"] - 8000
-    assert after["real_cash"]["balance_cents"] == before["real_cash"]["balance_cents"] - 10000
-    [t] = _ledger(client, "transfer")
-    assert (t["from_bucket"], t["to_bucket"], t["amount_cents"]) == ("savings", "mr", 2000)
-    assert t["label"] == "Cover: Personal Care" and t["transaction_id"] == tx["id"]
-    helpers["assert_invariant"](client)
-
-
 def test_fund_from_fund_direct_spend(client, helpers):
     _setup(client)
     car = _fund(client, "Car", 3000)
@@ -100,19 +80,21 @@ def test_fund_from_fund_direct_spend(client, helpers):
     helpers["assert_invariant"](client)
 
 
-def test_fund_line_item_from_savings(client, helpers):
+def test_fund_line_item_from_fund(client, helpers):
     _setup(client)
     car = _fund(client, "Car", 1000)
+    gifts = _fund(client, "Gifts", 5000)
     fi = client.post("/line-items/", json={
         "name": "Car item", "type": "fund", "amount_cents": 1000, "fund_id": car["id"],
         "year": 2026, "month": 7}).json()
     before = helpers["get_state"](client)
-    r = _spend(client, line_item_id=fi["id"], amount_cents=2500, cover={"from_savings": True})
+    r = _spend(client, line_item_id=fi["id"], amount_cents=2500, cover={"from_fund_id": gifts["id"]})
     assert r.status_code == 200, r.text
-    assert r.json()["covered_cents"] == 1500 and r.json()["covered_from"] == "Savings"
+    assert r.json()["covered_cents"] == 1500 and r.json()["covered_from"] == "Gifts"
     after = helpers["get_state"](client)
     assert _fund_bal(after, car["id"]) == 0
-    assert after["savings"]["balance_cents"] == before["savings"]["balance_cents"] - 1500
+    assert _fund_bal(after, gifts["id"]) == 3500
+    assert after["savings"] == before["savings"]
     assert after["monthly_reserve"] == before["monthly_reserve"]
     assert after["real_cash"]["balance_cents"] == before["real_cash"]["balance_cents"] - 2500
     helpers["assert_invariant"](client)
@@ -126,7 +108,7 @@ def test_zero_overage_ignores_cover(client, helpers):
     r = _spend(client, line_item_id=pc["id"], amount_cents=8000, cover={"from_fund_id": car["id"]})
     assert r.status_code == 200, r.text
     assert r.json()["covered_cents"] == 0 and r.json()["covered_from"] is None
-    r = _spend(client, fund_id=car["id"], amount_cents=5000, cover={"from_savings": True})
+    r = _spend(client, fund_id=car["id"], amount_cents=5000, cover={"from_line_item_id": gr["id"]})
     assert r.status_code == 200 and r.json()["covered_cents"] == 0
     after = helpers["get_state"](client)
     assert after["savings"] == before["savings"]
@@ -189,15 +171,6 @@ def test_insufficient_sources(client, helpers):
     r = _spend(client, fund_id=car["id"], amount_cents=2000, cover={"from_fund_id": gifts["id"]})
     assert r.status_code == 400
     assert r.json()["detail"] == "Gifts only has $5.00 — can't cover $10.00"
-
-    client.post("/dev/set-savings", json={"balance_cents": 700})
-    before = helpers["get_state"](client)
-    r = _spend(client, fund_id=car["id"], amount_cents=2000, cover={"from_savings": True})
-    assert r.status_code == 400
-    assert r.json()["detail"] == "Savings only has $7.00 — can't cover $10.00"
-    r = _spend(client, line_item_id=pc["id"], amount_cents=10000, cover={"from_savings": True})
-    assert r.status_code == 400
-    assert r.json()["detail"] == "Savings only has $7.00 — can't cover $20.00"
     _assert_nothing_changed(client, helpers, before, n_tx=1)
     helpers["assert_invariant"](client)
 
@@ -211,7 +184,7 @@ def test_past_month_bill_rejected(client, helpers):
         "name": "OldB", "type": "bill", "amount_cents": 5000, "year": 2026, "month": 6}).json()
     client.post("/dev/set-mr-balance", json={"balance_cents": 10000})
     before = helpers["get_state"](client)
-    for cover in ({"from_savings": True}, {"from_line_item_id": old["id"] + 1}):
+    for cover in ({"from_fund_id": 999}, {"from_line_item_id": old["id"] + 1}):
         r = _spend(client, line_item_id=old["id"], amount_cents=3000, date="2026-06-20", cover=cover)
         assert r.status_code == 400
         assert r.json()["detail"] == "Can only cover overspending in the current month"
@@ -223,10 +196,34 @@ def test_savings_tx_and_source_count_rejected(client, helpers):
     before = helpers["get_state"](client)
     r = _spend(client, from_savings=True, merchant="Vet", amount_cents=100, cover={"from_savings": True})
     assert r.status_code == 400
-    for cover in ({}, {"from_savings": True, "from_line_item_id": gr["id"]}):
+    for cover in ({}, {"from_fund_id": 999, "from_line_item_id": gr["id"]}):
         r = _spend(client, line_item_id=pc["id"], amount_cents=9000, cover=cover)
         assert r.status_code == 400, cover
     _assert_nothing_changed(client, helpers, before)
+
+
+def test_cover_from_savings_rejected(client, helpers):
+    """Owner ruling: Savings is never a cover source — for Bills or Funds, even
+    with plenty in Savings. Nothing may be written."""
+    pc, _ = _setup(client)
+    car = _fund(client, "Car", 1000)
+    fi = client.post("/line-items/", json={
+        "name": "Car item", "type": "fund", "amount_cents": 1000, "fund_id": car["id"],
+        "year": 2026, "month": 7}).json()
+    before = helpers["get_state"](client)
+    ledger_before = client.get("/ledger/", params={"limit": 1000}).json()
+    for target in ({"line_item_id": pc["id"]}, {"fund_id": car["id"]}, {"line_item_id": fi["id"]}):
+        r = _spend(client, amount_cents=10000, cover={"from_savings": True}, **target)
+        assert r.status_code == 400, (target, r.text)
+        assert r.json()["detail"] == (
+            "Savings can't cover overspending — leave it over, or cover it from another Bill/Fund"
+        )
+    _assert_nothing_changed(client, helpers, before)
+    assert client.get("/ledger/", params={"limit": 1000}).json() == ledger_before
+    items = _items(client)
+    assert items["Personal Care"]["amount_cents"] == 8000
+    assert items["Car item"]["amount_cents"] == 1000
+    helpers["assert_invariant"](client)
 
 
 # ── Atomicity ─────────────────────────────────────────────────────────────────
