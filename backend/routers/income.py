@@ -351,12 +351,14 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
         else:
             actual_fund_spent += tx.amount_cents
 
-    fund_contributions = fund_contributions_by_month(db, month_prefix).get(month_prefix, 0)
+    alloc = fund_contributions_by_month(db, month_prefix).get(month_prefix, {})
+    fund_contributions = alloc.get("fund_contributions_cents", 0)
     cash_out = actual_bills_spent + actual_fund_spent + savings_withdrawals_cents
     return {
         "year": year,
         "month": month,
         "fund_contributions_cents": fund_contributions,
+        "set_aside_from_savings_cents": alloc.get("set_aside_from_savings_cents", 0),
         "saved_cents": actual_income - actual_bills_spent - fund_contributions - savings_withdrawals_cents,
         "cash_out_cents": cash_out,
         "net_cash_cents": actual_income - cash_out - transfers_out_cents,
