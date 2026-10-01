@@ -277,7 +277,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
   const [savingsBalance, setSavingsBalance] = useState(null)
   const [mrBalance, setMrBalance] = useState(null)
   const [liveFunds, setLiveFunds] = useState(null)
-  const [cover, setCover] = useState('') // 'li:ID' | 'fund:ID' | 'savings' | 'leave'
+  const [cover, setCover] = useState('') // 'li:ID' | 'fund:ID' | 'leave'
   useEffect(() => {
     apiGet('/state').then((st) => {
       setSavingsBalance(st.savings.balance_cents)
@@ -370,9 +370,8 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
   const coverSubject = coverBill ?? coverFund
   const coverBillSources = coverBill ? bills.filter((b) => b.id !== coverBill.id && b.amount_cents - (b.spent_cents ?? 0) >= overage) : []
   const coverFundSources = coverFund ? (liveFunds ?? funds).filter((f) => f.id !== coverFund.id && f.balance_cents >= overage) : []
-  const savingsCanCover = savingsBalance != null && savingsBalance >= overage
   const leaveBlockedReason = coverBill
-    ? (mrBalance != null && mrBalance < amountC ? `Monthly Reserve only has ${c(mrBalance)}` : '')
+    ? (mrBalance != null && mrBalance < amountC ? `Monthly Reserve only has ${c(mrBalance)} — transfer from Savings first` : '')
     : (coverFund && !coverFund.allow_negative_balance ? "This Fund can't go negative" : '')
   const coverNeeded = overage > 0
   const coverMissing = coverNeeded && !cover
@@ -471,8 +470,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
         ...(mode === 'savings' ? { from_savings: true }
           : mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) }),
         ...(coverNeeded && cover && cover !== 'leave' ? { cover:
-          cover === 'savings' ? { from_savings: true }
-          : cover.startsWith('li:') ? { from_line_item_id: Number(cover.slice(3)) }
+          cover.startsWith('li:') ? { from_line_item_id: Number(cover.slice(3)) }
           : { from_fund_id: Number(cover.slice(5)) } } : {}),
       }
       await onSave(payload); onClose()
@@ -661,8 +659,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
                 {[
                   ...coverBillSources.map((b) => ({ key: `li:${b.id}`, label: b.name, note: `${c(b.amount_cents - (b.spent_cents ?? 0))} left` })),
                   ...coverFundSources.map((f) => ({ key: `fund:${f.id}`, label: f.name, note: `${c(f.balance_cents)} available` })),
-                  ...(savingsCanCover ? [{ key: 'savings', label: 'Savings', note: `${c(savingsBalance)} available` }] : []),
-                  { key: 'leave', label: coverBill ? 'Leave it over' : 'Leave it negative — recovers with contributions',
+                                  { key: 'leave', label: coverBill ? 'Leave it over' : 'Leave it negative — recovers with contributions',
                     disabled: !!leaveBlockedReason, reason: leaveBlockedReason },
                 ].map((o) => (
                   <label key={o.key} className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm ${
@@ -674,7 +671,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
                     <span className="text-xs text-ink-3 text-right">{o.disabled ? o.reason : o.note}</span>
                   </label>
                 ))}
-                {coverBillSources.length + coverFundSources.length === 0 && !savingsCanCover && (
+                {coverBillSources.length + coverFundSources.length === 0 && (
                   <p className="text-xs text-ink-3">Nothing else has enough room to cover this.</p>
                 )}
               </div>

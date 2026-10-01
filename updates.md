@@ -602,3 +602,8 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   for a negative balance). Tapping a row expands it; regular Funds show one
   combined bar: spent of available (balance + spent), with a tick at this
   month's contribution.
+- Owner ruling: Savings is no longer a cover source (UI option removed;
+  server rejects `cover.from_savings` with 400). Overspend is covered from
+  another Bill/Fund or left over — a Bill over goes through Monthly Reserve
+  (refilled from Savings by the next top-off); a Fund over only if it allows
+  negatives. If MR can't pay, the user transfers from Savings deliberately.

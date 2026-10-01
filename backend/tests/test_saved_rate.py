@@ -43,11 +43,13 @@ def test_fund_spend_does_not_change_saved(client):
     _both(client, cash_out_cents=15000, fund_contributions_cents=40000)
 
 
-def test_cover_savings_to_fund_counts(client):
+def test_cover_fund_to_fund_does_not_count(client):
     _setup(client)
     f = _fund(client, balance=1000)
-    client.post("/transactions/", json={"amount_cents": 5000, "date": "2026-07-11", "merchant": "x", "fund_id": f["id"], "cover": {"from_savings": True}})
-    _both(client, fund_contributions_cents=1000 + 4000)
+    g = _fund(client, name="G", balance=5000)
+    r = client.post("/transactions/", json={"amount_cents": 5000, "date": "2026-07-11", "merchant": "x", "fund_id": f["id"], "cover": {"from_fund_id": g["id"]}})
+    assert r.status_code == 200, r.text
+    _both(client, fund_contributions_cents=1000 + 5000)
 
 
 def test_fund_delete_sweep_subtracts(client):

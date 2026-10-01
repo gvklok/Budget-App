@@ -163,7 +163,7 @@ class CoverSource(BaseModel):
     """Where a spend's overage comes from — exactly one of these."""
     from_line_item_id: Optional[int] = None  # another Bill (budget-only rebalance)
     from_fund_id: Optional[int] = None
-    from_savings: bool = False
+    from_savings: bool = False  # accepted only to reject: Savings is never a cover source
 
 
 class TransactionCreate(BaseModel):
