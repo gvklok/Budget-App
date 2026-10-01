@@ -967,41 +967,18 @@ function ManageCategoriesModal({
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
 // Expanded fund view: one bar, full width = what the fund had to spend this month
-// (balance + spent). Fill = spent; tick = this month's contribution. Once spending
-// passes the contribution, the bar rescales to the spend so the overage is visible.
+// (balance + spent). Solid = spent within this month's contribution, lighter =
+// spent past it, track = still available; tick marks the contribution.
 function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }) {
   const available = balanceCents + spentCents
   const exhausted = available <= 0 || spentCents > available
-  if (!exhausted && contributionCents > 0 && spentCents > contributionCents) {
-    const allocPct = (contributionCents / spentCents) * 100
-    return (
-      <div className="px-4 pt-3 pb-3 border-b border-line">
-        <p className="text-xs tabular text-ink-2 mb-2">
-          <span className="font-semibold text-ink">{c(spentCents)}</span> spent · {c(available)} was available
-        </p>
-        <div className="relative h-1.5 rounded-full overflow-hidden flex">
-          <div style={{ width: `${allocPct}%`, background: color }} />
-          <div className="flex-1" style={{ background: color, opacity: 0.35 }} />
-        </div>
-        <div className="relative h-4 mt-1">
-          <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular"
-            style={allocPct > 55 ? { left: `${allocPct}%`, transform: 'translateX(-100%)' } : { left: 0 }}>
-            this month's {c(contributionCents)}
-          </span>
-          {allocPct <= 55 && (
-            <span className="absolute right-0 text-[10px] text-ink-2 whitespace-nowrap tabular">+{c(spentCents - contributionCents)} past it</span>
-          )}
-        </div>
-        <p className="text-xs tabular text-ink-3">
-          {allocPct > 55 && <span className="text-ink-2">+{c(spentCents - contributionCents)} past this month's · </span>}
-          {c(balanceCents)} left in fund
-        </p>
-      </div>
-    )
-  }
-  const fillPct = exhausted ? 100 : Math.min((spentCents / available) * 100, 100)
-  const showTick = contributionCents > 0 && available > 0 && contributionCents <= available
-  const tickPct = showTick ? (contributionCents / available) * 100 : 0
+  const pct = (cents) => (available > 0 ? Math.min((cents / available) * 100, 100) : 0)
+  const hasAlloc = contributionCents > 0 && available > 0
+  const pastCents = hasAlloc ? Math.max(0, spentCents - contributionCents) : 0
+  const withinPct = exhausted ? 100 : pct(hasAlloc ? Math.min(spentCents, contributionCents) : spentCents)
+  const pastPct = exhausted ? 0 : pct(pastCents)
+  const showTick = hasAlloc && contributionCents <= available
+  const tickPct = showTick ? pct(contributionCents) : 0
   const labelStyle = tickPct > 70 ? { left: `${tickPct}%`, transform: 'translateX(-100%)' }
     : tickPct < 15 ? { left: `${tickPct}%` } : { left: `${tickPct}%`, transform: 'translateX(-50%)' }
   return (
@@ -1009,14 +986,20 @@ function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }
       <p className="text-xs tabular text-ink-2 mb-2">
         <span className="font-semibold text-ink">{c(spentCents)}</span> spent of {c(Math.max(available, 0))} available
       </p>
-      <div className="relative h-1.5 rounded-full bg-line">
-        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${fillPct}%`, background: exhausted ? CRITICAL : color }} />
-        {showTick && <div className="absolute -top-1 -bottom-1 w-px bg-ink-3" style={{ left: `${tickPct}%` }} />}
+      <div className="relative h-2 rounded-full bg-line overflow-hidden">
+        <div className="absolute inset-y-0 left-0" style={{ width: `${withinPct}%`, background: exhausted ? CRITICAL : color }} />
+        {pastPct > 0 && (
+          <div className="absolute inset-y-0" style={{ left: `${withinPct}%`, width: `${pastPct}%`, background: color, opacity: 0.45 }} />
+        )}
       </div>
       <div className="relative h-4 mt-1">
+        {showTick && <div className="absolute -top-[14px] h-3 w-0.5 rounded-full bg-ink" style={{ left: `calc(${tickPct}% - 1px)` }} />}
         {showTick && <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular" style={labelStyle}>this month's {c(contributionCents)}</span>}
       </div>
-      <p className={`text-xs tabular ${balanceCents < 0 ? 'text-critical font-semibold' : 'text-ink-3'}`}>{c(balanceCents)} left to spend</p>
+      <div className="flex items-center justify-between gap-2 text-xs tabular">
+        <p className={balanceCents < 0 ? 'text-critical font-semibold' : 'text-ink-3'}>{c(balanceCents)} left in fund</p>
+        {pastCents > 0 && !exhausted && <p className="text-ink-2 font-medium">+{c(pastCents)} past it</p>}
+      </div>
     </div>
   )
 }
