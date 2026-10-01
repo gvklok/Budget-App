@@ -135,8 +135,10 @@ def monthly(months: int = 6, year: Optional[int] = None, month: Optional[int] = 
             "savings_withdrawals_cents": t["savings_withdrawals_cents"],
             "transfers_out_cents": t["transfers_out_cents"],
             "kept_cents": t["income_cents"] - spent - t["transfers_out_cents"],
-            "fund_contributions_cents": contribs.get(key, 0),
-            "saved_cents": t["income_cents"] - t["bills_spent_cents"] - contribs.get(key, 0)
+            "fund_contributions_cents": contribs.get(key, {}).get("fund_contributions_cents", 0),
+            "set_aside_from_savings_cents": contribs.get(key, {}).get("set_aside_from_savings_cents", 0),
+            "saved_cents": t["income_cents"] - t["bills_spent_cents"]
+            - contribs.get(key, {}).get("fund_contributions_cents", 0)
             - t["savings_withdrawals_cents"],
             "cash_out_cents": spent,
             "net_cash_cents": t["income_cents"] - spent - t["transfers_out_cents"],

@@ -150,6 +150,7 @@ function aggregateRange(months) {
     totalFunds: sum('funds_spent_cents'),
     totalSavings: sum('savings_withdrawals_cents'),
     totalTransfers: sum('transfers_out_cents'),
+    totalSetAside: active.reduce((t, m) => t + (m.set_aside_from_savings_cents ?? 0), 0),
     overspentCount: active.filter((m) => savedOf(m) < 0).length,
     plannedMonths: planned.length,
     totalPlanned: planned.reduce((s, m) => s + (m.bills_planned_cents ?? 0), 0),
@@ -211,6 +212,16 @@ function IncomeWentCard({ months, rangeMonths, endYM }) {
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: TRANSFER_OUT }} />
           <span className="text-ink-2 flex-1 min-w-0 truncate">Transfers out <span className="text-xs text-ink-3">· not spending</span></span>
           <span className="tabular font-semibold" style={{ color: TRANSFER_OUT }}>{c(a.totalTransfers)}</span>
+        </div>
+      )}
+      {a.totalSetAside !== 0 && (
+        <div className={`flex items-center gap-2 text-sm ${a.totalTransfers > 0 ? 'mt-2' : 'mt-2.5 pt-2.5 border-t border-line'}`}>
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: FUNDS_HUE }} />
+          <span className="text-ink-2 flex-1 min-w-0 truncate">
+            {a.totalSetAside > 0 ? 'Set aside from Savings' : 'Returned to Savings from funds'}{' '}
+            <span className="text-xs text-ink-3">· {a.totalSetAside > 0 ? 'starting new funds · not counted' : 'from deleted funds · not counted'}</span>
+          </span>
+          <span className="tabular font-semibold text-ink-2">{c(Math.abs(a.totalSetAside))}</span>
         </div>
       )}
       <div className="mt-3 pt-3 border-t border-line space-y-1.5">

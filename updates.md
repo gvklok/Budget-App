@@ -607,3 +607,10 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   another Bill/Fund or left over — a Bill over goes through Monthly Reserve
   (refilled from Savings by the next top-off); a Fund over only if it allows
   negatives. If MR can't pay, the user transfers from Savings deliberately.
+- Refinement (owner ruling): savings rate counts every Savings<->Fund move
+  (monthly contributions and any later transfers) EXCEPT fund setup: a new
+  fund's starting balance and a deleted fund's sweep back are already-saved
+  money being re-earmarked, reported as `set_aside_from_savings_cents`
+  ("Set aside from Savings · starting new funds") and not counted. Dev balance
+  adjustments are ignored. (First live month: ~35% saved vs 34% planned,
+  instead of −12% from fund setup.)

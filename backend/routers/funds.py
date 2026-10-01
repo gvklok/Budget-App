@@ -113,7 +113,7 @@ def create_fund(body: schemas.FundCreate, db: Session = Depends(get_db)):
     db.add(fund)
     db.flush()
     if body.balance_cents > 0:
-        ledger.record(db, kind="transfer", amount_cents=body.balance_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label="Initial balance")
+        ledger.record(db, kind="transfer", amount_cents=body.balance_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label=ledger.INITIAL_BALANCE_LABEL)
     db.commit()
     db.refresh(fund)
     return fund
@@ -220,10 +220,10 @@ def delete_fund(fund_id: int, db: Session = Depends(get_db)):
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
     savings.balance_cents += fund.balance_cents
     if fund.balance_cents > 0:
-        ledger.record(db, kind="transfer", amount_cents=fund.balance_cents, from_bucket=f"fund:{fund.id}", to_bucket="savings", label=f"Fund deleted: {fund.name}")
+        ledger.record(db, kind="transfer", amount_cents=fund.balance_cents, from_bucket=f"fund:{fund.id}", to_bucket="savings", label=f"{ledger.FUND_DELETED_LABEL_PREFIX}{fund.name}")
     elif fund.balance_cents < 0:
         # Savings absorbs the deficit — record the direction that actually moved.
-        ledger.record(db, kind="transfer", amount_cents=-fund.balance_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label=f"Fund deleted: {fund.name}")
+        ledger.record(db, kind="transfer", amount_cents=-fund.balance_cents, from_bucket="savings", to_bucket=f"fund:{fund.id}", label=f"{ledger.FUND_DELETED_LABEL_PREFIX}{fund.name}")
     db.delete(fund)
     db.commit()
     return {"ok": True}

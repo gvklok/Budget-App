@@ -77,29 +77,33 @@ def live_spend_entries(db: Session, tx_ids) -> dict[int, models.LedgerEntry]:
     return {tid: stack[-1] for tid, stack in live.items() if stack}
 
 
-def fund_contributions_by_month(db: Session, month_prefix: Optional[str] = None) -> dict[str, int]:
-    """Net cents moved INTO the pool of all funds (transfer-out funds included — owner
-    ruling: a Roth-style fund's allocation leaves Savings like any other; its later
-    transfer out is neutral to the savings rate) from outside that pool, per 'YYYY-MM'.
-    Ledger-bucket based, any kind except spends/reversals/income: inflows from
-    savings/mr/external count +, outflows to non-fund buckets count -. Fund<->fund
-    nets to zero and is skipped. month_prefix ('YYYY-MM') filters in SQL."""
+INITIAL_BALANCE_LABEL = "Initial balance"
+FUND_DELETED_LABEL_PREFIX = "Fund deleted: "
+
+
+def fund_contributions_by_month(db: Session, month_prefix: Optional[str] = None) -> dict[str, dict[str, int]]:
+    """Per 'YYYY-MM': {"fund_contributions_cents", "set_aside_from_savings_cents"}.
+    Contributions = net non-fund<->fund movement (monthly distributes, later Savings->Fund
+    transfers, money moved back out) into any fund, transfer-out funds included.
+    Set-aside = a new fund's starting balance and a deleted fund's sweep back: owner
+    ruling — setting a fund up (or undoing it) re-earmarks already-saved money and is
+    neutral to the savings rate, while any other later move counts. Fund<->fund is skipped; adjustments (dev corrections), spends and
+    income are ignored. month_prefix ('YYYY-MM') filters in SQL."""
     def is_fund(bucket: Optional[str]) -> bool:
         return bool(bucket) and bucket.startswith("fund:")
 
     q = db.query(models.LedgerEntry).filter(
-        ~models.LedgerEntry.kind.in_(["spend", "spend_reversal", "paycheck", "misc_income"])
+        ~models.LedgerEntry.kind.in_(["adjustment", "spend", "spend_reversal", "paycheck", "misc_income"])
     )
     if month_prefix:
         q = q.filter(models.LedgerEntry.date.like(f"{month_prefix}%"))
-    out: dict[str, int] = {}
+    out: dict[str, dict[str, int]] = {}
     for e in q.all():
         src, dst = is_fund(e.from_bucket), is_fund(e.to_bucket)
-        if dst and not src:
-            delta = e.amount_cents
-        elif src and not dst:
-            delta = -e.amount_cents
-        else:
+        if src == dst:
             continue
-        out[e.date[:7]] = out.get(e.date[:7], 0) + delta
+        row = out.setdefault(e.date[:7], {"fund_contributions_cents": 0, "set_aside_from_savings_cents": 0})
+        setup = e.label == INITIAL_BALANCE_LABEL or (e.label or "").startswith(FUND_DELETED_LABEL_PREFIX)
+        key = "set_aside_from_savings_cents" if setup else "fund_contributions_cents"
+        row[key] += e.amount_cents if dst else -e.amount_cents
     return out
