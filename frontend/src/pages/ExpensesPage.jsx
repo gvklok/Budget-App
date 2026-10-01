@@ -975,20 +975,25 @@ function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }
   const scale = Math.max(available, spentCents, 1)
   const pct = (cents) => Math.min(Math.max(cents, 0) / scale * 100, 100)
   const covered = Math.min(spentCents, available)
-  const within = contributionCents > 0 ? Math.min(covered, contributionCents) : covered
-  const pastAlloc = covered - within
   const beyond = Math.max(0, spentCents - available)
-  const showTick = contributionCents > 0 && contributionCents <= scale
-  const tickPct = showTick ? pct(contributionCents) : 0
+  // Over the fund's total: just fund color up to what it had, red past it, tick at
+  // the fund's max. Otherwise: allocation-within / past-allocation split, tick at
+  // this month's contribution.
+  const within = beyond > 0 || contributionCents <= 0 ? covered : Math.min(covered, contributionCents)
+  const pastAlloc = covered - within
+  const tickCents = beyond > 0 ? (available > 0 ? available : 0) : contributionCents
+  const showTick = tickCents > 0 && tickCents <= scale
+  const tickPct = showTick ? pct(tickCents) : 0
+  const tickLabel = beyond > 0 ? `fund had ${c(available)}` : `this month's ${c(contributionCents)}`
   const labelStyle = tickPct > 70 ? { left: `${tickPct}%`, transform: 'translateX(-100%)' }
     : tickPct < 15 ? { left: `${tickPct}%` } : { left: `${tickPct}%`, transform: 'translateX(-50%)' }
-  const pastLabel = beyond > 0 ? `${c(beyond)} over what you had`
+  const pastLabel = beyond > 0 ? `${c(beyond)} over`
     : contributionCents > 0 && spentCents > contributionCents ? `+${c(spentCents - contributionCents)} past it` : null
   return (
     <div className="px-4 pt-3 pb-3 border-b border-line">
       <p className="text-xs tabular text-ink-2 mb-2">
         <span className="font-semibold text-ink">{c(spentCents)}</span>
-        {beyond > 0 ? <> spent · {c(available)} was available</> : <> spent of {c(available)} available</>}
+        {beyond > 0 ? <> spent · fund had {c(available)}</> : <> spent of {c(available)} available</>}
       </p>
       <div className="relative h-2 rounded-full bg-line overflow-hidden">
         <div className="absolute inset-y-0 left-0" style={{ width: `${pct(within)}%`, background: color }} />
@@ -1001,7 +1006,7 @@ function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }
       </div>
       <div className="relative h-4 mt-1">
         {showTick && <div className="absolute -top-[14px] h-3 w-0.5 rounded-full bg-ink" style={{ left: `calc(${tickPct}% - 1px)` }} />}
-        {showTick && <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular" style={labelStyle}>this month's {c(contributionCents)}</span>}
+        {showTick && <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular" style={labelStyle}>{tickLabel}</span>}
       </div>
       <div className="flex items-center justify-between gap-2 text-xs tabular">
         <p className={balanceCents < 0 ? 'text-critical font-semibold' : 'text-ink-3'}>{c(balanceCents)} {balanceCents < 0 ? 'in fund' : 'left in fund'}</p>
