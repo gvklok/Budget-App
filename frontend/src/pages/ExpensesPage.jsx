@@ -966,30 +966,37 @@ function ManageCategoriesModal({
 
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
-// Expanded fund view: one bar, full width = what the fund had to spend this month
-// (balance + spent). Solid = spent within this month's contribution, lighter =
-// spent past it, track = still available; tick marks the contribution.
+// Expanded fund view: one bar scaled to max(what the fund had this month, what was
+// spent). Solid = spent within this month's contribution, lighter = spent past it
+// but still covered by the fund, red = spent beyond what the fund had (negative
+// balance); track = still available. The tick marks this month's contribution.
 function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }) {
-  const available = balanceCents + spentCents
-  const exhausted = available <= 0 || spentCents > available
-  const pct = (cents) => (available > 0 ? Math.min((cents / available) * 100, 100) : 0)
-  const hasAlloc = contributionCents > 0 && available > 0
-  const pastCents = hasAlloc ? Math.max(0, spentCents - contributionCents) : 0
-  const withinPct = exhausted ? 100 : pct(hasAlloc ? Math.min(spentCents, contributionCents) : spentCents)
-  const pastPct = exhausted ? 0 : pct(pastCents)
-  const showTick = hasAlloc && contributionCents <= available
+  const available = Math.max(0, balanceCents + spentCents)
+  const scale = Math.max(available, spentCents, 1)
+  const pct = (cents) => Math.min(Math.max(cents, 0) / scale * 100, 100)
+  const covered = Math.min(spentCents, available)
+  const within = contributionCents > 0 ? Math.min(covered, contributionCents) : covered
+  const pastAlloc = covered - within
+  const beyond = Math.max(0, spentCents - available)
+  const showTick = contributionCents > 0 && contributionCents <= scale
   const tickPct = showTick ? pct(contributionCents) : 0
   const labelStyle = tickPct > 70 ? { left: `${tickPct}%`, transform: 'translateX(-100%)' }
     : tickPct < 15 ? { left: `${tickPct}%` } : { left: `${tickPct}%`, transform: 'translateX(-50%)' }
+  const pastLabel = beyond > 0 ? `${c(beyond)} over what you had`
+    : contributionCents > 0 && spentCents > contributionCents ? `+${c(spentCents - contributionCents)} past it` : null
   return (
     <div className="px-4 pt-3 pb-3 border-b border-line">
       <p className="text-xs tabular text-ink-2 mb-2">
-        <span className="font-semibold text-ink">{c(spentCents)}</span> spent of {c(Math.max(available, 0))} available
+        <span className="font-semibold text-ink">{c(spentCents)}</span>
+        {beyond > 0 ? <> spent · {c(available)} was available</> : <> spent of {c(available)} available</>}
       </p>
       <div className="relative h-2 rounded-full bg-line overflow-hidden">
-        <div className="absolute inset-y-0 left-0" style={{ width: `${withinPct}%`, background: exhausted ? CRITICAL : color }} />
-        {pastPct > 0 && (
-          <div className="absolute inset-y-0" style={{ left: `${withinPct}%`, width: `${pastPct}%`, background: color, opacity: 0.45 }} />
+        <div className="absolute inset-y-0 left-0" style={{ width: `${pct(within)}%`, background: color }} />
+        {pastAlloc > 0 && (
+          <div className="absolute inset-y-0" style={{ left: `${pct(within)}%`, width: `${pct(pastAlloc)}%`, background: color, opacity: 0.45 }} />
+        )}
+        {beyond > 0 && (
+          <div className="absolute inset-y-0" style={{ left: `${pct(covered)}%`, width: `${pct(beyond)}%`, background: CRITICAL }} />
         )}
       </div>
       <div className="relative h-4 mt-1">
@@ -997,14 +1004,14 @@ function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }
         {showTick && <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular" style={labelStyle}>this month's {c(contributionCents)}</span>}
       </div>
       <div className="flex items-center justify-between gap-2 text-xs tabular">
-        <p className={balanceCents < 0 ? 'text-critical font-semibold' : 'text-ink-3'}>{c(balanceCents)} left in fund</p>
-        {pastCents > 0 && !exhausted && <p className="text-ink-2 font-medium">+{c(pastCents)} past it</p>}
+        <p className={balanceCents < 0 ? 'text-critical font-semibold' : 'text-ink-3'}>{c(balanceCents)} {balanceCents < 0 ? 'in fund' : 'left in fund'}</p>
+        {pastLabel && <p className={beyond > 0 ? 'text-critical font-medium' : 'text-ink-2 font-medium'}>{pastLabel}</p>}
       </div>
     </div>
   )
 }
 
-function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride, fundBalanceCents, plannedCents }) {
+function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride, fundBalanceCents, fundColor, plannedCents }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
@@ -1074,7 +1081,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
       </div>
       {expanded && (
         <div className="mx-4 mb-3 rounded-2xl bg-paper overflow-hidden">
-          {fundMode && <FundAvailableBar spentCents={spentCents} balanceCents={fundBalanceCents} contributionCents={budgetCents} color={color} />}
+          {fundMode && <FundAvailableBar spentCents={spentCents} balanceCents={fundBalanceCents} contributionCents={budgetCents} color={fundColor ?? color} />}
           {txns.length === 0
             ? <p className="text-xs text-ink-3 px-4 py-3">No transactions this month</p>
             : <div className="divide-y divide-line">
@@ -2014,6 +2021,7 @@ export default function ExpensesPage() {
                     budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
                     color={isTransferOut ? TRANSFER_OUT : (isNegative ? CRITICAL : entityColor(fund))}
                     fundBalanceCents={isTransferOut ? undefined : fund.balance_cents}
+                    fundColor={entityColor(fund)}
                     onEdit={locked ? undefined : () => setEditFundContrib(fund)}
                     onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
                     onDeleteTx={locked ? undefined : handleDeleteTx} />
