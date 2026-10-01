@@ -1,11 +1,12 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
 import plans as plans_lib
+from ledger import live_spend_entries, paired_spend_entries, fund_contributions_by_month
 from database import get_db
 from routers.transactions import _deleted_fund_names
 
@@ -19,6 +20,8 @@ def _last_n_months(db: Session, months: int, end: Optional[tuple[int, int]] = No
     current month)."""
     months = max(1, min(months, MAX_MONTHS))
     year, month = end if end else plans_lib.current_year_month(db)
+    if not 1 <= month <= 12:
+        raise HTTPException(400, "month must be between 1 and 12")
     out = []
     for _ in range(months):
         out.append((year, month))
@@ -40,10 +43,11 @@ def _fund_id_from_bucket(bucket: Optional[str]) -> Optional[int]:
 
 
 @router.get("/monthly")
-def monthly(months: int = 6, db: Session = Depends(get_db)):
-    month_keys = _last_n_months(db, months)
+def monthly(months: int = 6, year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
+    end = (year, month) if year is not None and month is not None else None
+    month_keys = _last_n_months(db, months, end=end)
     totals = {
-        f"{y:04d}-{m:02d}": {"income_cents": 0, "bills_spent_cents": 0, "funds_spent_cents": 0, "transfers_out_cents": 0}
+        f"{y:04d}-{m:02d}": {"income_cents": 0, "bills_spent_cents": 0, "funds_spent_cents": 0, "savings_withdrawals_cents": 0, "transfers_out_cents": 0}
         for y, m in month_keys
     }
 
@@ -52,31 +56,36 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
         for row in db.query(models.Fund.id).filter(models.Fund.destination_type == "transfer_out").all()
     }
 
-    entries = (
-        db.query(models.LedgerEntry)
-        .filter(models.LedgerEntry.kind.in_(["paycheck", "misc_income", "spend", "spend_reversal"]))
-        .all()
-    )
-    for e in entries:
+    for e in db.query(models.LedgerEntry).filter(models.LedgerEntry.kind.in_(["paycheck", "misc_income"])).all():
+        month_totals = totals.get(e.date[:7])
+        if month_totals is not None:
+            month_totals["income_cents"] += e.amount_cents
+
+    # A reversal is classified like the spend it cancels, counted in the reversal's month.
+    for e, origin in paired_spend_entries(db):
+        sign = 1 if e.kind == "spend" else -1
         month_totals = totals.get(e.date[:7])
         if month_totals is None:
             continue
-        if e.kind in ("paycheck", "misc_income"):
-            month_totals["income_cents"] += e.amount_cents
+        # spend: the fund-side bucket is from_bucket; unpaired reversal: to_bucket.
+        fund_side = origin.from_bucket if origin.kind == "spend" else origin.to_bucket
+        if fund_side == "savings":
+            # Savings withdrawal: its own bucket; transfer-outs are not spending.
+            if origin.destination_type == "transfer_out":
+                month_totals["transfers_out_cents"] += sign * e.amount_cents
+            else:
+                month_totals["savings_withdrawals_cents"] += sign * e.amount_cents
             continue
-        # spend: the fund-side bucket is from_bucket; spend_reversal: to_bucket.
-        sign = 1 if e.kind == "spend" else -1
-        fund_side = e.from_bucket if e.kind == "spend" else e.to_bucket
         fund_id = _fund_id_from_bucket(fund_side)
         if fund_id is None:
-            # "mr" (bills) — and rare direct savings withdrawals — count with bills.
+            # "mr" — bills.
             month_totals["bills_spent_cents"] += sign * e.amount_cents
             continue
         # Classify by the entry's destination SNAPSHOT so a later fund flip never
         # reclassifies this month. Legacy nulls fall back to the live fund (a
         # since-deleted fund stays external_spend — i.e. ordinary fund spending).
-        if e.destination_type is not None:
-            is_transfer_out = e.destination_type == "transfer_out"
+        if origin.destination_type is not None:
+            is_transfer_out = origin.destination_type == "transfer_out"
         else:
             is_transfer_out = fund_id in transfer_out_ids
         if is_transfer_out:
@@ -84,10 +93,38 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
         else:
             month_totals["funds_spent_cents"] += sign * e.amount_cents
 
+    # Plain lookups only — never autoload/create a plan for a month just by reporting on it.
+    window_keys = set(month_keys)
+    plan_ids = {
+        p.id: (p.year, p.month)
+        for p in db.query(models.MonthlyPlan).all()
+        if (p.year, p.month) in window_keys
+    }
+    bills_planned = {key: 0 for key in plan_ids.values()}
+    if plan_ids:
+        for plan_id, total in (
+            db.query(models.Expense.plan_id, func.coalesce(func.sum(models.Expense.amount_cents), 0))
+            .filter(models.Expense.type == "bill", models.Expense.plan_id.in_(list(plan_ids)))
+            .group_by(models.Expense.plan_id)
+            .all()
+        ):
+            bills_planned[plan_ids[plan_id]] += total
+
+    # Any recorded movement (ledger entry of any kind, or a transaction) marks a month active.
+    active_months = {
+        r[0] for r in db.query(func.substr(models.LedgerEntry.date, 1, 7)).distinct().all()
+    } | {
+        r[0] for r in db.query(func.substr(models.Transaction.date, 1, 7)).distinct().all()
+    }
+
+    contribs = fund_contributions_by_month(db)
     result = []
     for year, month in month_keys:
-        t = totals[f"{year:04d}-{month:02d}"]
-        spent = t["bills_spent_cents"] + t["funds_spent_cents"]
+        key = f"{year:04d}-{month:02d}"
+        t = totals[key]
+        has_plan = (year, month) in bills_planned
+        planned = bills_planned.get((year, month), 0)
+        spent = t["bills_spent_cents"] + t["funds_spent_cents"] + t["savings_withdrawals_cents"]
         result.append({
             "year": year,
             "month": month,
@@ -95,8 +132,18 @@ def monthly(months: int = 6, db: Session = Depends(get_db)):
             "spent_cents": spent,
             "bills_spent_cents": t["bills_spent_cents"],
             "funds_spent_cents": t["funds_spent_cents"],
+            "savings_withdrawals_cents": t["savings_withdrawals_cents"],
             "transfers_out_cents": t["transfers_out_cents"],
             "kept_cents": t["income_cents"] - spent - t["transfers_out_cents"],
+            "fund_contributions_cents": contribs.get(key, 0),
+            "saved_cents": t["income_cents"] - t["bills_spent_cents"] - contribs.get(key, 0)
+            - t["savings_withdrawals_cents"],
+            "cash_out_cents": spent,
+            "net_cash_cents": t["income_cents"] - spent - t["transfers_out_cents"],
+            "bills_planned_cents": planned,
+            "bills_over_cents": max(0, t["bills_spent_cents"] - planned) if has_plan else 0,
+            "has_plan": has_plan,
+            "has_activity": key in active_months,
         })
     return {"months": result}
 
@@ -135,16 +182,7 @@ def spending_breakdown(
     # Under FK ON, deleting a bill/fund nulls the tx's pointer (SET NULL) — the
     # spend ledger entry still names the original bucket, so use it to recover the
     # fund id / bill-vs-fund split for orphaned spends.
-    tx_ids = [t.id for t in transactions]
-    spend_by_tx: dict[int, models.LedgerEntry] = {}
-    if tx_ids:
-        for e in (
-            db.query(models.LedgerEntry)
-            .filter(models.LedgerEntry.kind == "spend", models.LedgerEntry.transaction_id.in_(tx_ids))
-            .order_by(models.LedgerEntry.id.asc())
-            .all()
-        ):
-            spend_by_tx.setdefault(e.transaction_id, e)
+    spend_by_tx = live_spend_entries(db, [t.id for t in transactions])
 
     bill_totals: dict[int, int] = {}         # live bill line_item_id -> cents
     orphan_bill_totals: dict[str, int] = {}  # deleted-bill snapshot name -> cents
@@ -152,9 +190,23 @@ def spending_breakdown(
     fund_totals: dict[int, int] = {}         # fund_id -> cents (live or deleted)
     fund_dest: dict[int, str] = {}           # fund_id -> representative destination snapshot
 
+    transfer_out_groups: dict[str, dict] = {}  # lowercased merchant -> totals + most recent spelling
+    savings_withdrawals = 0  # external_spend withdrawals straight from Savings
     for t in transactions:
-        line_item = expenses_by_id.get(t.line_item_id) if t.line_item_id is not None else None
         entry = spend_by_tx.get(t.id)
+        if entry is not None and entry.from_bucket == "savings":
+            if entry.destination_type != "transfer_out":
+                savings_withdrawals += t.amount_cents
+            else:
+                key = (t.merchant or "").strip().lower()
+                row = transfer_out_groups.setdefault(key, {"amount_cents": 0, "latest": None, "name": None})
+                row["amount_cents"] += t.amount_cents
+                stamp = (t.date, t.id)
+                if row["latest"] is None or stamp > row["latest"]:
+                    row["latest"] = stamp
+                    row["name"] = (t.merchant or "").strip() or "Other account"
+            continue
+        line_item = expenses_by_id.get(t.line_item_id) if t.line_item_id is not None else None
         ledger_fund_id = _fund_id_from_bucket(entry.from_bucket) if entry else None
 
         # Resolve the fund this spend hit: live pointers first, ledger snapshot last.
@@ -221,7 +273,17 @@ def spending_breakdown(
             dest = fund_dest.get(fid, "external_spend")
         fund_rows.append({"fund_id": fid, "name": name, "spent_cents": total, "destination_type": dest})
     funds = sorted(fund_rows, key=lambda f: f["spent_cents"], reverse=True)
-    return {"bills": bills, "funds": funds}
+    savings_transfers_out = sorted(
+        ({"name": g["name"], "amount_cents": g["amount_cents"]} for g in transfer_out_groups.values()),
+        key=lambda g: g["amount_cents"],
+        reverse=True,
+    )
+    return {
+        "bills": bills,
+        "funds": funds,
+        "savings_withdrawals_cents": savings_withdrawals,
+        "savings_transfers_out": savings_transfers_out,
+    }
 
 
 _SERIES_KEYS = ("savings", "mr", "funds_total", "real_cash")
@@ -236,10 +298,13 @@ def _series_bucket(bucket: Optional[str]) -> Optional[str]:
 
 
 @router.get("/balance-series")
-def balance_series(months: int = 6, db: Session = Depends(get_db)):
-    month_keys = _last_n_months(db, months)
+def balance_series(months: int = 6, year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
+    end = (year, month) if year is not None and month is not None else None
+    month_keys = _last_n_months(db, months, end=end)
     start_year, start_month = month_keys[0]
     window_start = f"{start_year:04d}-{start_month:02d}-01"
+    end_year, end_month = month_keys[-1]
+    window_end = f"{end_year:04d}-{end_month:02d}-31"  # string bound; matches spending-breakdown
 
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
     mr = db.query(models.MonthlyReserve).filter(models.MonthlyReserve.id == 1).first()
@@ -266,7 +331,7 @@ def balance_series(months: int = 6, db: Session = Depends(get_db)):
     points_desc = []  # [(date, {series: balance_after}), ...] newest first
     seen_dates = set()
     for e in entries:
-        if e.date not in seen_dates:
+        if e.date not in seen_dates and e.date <= window_end:
             seen_dates.add(e.date)
             points_desc.append((e.date, dict(balances)))
         # Reverse the entry to get the state before it.

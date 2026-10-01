@@ -58,6 +58,61 @@ def reallocate(body: ReallocateBody, db: Session = Depends(get_db)):
     }
 
 
+def _spent_by_item(db: Session, plan, items) -> dict[int, int]:
+    """Net spend per line item for the plan's month. Same source as the UI:
+    live Transaction rows (a reversal deletes its tx), matched by line_item_id
+    and the plan's month."""
+    ids = [i.id for i in items]
+    if not ids:
+        return {}
+    prefix = f"{plan.year:04d}-{plan.month:02d}"
+    rows = (
+        db.query(models.Transaction.line_item_id, func.sum(models.Transaction.amount_cents))
+        .filter(models.Transaction.line_item_id.in_(ids), models.Transaction.date.like(f"{prefix}%"))
+        .group_by(models.Transaction.line_item_id)
+        .all()
+    )
+    return {lid: total or 0 for lid, total in rows}
+
+
+def _with_spent(item, spent: dict[int, int]) -> schemas.ExpenseWithSpentOut:
+    out = schemas.ExpenseWithSpentOut.model_validate(item)
+    out.spent_cents = spent.get(item.id, 0)
+    return out
+
+
+def _dollars(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
+
+
+def move_bill_budget(db: Session, src, dst, amount_cents: int) -> dict[int, int]:
+    """Move unspent budget from Bill `src` to Bill `dst` in the same month.
+    Total Bills sum (MR target) is unchanged; no balances are touched. Shared by
+    the transaction "cover the overage" flow. Does NOT
+    commit. Returns the spent map for both items."""
+    if src.id == dst.id:
+        raise HTTPException(400, "Must pick a different Bill to move budget to")
+    if src.type != "bill" or dst.type != "bill":
+        raise HTTPException(400, "Rebalancing only applies to Bills")
+    if src.plan_id != dst.plan_id or src.plan_id is None:
+        raise HTTPException(400, "Both Bills must be in the same month")
+    plan = db.query(models.MonthlyPlan).filter(models.MonthlyPlan.id == src.plan_id).first()
+    # U8's lock is client-side, so there is no server unlock to honor; past
+    # months are simply not rebalanceable here.
+    if (plan.year, plan.month) < plans_lib.current_year_month(db):
+        raise HTTPException(400, "Past months are read-only — can't rebalance Bills")
+    spent = _spent_by_item(db, plan, [src, dst])
+    unspent = max(0, src.amount_cents - spent.get(src.id, 0))
+    if amount_cents > unspent:
+        raise HTTPException(
+            400, f"{src.name} only has {_dollars(unspent)} unspent — can't move {_dollars(amount_cents)}"
+        )
+    src.amount_cents -= amount_cents
+    dst.amount_cents += amount_cents
+    plans_lib.sync_mr_target(db)
+    return spent
+
+
 # ── Categories ────────────────────────────────────────────────────────────────
 
 @router.get("/categories", response_model=list[schemas.ExpenseCategoryOut])
@@ -119,19 +174,21 @@ def delete_category(cat_id: int, db: Session = Depends(get_db)):
 # (default to the effective current month) but resolve to a real plan on write —
 # auto-creating it if this is the first item added to that month.
 
-@router.get("/", response_model=list[schemas.ExpenseOut])
+@router.get("/", response_model=list[schemas.ExpenseWithSpentOut])
 def list_expenses(year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
     if year is None or month is None:
         year, month = plans_lib.current_year_month(db)
     plan = plans_lib.get_plan(db, year, month)
     if not plan:
         return []
-    return (
+    items = (
         db.query(models.Expense)
         .filter(models.Expense.plan_id == plan.id)
         .order_by(models.Expense.category_id.nullslast(), models.Expense.sort_order, models.Expense.id)
         .all()
     )
+    spent = _spent_by_item(db, plan, items)
+    return [_with_spent(i, spent) for i in items]
 
 
 class ReorderItemsBody(BaseModel):
