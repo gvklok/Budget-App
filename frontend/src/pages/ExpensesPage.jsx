@@ -967,10 +967,38 @@ function ManageCategoriesModal({
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
 // Expanded fund view: one bar, full width = what the fund had to spend this month
-// (balance + spent). Fill = spent; tick = this month's contribution.
+// (balance + spent). Fill = spent; tick = this month's contribution. Once spending
+// passes the contribution, the bar rescales to the spend so the overage is visible.
 function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }) {
   const available = balanceCents + spentCents
   const exhausted = available <= 0 || spentCents > available
+  if (!exhausted && contributionCents > 0 && spentCents > contributionCents) {
+    const allocPct = (contributionCents / spentCents) * 100
+    return (
+      <div className="px-4 pt-3 pb-3 border-b border-line">
+        <p className="text-xs tabular text-ink-2 mb-2">
+          <span className="font-semibold text-ink">{c(spentCents)}</span> spent · {c(available)} was available
+        </p>
+        <div className="relative h-1.5 rounded-full overflow-hidden flex">
+          <div style={{ width: `${allocPct}%`, background: color }} />
+          <div className="flex-1" style={{ background: color, opacity: 0.35 }} />
+        </div>
+        <div className="relative h-4 mt-1">
+          <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular"
+            style={allocPct > 55 ? { left: `${allocPct}%`, transform: 'translateX(-100%)' } : { left: 0 }}>
+            this month's {c(contributionCents)}
+          </span>
+          {allocPct <= 55 && (
+            <span className="absolute right-0 text-[10px] text-ink-2 whitespace-nowrap tabular">+{c(spentCents - contributionCents)} past it</span>
+          )}
+        </div>
+        <p className="text-xs tabular text-ink-3">
+          {allocPct > 55 && <span className="text-ink-2">+{c(spentCents - contributionCents)} past this month's · </span>}
+          {c(balanceCents)} left in fund
+        </p>
+      </div>
+    )
+  }
   const fillPct = exhausted ? 100 : Math.min((spentCents / available) * 100, 100)
   const showTick = contributionCents > 0 && available > 0 && contributionCents <= available
   const tickPct = showTick ? (contributionCents / available) * 100 : 0
