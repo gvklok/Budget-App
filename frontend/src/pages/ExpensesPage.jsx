@@ -108,7 +108,7 @@ function AllocationBar({ income, bills, funds, net }) {
         {fundsPct > 0 && <div className="h-full" style={{ width: `${fundsPct}%`, background: FUNDS_HUE }} />}
         {netPct > 0 && <div className="h-full" style={{ width: `${netPct}%`, background: netColor }} />}
       </div>
-      <div className="flex items-center justify-between text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         <span className="flex items-center gap-1.5 text-ink-2">
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: BILLS }} />Bills <span className="text-ink-3 tabular">{c(bills)}</span>
         </span>
@@ -1688,17 +1688,12 @@ export default function ExpensesPage() {
           <div className="flex items-center justify-between">
             <p className="text-xs uppercase tracking-wide text-ink-3">{thisMonthName} · Expected income</p>
             {summary.expected_savings_cents >= 0 ? (
-              <Badge tone="good">{Math.round((summary.expected_savings_cents / summary.expected_income_cents) * 100)}% saved</Badge>
+              <Badge tone="good" className="whitespace-nowrap shrink-0">Plan: {Math.round((summary.expected_savings_cents / summary.expected_income_cents) * 100)}% saved</Badge>
             ) : (
-              <Badge tone="critical">Overspending</Badge>
+              <Badge tone="critical" className="whitespace-nowrap shrink-0">Plan exceeds income</Badge>
             )}
           </div>
           <p className="text-3xl font-bold text-ink tabular">{c(summary.expected_income_cents)}</p>
-          {(summary.savings_withdrawals_cents ?? 0) > 0 && (
-            <p className="text-xs font-semibold text-critical -mt-2">
-              {c(summary.savings_withdrawals_cents)} spent from Savings — not counted against budget
-            </p>
-          )}
           <p className="text-xs text-ink-2 -mt-2">
             Expected expenses {c(summary.expected_bills_total_cents + summary.expected_fund_contributions_total_cents)}
             {' '}· Bills {c(summary.expected_bills_total_cents)} + Funds {c(summary.expected_fund_contributions_total_cents)}
