@@ -18,5 +18,7 @@ fi
 echo "$(date '+%Y-%m-%d %H:%M:%S') deploying $LOCAL -> $REMOTE"
 git checkout "$BRANCH"
 git pull origin "$BRANCH"
+# Snapshot the DB right before rebuilding — startup migrations run on deploy.
+deploy/backup.sh
 docker compose up --build -d
 echo "$(date '+%Y-%m-%d %H:%M:%S') deploy ok, now at $(git rev-parse "$BRANCH")"
