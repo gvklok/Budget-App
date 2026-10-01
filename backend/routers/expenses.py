@@ -48,6 +48,7 @@ def reallocate(body: ReallocateBody, db: Session = Depends(get_db)):
     if decreased.amount_cents - body.amount_cents < 0:
         raise HTTPException(400, f"{decreased.name} would go below zero — pick a different Bill or a smaller amount")
     decreased.amount_cents -= body.amount_cents
+    decreased.planned_cents = decreased.amount_cents
     plans_lib.sync_mr_target(db)
     db.commit()
     db.refresh(increased)
@@ -89,7 +90,10 @@ def move_bill_budget(db: Session, src, dst, amount_cents: int) -> dict[int, int]
     """Move unspent budget from Bill `src` to Bill `dst` in the same month.
     Total Bills sum (MR target) is unchanged; no balances are touched. Shared by
     the transaction "cover the overage" flow. Does NOT
-    commit. Returns the spent map for both items."""
+    commit. Returns the spent map for both items.
+
+    A cover is a one-month fix: only amount_cents moves, planned_cents is left
+    alone so next month's copy starts from the original plan."""
     if src.id == dst.id:
         raise HTTPException(400, "Must pick a different Bill to move budget to")
     if src.type != "bill" or dst.type != "bill":
@@ -267,6 +271,7 @@ def create_expense(body: schemas.ExpenseCreate, db: Session = Depends(get_db)):
         name=body.name,
         type=body.type,
         amount_cents=body.amount_cents,
+        planned_cents=body.amount_cents,
         actual_cents=body.actual_cents,
         category_id=body.category_id,
         fund_id=resolved_fund_id,
@@ -297,6 +302,7 @@ def update_expense(expense_id: int, body: schemas.ExpenseUpdate, db: Session = D
         if body.amount_cents <= 0:
             raise HTTPException(400, "Amount must be positive")
         expense.amount_cents = body.amount_cents
+        expense.planned_cents = body.amount_cents
     if body.actual_cents is not None:
         expense.actual_cents = body.actual_cents
     if body.category_id is not None:

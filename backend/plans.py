@@ -94,7 +94,8 @@ def get_or_autoload_plan(db: Session, year: int, month: int) -> models.MonthlyPl
             db.add(models.Expense(
                 name=item.name,
                 type=item.type,
-                amount_cents=item.amount_cents,
+                amount_cents=item.planned_cents,
+                planned_cents=item.planned_cents,
                 actual_cents=0,
                 category_id=category_id,
                 fund_id=fund_id,
