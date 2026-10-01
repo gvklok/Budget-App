@@ -488,7 +488,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
             the intentional exception, not one more everyday bucket. */}
           <button type="button" onClick={() => setMode('savings')}
             className={`w-full flex items-center justify-between rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors ${
-              mode === 'savings' ? 'border-saving/40 bg-saving-soft text-saving-ink' : 'border-line text-ink-3'
+              mode === 'savings' ? 'border-critical/40 bg-critical-soft text-critical' : 'border-line text-ink-3'
             }`}>
             <span>Spend from Savings</span>
             <span className="font-normal">{mode === 'savings' ? 'selected' : 'one-off, no bill or Fund'}</span>
@@ -680,8 +680,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
               </div>
             )}
             {showSavingsPreview && (
-              <p className={`text-sm font-semibold tabular ${savingsOver ? 'text-critical' : ''}`}
-                style={savingsOver ? undefined : { color: SAVING_TEXT }}>
+              <p className={`text-sm font-semibold tabular ${savingsOver ? 'text-critical' : 'text-ink'}`}>
                 Savings: {c(savingsBalance)} → {c(savingsBalance - savingsDrawCents)}
                 {savingsOver && <span className="block text-xs font-normal">Not enough in Savings — it can't go negative.</span>}
               </p>
