@@ -614,3 +614,9 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   ("Set aside from Savings · starting new funds") and not counted. Dev balance
   adjustments are ignored. (First live month: ~35% saved vs 34% planned,
   instead of −12% from fund setup.)
+- Bills keep a `planned_cents` (the plan that carries forward) separate from
+  this month's `amount_cents`. Covering an overspend from another Bill changes
+  only this month's amounts; the next month's auto-created plan copies the
+  planned amounts. Deliberate edits (create, PATCH, U5 reallocate) set both.
+  Bill rows show "+$X covered" / "−$X lent" when they differ. Migration
+  backfills planned_cents = amount_cents.

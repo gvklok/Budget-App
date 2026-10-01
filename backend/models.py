@@ -60,6 +60,9 @@ class Expense(Base):
     name = Column(String, nullable=False)
     type = Column(String, nullable=False, default="bill")  # "bill" | "fund"
     amount_cents = Column(Integer, nullable=False)
+    # The amount that carries forward to next month's copy. Deliberate plan edits
+    # set both; a log-time Bill-to-Bill cover changes only amount_cents.
+    planned_cents = Column(Integer, nullable=False)
     actual_cents = Column(Integer, default=0, nullable=False)
     category_id = Column(Integer, ForeignKey("expense_categories.id", ondelete="SET NULL"), nullable=True)
     fund_id = Column(Integer, ForeignKey("funds.id", ondelete="SET NULL"), nullable=True)

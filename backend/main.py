@@ -127,6 +127,9 @@ def _migrate() -> None:
             )
         if "color" not in existing:
             conn.execute(text("ALTER TABLE expenses ADD COLUMN color TEXT"))
+        if "planned_cents" not in existing:
+            conn.execute(text("ALTER TABLE expenses ADD COLUMN planned_cents INTEGER NOT NULL DEFAULT 0"))
+            conn.execute(text("UPDATE expenses SET planned_cents = amount_cents"))
 
         # transactions table: line_item_id must be ON DELETE SET NULL (owner
         # ruling — deletion never destroys history). Rebuild only when the live

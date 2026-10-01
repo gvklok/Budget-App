@@ -993,7 +993,7 @@ function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }
   )
 }
 
-function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride, fundBalanceCents }) {
+function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride, fundBalanceCents, plannedCents }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
@@ -1038,6 +1038,12 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
                       {spentCents === 0 ? '\u2014' : c(spentCents)}
                     </span>
                     <span className="text-ink-3"> / {c(budgetCents)}</span>
+                    {plannedCents != null && plannedCents !== budgetCents && (
+                      <span className="text-[11px] ml-1.5" style={{ color: BILLS }}
+                        title={`Plan is ${c(plannedCents)} \u2014 next month goes back to it`}>
+                        {budgetCents > plannedCents ? `+${c(budgetCents - plannedCents)} covered` : `\u2212${c(plannedCents - budgetCents)} lent`}
+                      </span>
+                    )}
                     {fundMode && over && <span className="text-ink-2"> {'\u00b7'} {c(spentCents - budgetCents)} over</span>}
                   </span>
                   {!(fundMode && over) && (
@@ -1133,7 +1139,7 @@ function BillGroup({ label, bills, txnsByItemId, onEdit, onLogTx, onDeleteTx }) 
               // that brown is reserved for aggregates (ring, allocation bar, group
               // subtotal bar via GroupSummary/billStatusColor). Overspend still
               // escalates to CRITICAL — honesty over identity.
-              return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} spentCents={spent} txns={itemTxns}
+              return <ItemRow key={b.id} name={b.name} budgetCents={b.amount_cents} plannedCents={b.planned_cents} spentCents={spent} txns={itemTxns}
                 color={billPct > 100 ? CRITICAL : billColor(b)}
                 onEdit={onEdit && (() => onEdit(b))}
                 onLogTx={onLogTx && (() => onLogTx(b.id))} onDeleteTx={onDeleteTx} />

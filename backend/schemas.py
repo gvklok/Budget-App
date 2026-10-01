@@ -73,6 +73,7 @@ class ExpenseOut(BaseModel):
     name: str
     type: str
     amount_cents: int
+    planned_cents: int
     actual_cents: int
     category_id: Optional[int] = None
     fund_id: Optional[int] = None
