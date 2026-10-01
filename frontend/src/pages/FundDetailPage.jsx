@@ -4,7 +4,7 @@ import {
   ChevronLeft, ArrowRightLeft, ShoppingBag, AlertTriangle,
   Wallet, PiggyBank, TrendingUp, RotateCcw, SlidersHorizontal,
 } from 'lucide-react'
-import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel, monthLabel } from '../api'
+import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel, monthLabel, localDateStr } from '../api'
 import { entityColor, LINE, LINE_STRONG, INK_3, CARD, SAVING_TEXT, areaGradientId } from '../theme'
 import Modal from '../components/Modal'
 import TransferModal from '../components/TransferModal'
@@ -342,7 +342,7 @@ function groupByMonth(activity) {
 // ── Log spend modal ──────────────────────────────────────────────────────────
 
 function LogSpendModal({ fund, onClose, onSave }) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDateStr()
   const [amount, setAmount] = useState('')
   const [merchant, setMerchant] = useState('')
   const [date, setDate] = useState(today)
@@ -639,6 +639,7 @@ export default function FundDetailPage() {
           initialTo={bucket}
           onClose={() => setShowTransfer(false)}
           onTransfer={handleTransfer}
+          onMovedOut={load}
         />
       )}
       {showLogSpend && (

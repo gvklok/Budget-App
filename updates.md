@@ -486,3 +486,119 @@ Committed as separate judgment points on `fableFun`:
 - Fund goals (detail page only) + Settings JSON backup export + custom entity
   colors + reorderable funds/bills + declutter pass + dark mode + PWA
   (manifest/icons/refetch-on-focus) + two-user hardening (WAL).
+
+## Changelog addendum 3 (2026-09-29) — Savings Withdrawals
+
+Real spends straight from Savings for unexpected/one-off costs with no Bill or
+Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
+- `Transaction.from_savings`; exactly one source per tx/leg (bill line item,
+  fund, or Savings). Debits Savings + Real Cash equally; delete reverses to
+  Savings. Split legs may draw from Savings; splits stay atomic.
+- Owner rulings: Savings may never go negative (400 with dollar amounts); a
+  reason (merchant) is required — friction on the outflow.
+- U1 tag applies: `external_spend` counts in Actual Spending as its own
+  `savings_withdrawals_cents` line; `transfer_out` goes to `transfers_out_cents`.
+- UI: "Spend from Savings" in the Log modal (before→after Savings preview,
+  Spent / Moved toggle), shortcut on the Funds-page Savings card, Savings badge
+  in All Transactions, "From Savings" line in summaries. Backup export includes
+  `from_savings`.
+
+## Changelog addendum 4 (2026-09-29) — Move budget, month status, month-first Overview
+
+- **Move budget between Bills:** `POST /line-items/rebalance` moves unspent
+  budget from one Bill to another in the same month (current/future only).
+  Owner ruling: only unspent budget can move (cap = amount − net spent). Bills
+  total / MR target and all balances unchanged — no money moves. Line items now
+  report `spent_cents`. UI: "Move budget" modal on Expenses + ambient
+  "over by $X · Move budget" link on over-budget Bill rows.
+- **Month status headline** (Expenses summary + top of Overview): Bills spent
+  vs planned (on track / red "Over by $X" from `bills_over_cents`), Funds spent,
+  and amber "From Savings — $X unplanned" with reasons. Owner ruling: Savings
+  withdrawals are shown honestly but do NOT count as going over.
+- **Overview is month-first:** ‹ Month › picker, defaults to 1M on the current
+  month; 1M/3M/6M/1Y kept, each range ends at the picked month
+  (`/overview/monthly`, `/spending-breakdown`, `/balance-series` take year/month).
+
+## Changelog addendum 5 (2026-09-29) — Cover overspend at log time (supersedes Move budget UI)
+
+- Move budget modal / buttons removed (owner: no manual shuffling). Instead,
+  logging a spend that pushes a Bill over plan or a Fund past its balance shows
+  an inline "Cover it from:" choice in the Log form; a choice is required.
+  `POST /transactions/` accepts `cover: {from_line_item_id | from_fund_id |
+  from_savings}`, applied atomically before the spend. Bill ← another Bill's
+  unspent budget (no money moves) or ← Savings (Savings→MR transfer, Bill and
+  MR target rise). Fund ← another Fund or ← Savings (real transfers). "Leave it
+  over" only when MR can pay / the Fund allows negatives. Current month only;
+  single transactions only (not splits). Deleting the spend doesn't undo the
+  cover. `/line-items/rebalance` kept server-side, unused by the UI.
+- "Spend from Savings" only in the Log modal (Savings-card shortcut removed);
+  Log's Savings spends are always external_spend.
+- Moving Savings to an owned outside account now lives in Transfer ("Another
+  account (outside)", from Savings only) → a transfer_out Savings Withdrawal.
+- Expenses "% saved" badge stays the planned rate; a warn line notes "$X spent
+  from Savings — not counted against budget" when applicable. Actual savings
+  rate (which includes it) lives on Overview.
+- Transfers to owned outside accounts read as transfers, not "Savings"
+  expenses: "→ {account}" rows with a single Transfer out badge; listed by
+  account under Overview "Transfers out — not spending"
+  (`savings_transfers_out` on /overview/spending-breakdown); Transfer modal
+  suggests previously used accounts (`GET /transactions/transfer-accounts`).
+- Transfer modal simplified: "Within" (between buckets) vs "Transfer out"
+  (from Savings or a Transfer-Out Fund, "Going to" text) — account chips
+  removed (`/transactions/transfer-accounts` now unused by the UI). Savings
+  transfers count in the Expenses "Transfers out" row, which expands to list and
+  delete each item. All Transactions rows can be deleted inline (refunds the
+  source bucket).
+
+## Changelog addendum 6 (2026-09-30) — Overview audit + delete-reversal fix
+
+- Savings withdrawals render amber (warn), never green; deletable from the
+  Expenses "From Savings" line. Overview 3M/6M/1Y headline summarizes the whole
+  window (bills vs plan, months over, funds, unplanned Savings, transfers out,
+  kept % of income), counting only months with data. `/overview/monthly` rows
+  gain `bills_planned_cents`, `bills_over_cents`, `has_plan`, `has_activity`
+  (no plan auto-creation). Audit fixes: Savings withdrawals now in spent/kept
+  totals and charts; Savings Rate covers the full window; Spending Pace excludes
+  Savings spends/transfers.
+- BUG (money): SQLite reuses deleted transaction ids; `delete_transaction`
+  reversed against the first ledger spend for that id — a stale, already-
+  reversed one — crediting the wrong bucket (invariant held; bucket truth
+  didn't). Real data: a $35.01 groceries delete credited fund "gabe" instead of
+  MR. Fixed via shared `ledger.live_spend_entries` (spend/reversal pairing),
+  also used by reporting so all Overview endpoints agree. AUTOINCREMENT on
+  transactions deferred pending owner OK (needs a table rebuild on real data).
+- Transactions table now AUTOINCREMENT (ids never reused); migrated on real
+  data after a backup (data/backups/budget-2026-09-30-pre-autoincrement.db).
+  The $35.01 mis-refund had already self-corrected via the next top-off and a
+  smaller cover — no data correction applied.
+- Savings withdrawals render as "Savings withdrawal" in critical red (row tint,
+  arrow icon) with the reason underneath; aggregates use critical too.
+- Timezone: `clock.get_current_date` uses APP_TZ (default America/Denver) —
+  the UTC container rolled "today" over at 6pm Denver. Frontend default dates
+  use local time (`localDateStr`) instead of toISOString (UTC).
+
+## Changelog addendum 7 (2026-09-30) — Allocation-based savings rate
+
+- Owner model: money leaves savings when it's allocated to a regular Fund, not
+  when the Fund is later spent. Transfers out are neutral to the savings rate
+  (already counted as saved while they accumulated) but do reduce cash.
+  `saved = income − bills spent − net contributions into regular funds −
+  Savings withdrawals`. New fields on `/overview/monthly` and `/monthly-summary`:
+  `fund_contributions_cents`, `saved_cents`, `cash_out_cents`, `net_cash_cents`
+  (kept_cents unchanged for compatibility).
+- Overview: "Where your income went" card (Bills / Into funds / From Savings /
+  Saved sum to income; Transfers out shown separately; Actually spent; Your
+  cash ±) replaces the month/range status cards at every range; no "on track"
+  verdicts. Period Review, Savings Rate and "Saved vs Allocated" use saved.
+  Where It Went still shows actual spending.
+- Expenses fund rows: "$X of $Y this month", "rolls over" / "from saved-up
+  balance" + balance; red only when the fund balance is negative ("recovering").
+- Refinement: allocations into transfer-out Funds (e.g. Roth) count as "into
+  funds" like any Fund; their later transfer out — and a direct Savings →
+  outside-account transfer — is neutral to the savings rate and shows only as
+  "Transfers out" that month.
+- Fund rows simplified back to the original layout ($spent / $contribution,
+  "$X left", bar) plus "$B in fund"; over shows "· $N over" neutrally (red only
+  for a negative balance). Tapping a row expands it; regular Funds show one
+  combined bar: spent of available (balance + spent), with a tick at this
+  month's contribution.

@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { LayoutDashboard, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react'
+import { LayoutDashboard, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react'
 import { apiGet, fmt } from '../api'
 import {
   entityColor, colorForName, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, CRITICAL,
   INK, INK_2, INK_3, LINE, PAPER, CARD, areaGradientId,
 } from '../theme'
-import { Card, SectionLabel, EmptyState, Segmented, PrimaryButton, Bar, Badge } from '../components/ui'
+import { Card, SectionLabel, GroupDivider, EmptyState, Segmented, PrimaryButton, Bar, Badge, IconButton } from '../components/ui'
+import { savingsReasons } from '../components/MonthStatus'
 import Modal from '../components/Modal'
 import { useRefetchOnFocus } from '../hooks'
 
@@ -115,16 +116,122 @@ function Stat({ label, value, dotColor, tone }) {
 // diluted by history that predates the seed/real data. Shared by
 // PeriodReviewCard and MoneyFlowContent (plus the page's Money Flow teaser)
 // so all three agree on the same totals.
+// A month counts as "having data" if the backend says so, else if anything
+// moved (savings withdrawals included — they're real spending).
+function monthHasData(m) {
+  if (m.has_activity != null) return m.has_activity || m.has_plan === true
+  return m.has_plan === true || m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0
+    || (m.savings_withdrawals_cents ?? 0) !== 0 || m.transfers_out_cents !== 0
+}
+
+// Savings rate is allocation-based: prefer saved_cents, fall back to the old kept_cents.
+function savedOf(m) {
+  return m.saved_cents ?? m.kept_cents ?? 0
+}
+
 function aggregateRange(months) {
-  const active = months.filter((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
+  const active = months.filter(monthHasData)
   const n = active.length
-  const totalIncome = active.reduce((s, m) => s + m.income_cents, 0)
-  const totalKept = active.reduce((s, m) => s + m.kept_cents, 0)
-  const totalBills = active.reduce((s, m) => s + m.bills_spent_cents, 0)
-  const totalFunds = active.reduce((s, m) => s + m.funds_spent_cents, 0)
-  const totalTransfers = active.reduce((s, m) => s + m.transfers_out_cents, 0)
-  const overspentCount = active.filter((m) => m.kept_cents < 0).length
-  return { n, totalIncome, totalKept, totalBills, totalFunds, totalTransfers, overspentCount }
+  const sum = (k) => active.reduce((s, m) => s + (m[k] ?? 0), 0)
+  const planned = active.filter((m) => m.has_plan)
+  const overMonths = planned.filter((m) => (m.bills_over_cents ?? 0) > 0)
+  return {
+    n,
+    totalIncome: sum('income_cents'),
+    totalKept: sum('kept_cents'),
+    totalSaved: active.reduce((s, m) => s + savedOf(m), 0),
+    totalIntoFunds: sum('fund_contributions_cents'),
+    totalCashOut: sum('cash_out_cents'),
+    totalNetCash: sum('net_cash_cents'),
+    hasSaved: active.length > 0 && active.every((m) => m.saved_cents != null),
+    hasNetCash: active.length > 0 && active.every((m) => m.net_cash_cents != null),
+    hasCashOut: active.length > 0 && active.every((m) => m.cash_out_cents != null),
+    totalBills: sum('bills_spent_cents'),
+    totalFunds: sum('funds_spent_cents'),
+    totalSavings: sum('savings_withdrawals_cents'),
+    totalTransfers: sum('transfers_out_cents'),
+    overspentCount: active.filter((m) => savedOf(m) < 0).length,
+    plannedMonths: planned.length,
+    totalPlanned: planned.reduce((s, m) => s + (m.bills_planned_cents ?? 0), 0),
+    billsOverMonths: overMonths.length,
+    billsOverTotal: overMonths.reduce((s, m) => s + m.bills_over_cents, 0),
+  }
+}
+
+// Headline for every range: where the window's income went, summed from the
+// monthly rows. Allocation-based — "Saved" is what the backend says is left
+// after bills, fund contributions, Savings withdrawals and transfers out.
+function IncomeWentCard({ months, rangeMonths, endYM }) {
+  const a = aggregateRange(months)
+  if (a.n === 0) return null
+  const startYM = shiftYM(endYM.year, endYM.month, -(rangeMonths - 1))
+  const title = rangeMonths === 1
+    ? monthFullLabel(endYM.year, endYM.month)
+    : rangeHeaderLabel(startYM.year, startYM.month, endYM.year, endYM.month)
+  const income = a.totalIncome
+  const saved = a.totalSaved
+  const rows = [
+    { key: 'bills', label: 'Bills', amount: a.totalBills, color: BILLS },
+    ...(a.hasSaved ? [{ key: 'funds', label: 'Into funds', amount: a.totalIntoFunds, color: FUNDS_HUE }] : []),
+    { key: 'sav', label: 'From Savings', amount: a.totalSavings, color: CRITICAL, text: CRITICAL, hideZero: true },
+    ...(a.hasSaved ? [{ key: 'saved', label: 'Saved', amount: saved, color: SAVING, text: saved < 0 ? CRITICAL : undefined, neg: saved < 0 }] : []),
+  ].filter((r) => !(r.hideZero && r.amount === 0))
+  const barParts = rows.filter((r) => r.amount > 0)
+  const barTotal = Math.max(income, barParts.reduce((s, r) => s + r.amount, 0))
+  const pct = (v) => (income > 0 ? `${Math.round((v / income) * 100)}%` : null)
+  const spent = a.hasCashOut ? a.totalCashOut : a.totalBills + a.totalFunds + a.totalSavings
+  const periodWord = rangeMonths === 1 ? 'this month' : 'over this period'
+  return (
+    <Card className="p-5 mb-3">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</p>
+        <p className="text-xs text-ink-3 shrink-0">Income <span className="tabular font-semibold text-ink">{c(income)}</span></p>
+      </div>
+      <p className="text-sm font-semibold text-ink mb-2">Where your income went</p>
+      {barTotal > 0 && (
+        <div className="flex h-2.5 gap-0.5 mb-3.5" role="img" aria-label="Where your income went">
+          {barParts.map((r) => (
+            <div key={r.key} className="h-full first:rounded-l-full last:rounded-r-full min-w-[2px]"
+              style={{ width: `${(r.amount / barTotal) * 100}%`, background: r.color }} />
+          ))}
+        </div>
+      )}
+      <div className="space-y-2">
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-center gap-2 text-sm">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: r.neg ? CRITICAL : r.color }} />
+            <span className="text-ink-2 flex-1 min-w-0 truncate">{r.label}</span>
+            <span className={`tabular font-semibold ${r.text || r.neg ? '' : 'text-ink'}`} style={r.text ? { color: r.text } : undefined}>{c(r.amount)}</span>
+            <span className="tabular text-xs text-ink-3 w-9 text-right shrink-0">{pct(r.amount) ?? ''}</span>
+          </div>
+        ))}
+      </div>
+      {a.totalTransfers > 0 && (
+        <div className="flex items-center gap-2 text-sm mt-2.5 pt-2.5 border-t border-line">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: TRANSFER_OUT }} />
+          <span className="text-ink-2 flex-1 min-w-0 truncate">Transfers out <span className="text-xs text-ink-3">· not spending</span></span>
+          <span className="tabular font-semibold" style={{ color: TRANSFER_OUT }}>{c(a.totalTransfers)}</span>
+        </div>
+      )}
+      <div className="mt-3 pt-3 border-t border-line space-y-1.5">
+        <div className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="text-ink-2">Actually spent</span>
+          <span className="tabular font-semibold text-ink">{c(spent)}</span>
+        </div>
+        <p className="text-[11px] text-ink-3 -mt-1">
+          bills {c(a.totalBills)} · from funds {c(a.totalFunds)} · from Savings {c(a.totalSavings)}
+        </p>
+        {a.hasNetCash && (
+          <div className="flex items-baseline justify-between gap-3 text-sm pt-1">
+            <span className="text-ink-2">Your cash <span className="text-xs text-ink-3">{periodWord}</span></span>
+            <span className="tabular font-semibold" style={{ color: a.totalNetCash < 0 ? CRITICAL : SAVING_TEXT }}>
+              {a.totalNetCash < 0 ? '\u2212' : '+'}{c(Math.abs(a.totalNetCash))}
+            </span>
+          </div>
+        )}
+      </div>
+    </Card>
+  )
 }
 
 // Compact "Feb – Jul" range label for the hero rate's small caption — short
@@ -143,8 +250,8 @@ function periodRangeShortLabel(months) {
 }
 
 function PeriodReviewCard({ months, rangeMonths }) {
-  const { n, totalIncome, totalKept, totalBills, totalFunds, totalTransfers, overspentCount } = aggregateRange(months)
-  const avgSpent = n > 0 ? (totalBills + totalFunds) / n : 0
+  const { n, totalIncome, totalSaved: totalKept, totalBills, totalFunds, totalSavings, totalTransfers, overspentCount } = aggregateRange(months)
+  const avgSpent = n > 0 ? (totalBills + totalFunds + totalSavings) / n : 0
   const avgKept = n > 0 ? totalKept / n : 0
   const rate = totalIncome > 0 ? (totalKept / totalIncome) * 100 : null
   const singleMonth = rangeMonths === 1
@@ -166,7 +273,7 @@ function PeriodReviewCard({ months, rangeMonths }) {
               </span>
               <p className="text-xs text-ink-3 mt-0.5">savings rate · {periodRangeShortLabel(months)}</p>
               <p className="text-sm text-ink-2 mt-2">
-                You kept <span className="tabular font-semibold text-ink">{c(totalKept)}</span> of{' '}
+                You saved <span className="tabular font-semibold text-ink">{c(totalKept)}</span> of{' '}
                 <span className="tabular">{c(totalIncome)}</span> income
               </p>
             </div>
@@ -174,7 +281,7 @@ function PeriodReviewCard({ months, rangeMonths }) {
             /* No income recorded in the window — still lead with a NUMBER, not
                a sentence: the period's spending is the next-best headline. */
             <div className="mb-1">
-              <span className="hero-figure text-5xl font-bold tabular text-ink">{c(totalBills + totalFunds)}</span>
+              <span className="hero-figure text-5xl font-bold tabular text-ink">{c(totalBills + totalFunds + totalSavings)}</span>
               <p className="text-xs text-ink-3 mt-0.5">spent · {periodRangeShortLabel(months)}</p>
               <p className="text-sm text-ink-2 mt-2">No income recorded this period — log a paycheck and this becomes your savings rate</p>
             </div>
@@ -183,11 +290,12 @@ function PeriodReviewCard({ months, rangeMonths }) {
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-line">
             <Stat label="Spent on bills" value={c(totalBills)} dotColor={BILLS} />
             <Stat label="Spent from funds" value={c(totalFunds)} dotColor={FUNDS_HUE} />
+            {totalSavings > 0 && <Stat label="From Savings" value={c(totalSavings)} dotColor={CRITICAL} />}
             <Stat label="Transfers out" value={c(totalTransfers)} dotColor={TRANSFER_OUT} />
             {!singleMonth && <Stat label="Avg spent / month" value={c(avgSpent)} />}
-            {!singleMonth && <Stat label="Avg kept / month" value={c(avgKept)} />}
+            {!singleMonth && <Stat label="Avg saved / month" value={c(avgKept)} />}
             <Stat
-              label="Overspent months"
+              label="Months below zero"
               value={overspentCount > 0 ? String(overspentCount) : '0 — nice'}
               tone={overspentCount > 0 ? 'critical' : 'muted'}
             />
@@ -195,7 +303,7 @@ function PeriodReviewCard({ months, rangeMonths }) {
 
           {!singleMonth && (
             <p className="text-xs text-ink-3 mt-3">
-              {n} active month{n === 1 ? '' : 's'}{n < rangeMonths ? ` of ${rangeMonths}` : ''}
+              Based on {n} month{n === 1 ? '' : 's'} with data{n < rangeMonths ? ` (of ${rangeMonths})` : ''}
             </p>
           )}
         </>
@@ -273,6 +381,7 @@ function buildGroups(agg) {
   const defs = [
     { key: 'bills', label: 'Bills', amount: agg.totalBills, color: BILLS },
     { key: 'funds', label: 'Funds', amount: agg.totalFunds, color: FUNDS_HUE },
+    { key: 'savings', label: 'From Savings', amount: agg.totalSavings, color: CRITICAL },
     { key: 'transfers', label: 'Transfers out', amount: agg.totalTransfers, color: TRANSFER_OUT },
     ...(overspent ? [] : [{ key: 'kept', label: 'Kept', amount: agg.totalKept, color: SAVING }]),
   ]
@@ -633,7 +742,7 @@ function KeptVsSpentContent({ months }) {
     1,
     ...months.map((m) => Math.max(
       m.income_cents,
-      m.bills_spent_cents + m.funds_spent_cents + m.transfers_out_cents + Math.max(m.kept_cents, 0)
+      m.bills_spent_cents + (m.fund_contributions_cents ?? m.funds_spent_cents) + (m.savings_withdrawals_cents ?? 0) + Math.max(savedOf(m), 0)
     ))
   )
   const ticks = niceTicks(0, maxTotal, 4)
@@ -661,14 +770,14 @@ function KeptVsSpentContent({ months }) {
             const cx = leftPad + (i + 0.5) * bandW
             const x = cx - barW / 2
             const billsH = (m.bills_spent_cents / scaleMax) * plotH
-            const fundsH = (m.funds_spent_cents / scaleMax) * plotH
-            const transferH = (m.transfers_out_cents / scaleMax) * plotH
-            const keptH = (Math.max(m.kept_cents, 0) / scaleMax) * plotH
+            const fundsH = ((m.fund_contributions_cents ?? m.funds_spent_cents) / scaleMax) * plotH
+            const savingsH = ((m.savings_withdrawals_cents ?? 0) / scaleMax) * plotH
+            const keptH = (Math.max(savedOf(m), 0) / scaleMax) * plotH
 
             const segs = []
             if (billsH > 0) segs.push({ h: billsH, fill: BILLS })
             if (fundsH > 0) segs.push({ h: fundsH, fill: FUNDS_HUE })
-            if (transferH > 0) segs.push({ h: transferH, fill: TRANSFER_OUT })
+            if (savingsH > 0) segs.push({ h: savingsH, fill: CRITICAL })
             if (keptH > 0) segs.push({ h: keptH, fill: SAVING })
 
             let cursor = baselineY
@@ -715,9 +824,9 @@ function KeptVsSpentContent({ months }) {
                 <p className="font-semibold mb-1">{monthFullLabel(m.year, m.month)}</p>
                 <p>Income: <span className="tabular">{c(m.income_cents)}</span></p>
                 <p>Bills: <span className="tabular">{c(m.bills_spent_cents)}</span></p>
-                <p>Funds: <span className="tabular">{c(m.funds_spent_cents)}</span></p>
-                <p>Transfers out: <span className="tabular">{c(m.transfers_out_cents)}</span></p>
-                <p>Kept: <span className="tabular">{c(m.kept_cents)}</span></p>
+                <p>{m.fund_contributions_cents != null ? 'Into funds' : 'Funds'}: <span className="tabular">{c(m.fund_contributions_cents ?? m.funds_spent_cents)}</span></p>
+                {(m.savings_withdrawals_cents ?? 0) > 0 && <p>From Savings: <span className="tabular">{c(m.savings_withdrawals_cents)}</span></p>}
+                <p>Saved: <span className="tabular">{c(savedOf(m))}</span></p>
               </div>
             </div>
           ))}
@@ -727,9 +836,9 @@ function KeptVsSpentContent({ months }) {
       {/* legend */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-2 pt-3 border-t border-line">
         <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: BILLS }} />Bills</span>
-        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: FUNDS_HUE }} />Funds</span>
-        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: TRANSFER_OUT }} />Transfers out</span>
-        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: SAVING }} />Kept</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: FUNDS_HUE }} />Into funds</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: CRITICAL }} />From Savings</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-2"><span className="w-2 h-2 rounded-full" style={{ background: SAVING }} />Saved</span>
       </div>
     </>
   )
@@ -878,6 +987,7 @@ function SpendingPaceChart({ year, month, day, plannedTotal, txns, tag }) {
           {c(Math.abs(diff))} {overPace ? 'over pace' : 'under pace'}
         </span>
       </p>
+      <p className="text-[11px] text-ink-3 mt-1">Planned Bill and Fund spending only — Savings spends and transfers out excluded.</p>
     </Card>
   )
 }
@@ -892,26 +1002,25 @@ function savingsRateStats(months) {
   if (months.length === 1) {
     const month = months[0]
     const hasIncome = month.income_cents > 0
-    return { single: true, pct: hasIncome ? (month.kept_cents / month.income_cents) * 100 : null }
+    return { single: true, pct: hasIncome ? (savedOf(month) / month.income_cents) * 100 : null }
   }
-  const last6 = months.slice(-6)
-  const withIncome = last6.filter((m) => m.income_cents > 0)
+  const withIncome = months.filter((m) => m.income_cents > 0)
   const avgPct = withIncome.length
-    ? withIncome.reduce((s, m) => s + (m.kept_cents / m.income_cents) * 100, 0) / withIncome.length
+    ? withIncome.reduce((s, m) => s + (savedOf(m) / m.income_cents) * 100, 0) / withIncome.length
     : null
-  return { single: false, avgPct }
+  return { single: false, avgPct, incomeMonths: withIncome.length }
 }
 
 function SavingsRateSingleMonthContent({ month }) {
   const hasIncome = month.income_cents > 0
-  const pct = hasIncome ? (month.kept_cents / month.income_cents) * 100 : null
+  const pct = hasIncome ? (savedOf(month) / month.income_cents) * 100 : null
   return pct != null ? (
     <div className="flex items-baseline gap-3">
       <span className="text-4xl font-bold tabular" style={{ color: pct < 0 ? CRITICAL : SAVING }}>
         {Math.round(pct)}%
       </span>
       <p className="text-sm text-ink-2">
-        Kept <span className="font-semibold text-ink tabular">{c(month.kept_cents)}</span> of{' '}
+        Saved <span className="font-semibold text-ink tabular">{c(savedOf(month))}</span> of{' '}
         <span className="tabular">{c(month.income_cents)}</span> income this month.
       </p>
     </div>
@@ -925,8 +1034,8 @@ function SavingsRateContent({ months }) {
     return <SavingsRateSingleMonthContent month={months[0]} />
   }
 
-  const { avgPct } = savingsRateStats(months)
-  const last6 = months.slice(-6)
+  const { avgPct, incomeMonths } = savingsRateStats(months)
+  const last6 = months // the whole selected window, not just the tail
 
   const VBW = 330
   const VBH = 128
@@ -955,7 +1064,7 @@ function SavingsRateContent({ months }) {
         {last6.map((m, i) => {
           const cx = leftPad + (i + 0.5) * bandW
           const hasIncome = m.income_cents > 0
-          const pct = hasIncome ? (m.kept_cents / m.income_cents) * 100 : null
+          const pct = hasIncome ? (savedOf(m) / m.income_cents) * 100 : null
           const barColor = pct != null && pct < 0 ? CRITICAL : SAVING
           const barH = pct != null ? (Math.min(Math.max(pct, 0), 100) / 100) * plotH : 0
           return (
@@ -986,7 +1095,7 @@ function SavingsRateContent({ months }) {
       </svg>
       <p className="text-sm text-ink-2 mt-1">
         {avgPct != null
-          ? <>You keep ~<span className="font-semibold text-ink tabular">{Math.round(avgPct)}%</span> of income on average.</>
+          ? <>You save ~<span className="font-semibold text-ink tabular">{Math.round(avgPct)}%</span> of income on average across {incomeMonths} month{incomeMonths === 1 ? '' : 's'} with income.</>
           : 'Not enough income history yet.'}
       </p>
     </>
@@ -1034,10 +1143,11 @@ function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel 
 // category donut) — top 6 spending entities across the range + "Other",
 // identity colors matching the dots in the list below. Center shows total
 // spent (bills + funds, transfers-out excluded — not spending).
-function RangeDonut({ bills, spendFunds, billColorByName, fundColorById }) {
+function RangeDonut({ bills, spendFunds, savingsCents = 0, billColorByName, fundColorById }) {
   const entities = [
     ...bills.map((b) => ({ name: b.name, amount: b.spent_cents, color: billColorByName[b.name] || colorForName(b.name) })),
     ...spendFunds.map((f) => ({ name: f.name ?? 'Deleted fund', amount: f.spent_cents, color: entityColor({ id: f.fund_id, color: fundColorById[f.fund_id] }) })),
+    { name: 'From Savings', amount: savingsCents, color: CRITICAL },
   ].filter((e) => e.amount > 0).sort((a, b) => b.amount - a.amount)
 
   if (entities.length === 0) return null
@@ -1088,8 +1198,11 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
   const spendFunds = allFunds.filter((f) => f.destination_type !== 'transfer_out')
   const transferFunds = allFunds.filter((f) => f.destination_type === 'transfer_out')
 
-  const maxSpend = Math.max(1, ...bills.map((b) => b.spent_cents), ...spendFunds.map((f) => f.spent_cents))
-  const maxTransfer = Math.max(1, ...transferFunds.map((f) => f.spent_cents))
+  const savingsCents = breakdown?.savings_withdrawals_cents ?? 0
+  const maxSpend = Math.max(1, savingsCents, ...bills.map((b) => b.spent_cents), ...spendFunds.map((f) => f.spent_cents))
+  const savingsTransfers = breakdown?.savings_transfers_out ?? []
+  const maxTransfer = Math.max(1, ...transferFunds.map((f) => f.spent_cents), ...savingsTransfers.map((t) => t.amount_cents))
+  const hasTransfers = transferFunds.length > 0 || savingsTransfers.length > 0
 
   const startYM = shiftYM(endYM.year, endYM.month, -(rangeMonths - 1))
   const headerLabel = rangeHeaderLabel(startYM.year, startYM.month, endYM.year, endYM.month)
@@ -1099,7 +1212,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
   const prevBillByName = Object.fromEntries((prevBreakdown?.bills ?? []).map((b) => [b.name, b.spent_cents]))
   const prevFundById = Object.fromEntries((prevBreakdown?.funds ?? []).map((f) => [f.fund_id, f.spent_cents]))
 
-  const empty = !loading && !error && bills.length === 0 && spendFunds.length === 0 && transferFunds.length === 0
+  const empty = !loading && !error && bills.length === 0 && spendFunds.length === 0 && !hasTransfers && savingsCents === 0
 
   return (
     <Card className="p-5 mb-3">
@@ -1123,7 +1236,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
 
       {!error && !loading && !empty && (
         <>
-          <RangeDonut bills={bills} spendFunds={spendFunds} billColorByName={billColorByName} fundColorById={fundColorById} />
+          <RangeDonut bills={bills} spendFunds={spendFunds} savingsCents={savingsCents} billColorByName={billColorByName} fundColorById={fundColorById} />
           {bills.length > 0 && (
             <div className="mb-4">
               <p className="text-xs font-semibold text-ink-3 mb-2">Bills</p>
@@ -1139,7 +1252,7 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
             </div>
           )}
           {spendFunds.length > 0 && (
-            <div className={transferFunds.length > 0 || bills.length > 0 ? 'mb-4' : ''}>
+            <div className={hasTransfers || bills.length > 0 ? 'mb-4' : ''}>
               <p className="text-xs font-semibold text-ink-3 mb-2">Funds</p>
               {spendFunds.map((f) => {
                 const prev = prevFundById[f.fund_id]
@@ -1152,11 +1265,21 @@ function WhereItWentCard({ rangeMonths, endYM, breakdown, prevBreakdown, loading
               })}
             </div>
           )}
-          {transferFunds.length > 0 && (
+          {savingsCents > 0 && (
+            <div className={hasTransfers ? 'mb-4' : ''}>
+              <p className="text-xs font-semibold text-ink-3 mb-2">From Savings</p>
+              <SpendRow name="Savings withdrawals" amount={savingsCents} dotColor={CRITICAL} maxVal={maxSpend}
+                delta={prevBreakdown ? savingsCents - (prevBreakdown.savings_withdrawals_cents ?? 0) : null} deltaLabel={deltaLabel} />
+            </div>
+          )}
+          {hasTransfers && (
             <div className="pt-3 border-t border-line opacity-70">
               <p className="text-xs font-semibold text-ink-3 mb-2">Transfers out — not spending</p>
               {transferFunds.map((f) => (
                 <SpendRow key={`transfer-${f.fund_id}`} name={f.name ?? 'Deleted fund'} amount={f.spent_cents} dotColor={entityColor({ id: f.fund_id, color: fundColorById[f.fund_id] })} barColor={TRANSFER_OUT} maxVal={maxTransfer} />
+              ))}
+              {savingsTransfers.map((t) => (
+                <SpendRow key={`acct-${t.name}`} name={`→ ${t.name}`} amount={t.amount_cents} dotColor={TRANSFER_OUT} barColor={TRANSFER_OUT} maxVal={maxTransfer} />
               ))}
             </div>
           )}
@@ -1229,7 +1352,11 @@ const RANGE_OPTIONS = [
 ]
 
 export default function OverviewPage() {
-  const [range, setRange] = useState(6)
+  const [range, setRange] = useState(1)
+  // Picked month = end of every window on the page. Defaults to the effective
+  // current month (AppClock); can't go past it.
+  const [effYM, setEffYM] = useState(null) // { year, month, day }
+  const [picked, setPicked] = useState(null) // { year, month }
   const [monthly, setMonthly] = useState(null)
   const [mainLoading, setMainLoading] = useState(true)
   const [mainError, setMainError] = useState('')
@@ -1253,27 +1380,44 @@ export default function OverviewPage() {
   // and keeps developing on fableFun; flip this back on once it's ready.
   const SHOW_MONEY_FLOW = false
 
+  const loadClock = useCallback(async () => {
+    try {
+      const clock = await apiGet('/dev/current-date')
+      const [y, m, d] = clock.effective_date.split('-').map(Number)
+      setEffYM({ year: y, month: m, day: d })
+      setPicked((p) => p ?? { year: y, month: m })
+    } catch (err) {
+      setMainError(err.message || 'Failed to load')
+    }
+  }, [])
+
+  useEffect(() => { loadClock() }, [loadClock, refreshKey])
+
   const loadMain = useCallback(async () => {
+    if (!picked) return
     setMainLoading(true)
     setMainError('')
     try {
-      const monthlyData = await apiGet(`/overview/monthly?months=${range}`)
+      const monthlyData = await apiGet(`/overview/monthly?months=${range}&year=${picked.year}&month=${picked.month}`)
       setMonthly(monthlyData.months)
     } catch (err) {
       setMainError(err.message || 'Failed to load')
     } finally {
       setMainLoading(false)
     }
-  }, [range])
+  }, [range, picked])
 
   useEffect(() => { loadMain() }, [loadMain, refreshKey])
 
   const loadCurrent = useCallback(async () => {
+    if (!picked || !effYM) { setCurrentLoading(false); return }
     setCurrentLoading(true)
     setCurrentError('')
     try {
-      const clock = await apiGet('/dev/current-date')
-      const [y, m, d] = clock.effective_date.split('-').map(Number)
+      const { year: y, month: m } = picked
+      const isEff = y === effYM.year && m === effYM.month
+      // A finished month shows in full; the current one only up to today.
+      const d = isEff ? effYM.day : 31
       const [summary, txns, funds, bills] = await Promise.all([
         apiGet(`/monthly-summary?year=${y}&month=${m}`),
         apiGet(`/transactions/?year=${y}&month=${m}`),
@@ -1281,7 +1425,9 @@ export default function OverviewPage() {
         apiGet(`/line-items/?year=${y}&month=${m}`),
       ])
       const transferFundNames = new Set(funds.filter((f) => f.destination_type === 'transfer_out').map((f) => f.name))
-      const paceTxns = txns.filter((tx) => !(tx.fund_name && transferFundNames.has(tx.fund_name)))
+      // Pace tracks planned (Bill + Fund) spending only: Savings withdrawals are
+      // unplanned (shown in the headline) and transfers out aren't spending.
+      const paceTxns = txns.filter((tx) => !tx.from_savings && !(tx.fund_name && transferFundNames.has(tx.fund_name)))
       // Custom colors, keyed for the "Where it went" / donut lookups below.
       // Funds keep id-stable colorForId fallback; Bills key by NAME (a Bill
       // gets a new line-item id every month) — see theme.js entityColor/
@@ -1296,13 +1442,14 @@ export default function OverviewPage() {
         expectedIncomeCents: summary.expected_income_cents ?? 0,
         actualIncomeCents: summary.actual_income_cents ?? 0,
         paceTxns, fundColorById, billColorByName,
+        summary, reasons: savingsReasons(txns),
       })
     } catch (err) {
       setCurrentError(err.message || 'Failed to load')
     } finally {
       setCurrentLoading(false)
     }
-  }, [])
+  }, [picked, effYM])
 
   useEffect(() => { loadCurrent() }, [loadCurrent, refreshKey])
 
@@ -1310,11 +1457,11 @@ export default function OverviewPage() {
   // `current`) and aggregates the selected range; it waits for `current` to
   // resolve so it never has to fetch the effective date a second time.
   const loadBreakdown = useCallback(async () => {
-    if (!current) return
+    if (!picked) return
     setBreakdownLoading(true)
     setBreakdownError('')
     try {
-      const { year, month } = current
+      const { year, month } = picked
       const startYM = shiftYM(year, month, -(range - 1))
       const prevEnd = shiftYM(startYM.year, startYM.month, -1)
       const [data, prevData] = await Promise.all([
@@ -1328,7 +1475,7 @@ export default function OverviewPage() {
     } finally {
       setBreakdownLoading(false)
     }
-  }, [current, range])
+  }, [picked, range])
 
   useEffect(() => { loadBreakdown() }, [loadBreakdown, refreshKey])
 
@@ -1351,12 +1498,16 @@ export default function OverviewPage() {
     )
   }
 
-  if (mainLoading || !monthly) {
+  if (mainLoading || !monthly || !picked) {
     return <div className="flex items-center justify-center h-64 text-ink-3">Loading…</div>
   }
 
-  const hasActivity = monthly.some((m) => m.income_cents !== 0 || m.bills_spent_cents !== 0 || m.funds_spent_cents !== 0 || m.transfers_out_cents !== 0)
+  const hasActivity = monthly.some(monthHasData)
   const currentTag = current ? monthShortLabel(current.year, current.month) : null
+  const isEffMonth = !effYM || (picked.year === effYM.year && picked.month === effYM.month)
+  const atCurrent = isEffMonth || (effYM && (picked.year > effYM.year || (picked.year === effYM.year && picked.month >= effYM.month)))
+  const monthTitle = isEffMonth ? 'This Month' : monthFullLabel(picked.year, picked.month)
+  const showPace = current && !currentLoading && !currentError && current.plannedTotal > 0
 
   // Teaser lines for the collapsed chart cards below — computed once here so
   // the collapsed header and the (lazily-mounted) chart content agree on the
@@ -1368,7 +1519,7 @@ export default function OverviewPage() {
   const keptVsSpentTeaser = `${monthly.length} month${monthly.length === 1 ? '' : 's'}`
   const rateStats = savingsRateStats(monthly)
   const savingsRateTeaser = rateStats.single
-    ? (rateStats.pct != null ? `${Math.round(rateStats.pct)}% this month` : null)
+    ? (rateStats.pct != null ? `${Math.round(rateStats.pct)}% saved` : null)
     : (rateStats.avgPct != null ? `~${Math.round(rateStats.avgPct)}% avg` : null)
 
   return (
@@ -1378,24 +1529,45 @@ export default function OverviewPage() {
         <Segmented value={range} onChange={setRange} options={RANGE_OPTIONS} />
       </div>
 
+      {/* Month picker — every window below ends at this month */}
+      <div className="flex items-center justify-center gap-1 mb-5 -mt-1">
+        <IconButton onClick={() => setPicked(shiftYM(picked.year, picked.month, -1))} aria-label="Previous month"><ChevronLeft size={16} /></IconButton>
+        <p className="text-sm font-semibold text-ink w-36 text-center tabular">{monthFullLabel(picked.year, picked.month)}</p>
+        <IconButton
+          onClick={() => setPicked(shiftYM(picked.year, picked.month, 1))}
+          disabled={atCurrent}
+          aria-label="Next month"
+          className={atCurrent ? 'opacity-30 pointer-events-none' : ''}
+        ><ChevronRight size={16} /></IconButton>
+        {!isEffMonth && effYM && (
+          <button onClick={() => setPicked({ year: effYM.year, month: effYM.month })} className="text-xs font-semibold text-accent-ink ml-1">
+            Today
+          </button>
+        )}
+      </div>
+
       {!hasActivity && (breakdown?.bills?.length ?? 0) === 0 && (breakdown?.funds?.length ?? 0) === 0 ? (
         <Card className="p-8 flex flex-col items-center text-center gap-2">
           <div className="w-12 h-12 rounded-full bg-accent-soft text-accent-ink flex items-center justify-center mb-1">
             <LayoutDashboard size={20} />
           </div>
-          <p className="text-ink font-semibold">Analytics will show up here</p>
+          <p className="text-ink font-semibold">{isEffMonth && range === 1 ? 'Analytics will show up here' : 'Nothing recorded for this window'}</p>
           <p className="text-sm text-ink-3 max-w-xs">
-            As paychecks land and money moves, trends, monthly comparisons, and spending breakdowns will appear on this page.
+            {!(isEffMonth && range === 1) ? 'Try a longer range or another month.' : 'As paychecks land and money moves, trends, monthly comparisons, and spending breakdowns will appear on this page.'}
           </p>
         </Card>
       ) : (
         <>
+          {/* Picked-month headline (Bills / Funds / From Savings) leads the
+              page — the Overview is month-first; ranges extend back from it. */}
+          <IncomeWentCard months={monthly} rangeMonths={range} endYM={{ year: picked.year, month: picked.month }} />
+
           <PeriodReviewCard months={monthly} rangeMonths={range} />
 
           {current && (
             <WhereItWentCard
               rangeMonths={range}
-              endYM={{ year: current.year, month: current.month }}
+              endYM={{ year: picked.year, month: picked.month }}
               breakdown={breakdown}
               prevBreakdown={prevBreakdown}
               loading={breakdownLoading}
@@ -1448,7 +1620,7 @@ export default function OverviewPage() {
             </Modal>
           )}
 
-          <CollapsibleChartCard storageKey="overview.keptVsSpent.open" label="Kept vs Spent" teaser={keptVsSpentTeaser}>
+          <CollapsibleChartCard storageKey="overview.keptVsSpent.open" label="Saved vs Allocated" teaser={keptVsSpentTeaser}>
             <KeptVsSpentContent months={monthly} />
           </CollapsibleChartCard>
 
@@ -1456,16 +1628,15 @@ export default function OverviewPage() {
             <SavingsRateContent months={monthly} />
           </CollapsibleChartCard>
 
-          {/* Spending Pace is always pinned to the effective current month
-              regardless of the range selector above — its own Jul tag makes
-              that scope explicit, so the old "This Month" group divider no
-              longer earns its place now that Bills Coverage (the divider's
-              other occupant) is gone. */}
-          {!currentLoading && !currentError && current && current.plannedTotal > 0 && (
-            <SpendingPaceChart
-              year={current.year} month={current.month} day={current.day}
-              plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
-            />
+          {/* Spending Pace for the picked month (not the range window). */}
+          {showPace && (
+            <>
+              <GroupDivider>{monthTitle}</GroupDivider>
+              <SpendingPaceChart
+                year={current.year} month={current.month} day={current.day}
+                plannedTotal={current.plannedTotal} txns={current.paceTxns} tag={currentTag}
+              />
+            </>
           )}
         </>
       )}

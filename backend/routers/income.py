@@ -13,6 +13,7 @@ import ledger
 import plans as plans_lib
 from clock import get_current_date
 from database import get_db
+from ledger import live_spend_entries, paired_spend_entries, fund_contributions_by_month
 
 router = APIRouter()
 
@@ -299,9 +300,31 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
     actual_bills_spent = 0
     actual_fund_spent = 0
     transfers_out_cents = 0
+    savings_withdrawals_cents = 0
+
+    # Savings withdrawals are classified from the ledger (net of reversals) and
+    # skipped in the transaction loop below. Bill spends debit MR; the spend entry
+    # says so even when the bill isn't in this month's plan (no plan, back-dated
+    # tx, deleted bill) — otherwise they'd be miscounted as fund spending.
+    live_spend = live_spend_entries(db, [t.id for t in month_txns])
+    savings_tx_ids = {tid for tid, e in live_spend.items() if e.from_bucket == "savings"}
+    mr_tx_ids = {tid for tid, e in live_spend.items() if e.from_bucket == "mr"}
+    for e, origin in paired_spend_entries(db):
+        if not e.date.startswith(month_prefix):
+            continue
+        fund_side = origin.from_bucket if origin.kind == "spend" else origin.to_bucket
+        if fund_side != "savings":
+            continue
+        sign = 1 if e.kind == "spend" else -1
+        if origin.destination_type == "transfer_out":
+            transfers_out_cents += sign * e.amount_cents
+        else:
+            savings_withdrawals_cents += sign * e.amount_cents
 
     for tx in month_txns:
-        if tx.line_item_id is not None and tx.line_item_id in bill_line_item_ids:
+        if tx.id in savings_tx_ids:
+            continue
+        if (tx.line_item_id is not None and tx.line_item_id in bill_line_item_ids) or tx.id in mr_tx_ids:
             actual_bills_spent += tx.amount_cents
             continue
         # Resolve the Fund this transaction hits: either a direct fund spend, or
@@ -328,15 +351,25 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
         else:
             actual_fund_spent += tx.amount_cents
 
+    fund_contributions = fund_contributions_by_month(db, month_prefix).get(month_prefix, 0)
+    cash_out = actual_bills_spent + actual_fund_spent + savings_withdrawals_cents
     return {
         "year": year,
         "month": month,
+        "fund_contributions_cents": fund_contributions,
+        "saved_cents": actual_income - actual_bills_spent - fund_contributions - savings_withdrawals_cents,
+        "cash_out_cents": cash_out,
+        "net_cash_cents": actual_income - cash_out - transfers_out_cents,
         "expected_income_cents": expected_income,
         "actual_income_cents": actual_income,
         "expected_bills_total_cents": bills_total,
+        "bills_planned_cents": bills_total,
+        "bills_spent_cents": actual_bills_spent,
+        "bills_over_cents": max(0, actual_bills_spent - bills_total),
         "expected_fund_contributions_total_cents": fund_total,
         "expected_expenses_total_cents": expenses_total,
         "expected_savings_cents": expected_income - expenses_total,
-        "actual_spending_cents": actual_bills_spent + actual_fund_spent,
+        "actual_spending_cents": actual_bills_spent + actual_fund_spent + savings_withdrawals_cents,
+        "savings_withdrawals_cents": savings_withdrawals_cents,
         "transfers_out_cents": transfers_out_cents,
     }

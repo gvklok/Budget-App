@@ -489,3 +489,38 @@ def test_transactions_enriched_fund_name_direct(client):
     assert len(txs) == 1
     assert txs[0]["fund_name"] == "Vacation"
     assert txs[0]["line_item_name"] is None
+
+
+def _seed_savings_spend(entries):
+    import main
+    import models
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        for kind, frm, to, amt, dest in entries:
+            db.add(models.LedgerEntry(date="2026-07-05", kind=kind, from_bucket=frm, to_bucket=to,
+                                      amount_cents=amt, destination_type=dest))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_savings_withdrawals_in_reporting(client):
+    client.post("/dev/set-simulated-date", json={"date": "2026-07-10"})
+    _seed_savings_spend([
+        ("spend", "savings", "external", 5000, "external_spend"),
+        ("spend", "savings", "external", 3000, "external_spend"),
+        ("spend_reversal", "external", "savings", 1000, "external_spend"),
+        ("spend", "savings", "external", 7000, "transfer_out"),
+        ("spend_reversal", "external", "savings", 2000, "transfer_out"),
+    ])
+    s = client.get("/monthly-summary", params={"year": 2026, "month": 7}).json()
+    assert s["savings_withdrawals_cents"] == 7000
+    assert s["actual_spending_cents"] == 7000
+    assert s["transfers_out_cents"] == 5000
+
+    m = client.get("/overview/monthly", params={"months": 1}).json()["months"][-1]
+    assert m["savings_withdrawals_cents"] == 7000
+    assert m["bills_spent_cents"] == 0 and m["funds_spent_cents"] == 0
+    assert m["spent_cents"] == 7000
+    assert m["transfers_out_cents"] == 5000

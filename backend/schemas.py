@@ -82,6 +82,10 @@ class ExpenseOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ExpenseWithSpentOut(ExpenseOut):
+    spent_cents: int = 0  # net transaction spend against this item in its plan's month
+
+
 class ExpenseCreate(BaseModel):
     name: str
     type: str = "bill"
@@ -145,11 +149,21 @@ class TransactionOut(BaseModel):
     line_item_name: Optional[str] = None
     fund_name: Optional[str] = None
     destination_type: Optional[str] = None
+    from_savings: bool = False
     source: str = "manual"
     external_id: Optional[str] = None
     status: str = "posted"
     kind: str = "spend"
+    covered_cents: int = 0  # create-time only: overage moved in by `cover`
+    covered_from: Optional[str] = None  # human label of the cover source
     model_config = {"from_attributes": True}
+
+
+class CoverSource(BaseModel):
+    """Where a spend's overage comes from — exactly one of these."""
+    from_line_item_id: Optional[int] = None  # another Bill (budget-only rebalance)
+    from_fund_id: Optional[int] = None
+    from_savings: bool = False
 
 
 class TransactionCreate(BaseModel):
@@ -157,17 +171,24 @@ class TransactionCreate(BaseModel):
     date: str  # YYYY-MM-DD
     merchant: Optional[str] = None
     line_item_id: Optional[int] = None
-    fund_id: Optional[int] = None  # set this OR line_item_id, not both
+    fund_id: Optional[int] = None  # exactly one of line_item_id / fund_id / from_savings
+    from_savings: bool = False  # Savings Withdrawal; merchant (the reason) required
+    destination_type: Optional[str] = None  # savings only: "external_spend" (default) | "transfer_out"
+    cover: Optional[CoverSource] = None
 
 
 class SplitTransactionMain(BaseModel):
     line_item_id: Optional[int] = None
-    fund_id: Optional[int] = None  # set this OR line_item_id, not both
+    fund_id: Optional[int] = None  # exactly one of line_item_id / fund_id / from_savings
+    from_savings: bool = False
+    destination_type: Optional[str] = None  # savings only
 
 
 class SplitTransactionSplit(BaseModel):
     line_item_id: Optional[int] = None
-    fund_id: Optional[int] = None  # set this OR line_item_id, not both
+    fund_id: Optional[int] = None  # exactly one of line_item_id / fund_id / from_savings
+    from_savings: bool = False
+    destination_type: Optional[str] = None  # savings only
     amount_cents: int
     merchant: Optional[str] = None  # itemized description for this split leg; falls back to the receipt merchant
 

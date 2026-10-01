@@ -53,6 +53,8 @@ def export_data(db: Session = Depends(get_db)):
                 "merchant": t.merchant,
                 "line_item_id": t.line_item_id,
                 "fund_id": t.fund_id,
+                "from_savings": bool(t.from_savings),
+                "destination_type": t.destination_type,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
             }
             for t in transactions

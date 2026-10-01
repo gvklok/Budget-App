@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { Pencil, Trash2, Plus, Tag, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Receipt, PieChart, AlertTriangle, ArrowUpDown, List, X } from 'lucide-react'
-import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel } from '../api'
+import { fmt, toCents, apiGet, apiPost, apiPatch, apiDel, localDateStr } from '../api'
 import { LINE, INK_3, CRITICAL, BILLS, FUNDS_HUE, SAVING, SAVING_TEXT, TRANSFER_OUT, billStatusColor, fundStatusColor, colorForId, colorForName, entityColor, billColor } from '../theme'
 import Modal from '../components/Modal'
 import { Card, SectionLabel, Ring, Bar, Badge, PrimaryButton, IconButton, EmptyState, Segmented, OverflowMenu, ColorSwatchPicker, RecoveryBadge } from '../components/ui'
 import { useRefetchOnFocus } from '../hooks'
+import MonthStatus, { savingsReasons } from '../components/MonthStatus'
 
 function c(cents) { return fmt(cents / 100) }
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -261,9 +262,9 @@ function FundContributionModal({ fund, onClose, onSave }) {
 
 // ── Log Transaction Modal ─────────────────────────────────────────────────────
 
-function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, defaultFundId, defaultSourceId, defaultDate, onClose, onSave, onSaveSplit, onLogPaycheck, onLogMiscIncome }) {
-  const today = defaultDate ?? new Date().toISOString().slice(0, 10)
-  const [mode, setMode] = useState(defaultSourceId ? 'paycheck' : defaultFundId ? 'fund' : 'category')
+function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaultLineItemId, defaultFundId, defaultSourceId, defaultSavings, defaultDate, onClose, onSave, onSaveSplit, onLogPaycheck, onLogMiscIncome }) {
+  const today = defaultDate ?? localDateStr()
+  const [mode, setMode] = useState(defaultSourceId ? 'paycheck' : defaultSavings ? 'savings' : defaultFundId ? 'fund' : 'category')
   const [lineItemId, setLineItemId] = useState(defaultLineItemId ?? '')
   const [fundId, setFundId] = useState(defaultFundId ?? '')
   const [amount, setAmount] = useState('')
@@ -271,6 +272,19 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
   const [merchant, setMerchant] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  // Balances are fetched here so the modal works from any page (Savings for
+  // Spend-from-Savings and covers, MR for the Bill "leave it over" check).
+  const [savingsBalance, setSavingsBalance] = useState(null)
+  const [mrBalance, setMrBalance] = useState(null)
+  const [liveFunds, setLiveFunds] = useState(null)
+  const [cover, setCover] = useState('') // 'li:ID' | 'fund:ID' | 'savings' | 'leave'
+  useEffect(() => {
+    apiGet('/state').then((st) => {
+      setSavingsBalance(st.savings.balance_cents)
+      setMrBalance(st.monthly_reserve.balance_cents)
+      setLiveFunds(st.funds)
+    }).catch(() => {})
+  }, [])
 
   // Split — the receipt total (above) is entered whole; each split row peels
   // off an exact amount to a DIFFERENT bucket (own Bill/Fund picker, since a
@@ -288,7 +302,7 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
     return { key: Math.random().toString(36).slice(2), name: '', price: '' }
   }
   function makeSplitRow(rowMode) {
-    return { key: Math.random().toString(36).slice(2), mode: rowMode, itemId: '', items: [makeItem()] }
+    return { key: Math.random().toString(36).slice(2), mode: rowMode === 'savings' ? 'category' : rowMode, itemId: '', items: [makeItem()] }
   }
   function rowSumCents(row) {
     return row.items.reduce((s, it) => s + (it.price && Number(it.price) > 0 ? toCents(it.price) : 0), 0)
@@ -337,7 +351,32 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
   const filledSplitRows = splitRows.filter(rowHasContent)
   const incompleteSplitRow = filledSplitRows.some((r) => !r.itemId || rowValidItems(r).length === 0)
   const splitInvalid = splitOpen && (incompleteSplitRow || splitRemainderCents < 0)
-  const mainSplitLabel = mode === 'category'
+  const savingsRows = splitOpen ? splitRows.filter((r) => r.mode === 'savings') : []
+  const savingsDrawCents = (mode === 'savings' ? (splitOpen ? splitRemainderCents : toCents(amount || '0')) : 0)
+    + savingsRows.reduce((s, r) => s + rowSumCents(r), 0)
+  const savingsOver = savingsBalance != null && savingsDrawCents > savingsBalance
+  const showSavingsPreview = savingsBalance != null && (mode === 'savings' || savingsRows.length > 0) && savingsDrawCents > 0
+  const reasonMissing = mode === 'savings' && !merchant.trim()
+
+  // Cover-at-log-time preview (single transaction only). The server recomputes
+  // the real overage; this just decides whether to ask and what to offer.
+  const amountC = toCents(amount || '0')
+  const coverBill = mode === 'category' && !splitOpen ? bills.find((b) => String(b.id) === String(lineItemId)) : null
+  const coverFundLive = mode === 'fund' && !splitOpen ? (liveFunds ?? funds).find((f) => String(f.id) === String(fundId)) : null
+  const coverFund = coverFundLive ? { ...funds.find((f) => f.id === coverFundLive.id), ...coverFundLive } : null
+  const overage = !coverEnabled || amountC <= 0 ? 0
+    : coverBill ? Math.max(0, (coverBill.spent_cents ?? 0) + amountC - coverBill.amount_cents)
+    : coverFund ? Math.max(0, amountC - coverFund.balance_cents) : 0
+  const coverSubject = coverBill ?? coverFund
+  const coverBillSources = coverBill ? bills.filter((b) => b.id !== coverBill.id && b.amount_cents - (b.spent_cents ?? 0) >= overage) : []
+  const coverFundSources = coverFund ? (liveFunds ?? funds).filter((f) => f.id !== coverFund.id && f.balance_cents >= overage) : []
+  const savingsCanCover = savingsBalance != null && savingsBalance >= overage
+  const leaveBlockedReason = coverBill
+    ? (mrBalance != null && mrBalance < amountC ? `Monthly Reserve only has ${c(mrBalance)}` : '')
+    : (coverFund && !coverFund.allow_negative_balance ? "This Fund can't go negative" : '')
+  const coverNeeded = overage > 0
+  const coverMissing = coverNeeded && !cover
+  const mainSplitLabel = mode === 'savings' ? 'Savings' : mode === 'category'
     ? (bills.find((b) => String(b.id) === String(lineItemId))?.name ?? 'The main Bill')
     : (funds.find((f) => String(f.id) === String(fundId))?.name ?? 'The main Fund')
 
@@ -386,11 +425,17 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
     }
     if (mode === 'category' && !lineItemId) return setError('Select a line item')
     if (mode === 'fund' && !fundId) return setError('Select a fund')
+    if (reasonMissing) return setError('A reason is required when spending from Savings')
+    if (savingsOver) return setError(`Savings has insufficient funds — need ${c(savingsDrawCents)}, have ${c(savingsBalance)}`)
     if (!amount) return setError('Amount is required')
+    if (coverMissing) return setError('Choose how to cover the overage')
 
     if (splitOpen) {
       if (incompleteSplitRow) return setError('Every split needs a bucket and at least one priced item')
       const validSplitRows = splitRows.filter((r) => r.itemId && rowValidItems(r).length > 0)
+      const noReasonLeg = validSplitRows.some((r) => r.mode === 'savings'
+        && !rowValidItems(r).some((it) => it.name && it.name.trim() !== '') && !merchant.trim())
+      if (noReasonLeg) return setError('A reason is required when spending from Savings — name the item or add a merchant')
       if (validSplitRows.length > 0) {
         const totalCents = toCents(amount)
         const splitsSum = validSplitRows.reduce((s, r) => s + rowSumCents(r), 0)
@@ -400,14 +445,15 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
           const payload = {
             date, merchant: merchant.trim() || null,
             total_amount_cents: totalCents,
-            main: mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) },
+            main: mode === 'savings' ? { from_savings: true } : mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) },
             splits: validSplitRows.map((r) => {
               const validItems = rowValidItems(r)
               const amount_cents = validItems.reduce((s, it) => s + toCents(it.price), 0)
               const names = validItems.filter((it) => it.name && it.name.trim() !== '').map((it) => it.name.trim())
               return {
                 amount_cents,
-                ...(r.mode === 'category' ? { line_item_id: Number(r.itemId) } : { fund_id: Number(r.itemId) }),
+                ...(r.mode === 'savings' ? { from_savings: true }
+                  : r.mode === 'category' ? { line_item_id: Number(r.itemId) } : { fund_id: Number(r.itemId) }),
                 ...(names.length > 0 ? { merchant: names.join(', ') } : {}),
               }
             }),
@@ -422,7 +468,12 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
     try {
       const payload = {
         amount_cents: toCents(amount), date, merchant: merchant.trim() || null,
-        ...(mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) }),
+        ...(mode === 'savings' ? { from_savings: true }
+          : mode === 'category' ? { line_item_id: Number(lineItemId) } : { fund_id: Number(fundId) }),
+        ...(coverNeeded && cover && cover !== 'leave' ? { cover:
+          cover === 'savings' ? { from_savings: true }
+          : cover.startsWith('li:') ? { from_line_item_id: Number(cover.slice(3)) }
+          : { from_fund_id: Number(cover.slice(5)) } } : {}),
       }
       await onSave(payload); onClose()
     } catch (err) { setError(err.message) } finally { setSaving(false) }
@@ -435,6 +486,15 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
           options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'paycheck', label: 'Paycheck' }, { value: 'other', label: 'Other Income' }]}
           value={mode} onChange={setMode}
         />
+        {/* Savings sits apart from the bills/funds/income tabs — spending it is
+            the intentional exception, not one more everyday bucket. */}
+          <button type="button" onClick={() => setMode('savings')}
+            className={`w-full flex items-center justify-between rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors ${
+              mode === 'savings' ? 'border-saving/40 bg-saving-soft text-saving-ink' : 'border-line text-ink-3'
+            }`}>
+            <span>Spend from Savings</span>
+            <span className="font-normal">{mode === 'savings' ? 'selected' : 'one-off, no bill or Fund'}</span>
+          </button>
         {mode === 'category' && (
           <div>
             <label className={labelClass}>Bill</label>
@@ -526,18 +586,20 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
                     <div key={row.key} className="space-y-2 rounded-xl bg-card border border-line p-2.5">
                       <div className="flex items-center gap-2">
                         <Segmented
-                          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }]}
-                          value={row.mode} onChange={(v) => updateSplitRow(row.key, { mode: v, itemId: '' })}
+                          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'savings', label: 'Savings' }]}
+                          value={row.mode} onChange={(v) => updateSplitRow(row.key, { mode: v, itemId: v === 'savings' ? 'savings' : '' })}
                         />
                         <button type="button" onClick={() => removeSplitRow(row.key)}
                           className="ml-auto w-7 h-7 flex items-center justify-center rounded-full text-ink-3 hover:bg-critical-soft hover:text-critical shrink-0">
                           <X size={14} />
                         </button>
                       </div>
-                      <select value={row.itemId} onChange={(e) => updateSplitRow(row.key, { itemId: e.target.value })} className={inputClass}>
-                        <option value="">Select…</option>
-                        {rowItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-                      </select>
+                      {row.mode !== 'savings' && (
+                        <select value={row.itemId} onChange={(e) => updateSplitRow(row.key, { itemId: e.target.value })} className={inputClass}>
+                          <option value="">Select…</option>
+                          {rowItems.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                        </select>
+                      )}
                       {/* Itemized within this split — a name (optional, kept as this
                           split's merchant on submit) + a price (required to count),
                           summed live so the row's total needs zero mental math. */}
@@ -585,15 +647,50 @@ function LogTransactionModal({ bills, funds, incomeSources, defaultLineItemId, d
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
               </div>
               <div>
-                <label className={labelClass}>Merchant</label>
-                <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Optional — e.g. Walmart" className={inputClass} />
+                <label className={labelClass}>{mode === 'savings' ? 'Reason' : 'Merchant'}</label>
+                <input value={merchant} onChange={(e) => setMerchant(e.target.value)}
+                  placeholder={mode === 'savings' ? "What's this for?" : 'Optional — e.g. Walmart'}
+                  required={mode === 'savings'} className={inputClass} />
               </div>
             </div>
+            {coverNeeded && coverSubject && (
+              <div className="rounded-2xl border border-warn/40 bg-warn-soft p-3.5 space-y-2">
+                <p className="text-sm font-semibold text-ink">
+                  This puts {coverSubject.name} {c(overage)} over. Cover it from:
+                </p>
+                {[
+                  ...coverBillSources.map((b) => ({ key: `li:${b.id}`, label: b.name, note: `${c(b.amount_cents - (b.spent_cents ?? 0))} left` })),
+                  ...coverFundSources.map((f) => ({ key: `fund:${f.id}`, label: f.name, note: `${c(f.balance_cents)} available` })),
+                  ...(savingsCanCover ? [{ key: 'savings', label: 'Savings', note: `${c(savingsBalance)} available` }] : []),
+                  { key: 'leave', label: coverBill ? 'Leave it over' : 'Leave it negative — recovers with contributions',
+                    disabled: !!leaveBlockedReason, reason: leaveBlockedReason },
+                ].map((o) => (
+                  <label key={o.key} className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm ${
+                    o.disabled ? 'border-line text-ink-3 opacity-60' : cover === o.key ? 'border-accent bg-card text-ink' : 'border-line bg-card text-ink cursor-pointer'
+                  }`}>
+                    <input type="radio" name="cover" className="accent-current shrink-0" checked={cover === o.key}
+                      disabled={o.disabled} onChange={() => setCover(o.key)} />
+                    <span className="flex-1 min-w-0">{o.label}</span>
+                    <span className="text-xs text-ink-3 text-right">{o.disabled ? o.reason : o.note}</span>
+                  </label>
+                ))}
+                {coverBillSources.length + coverFundSources.length === 0 && !savingsCanCover && (
+                  <p className="text-xs text-ink-3">Nothing else has enough room to cover this.</p>
+                )}
+              </div>
+            )}
+            {showSavingsPreview && (
+              <p className={`text-sm font-semibold tabular ${savingsOver ? 'text-critical' : ''}`}
+                style={savingsOver ? undefined : { color: SAVING_TEXT }}>
+                Savings: {c(savingsBalance)} → {c(savingsBalance - savingsDrawCents)}
+                {savingsOver && <span className="block text-xs font-normal">Not enough in Savings — it can't go negative.</span>}
+              </p>
+            )}
           </>
         )}
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit"
-          disabled={saving || splitInvalid || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
+          disabled={saving || splitInvalid || savingsOver || reasonMissing || coverMissing || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
           className="w-full">
           {saving ? 'Saving…' : mode === 'paycheck' ? 'Log paycheck' : mode === 'other' ? 'Log income' : 'Log'}
         </PrimaryButton>
@@ -870,18 +967,48 @@ function ManageCategoriesModal({
 
 // ── Shared expandable item row — bar-based spent/budget ───────────────────────
 
-function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride }) {
+// Expanded fund view: one bar, full width = what the fund had to spend this month
+// (balance + spent). Fill = spent; tick = this month's contribution.
+function FundAvailableBar({ spentCents, balanceCents, contributionCents, color }) {
+  const available = balanceCents + spentCents
+  const exhausted = available <= 0 || spentCents > available
+  const fillPct = exhausted ? 100 : Math.min((spentCents / available) * 100, 100)
+  const showTick = contributionCents > 0 && available > 0 && contributionCents <= available
+  const tickPct = showTick ? (contributionCents / available) * 100 : 0
+  const labelStyle = tickPct > 70 ? { left: `${tickPct}%`, transform: 'translateX(-100%)' }
+    : tickPct < 15 ? { left: `${tickPct}%` } : { left: `${tickPct}%`, transform: 'translateX(-50%)' }
+  return (
+    <div className="px-4 pt-3 pb-3 border-b border-line">
+      <p className="text-xs tabular text-ink-2 mb-2">
+        <span className="font-semibold text-ink">{c(spentCents)}</span> spent of {c(Math.max(available, 0))} available
+      </p>
+      <div className="relative h-1.5 rounded-full bg-line">
+        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${fillPct}%`, background: exhausted ? CRITICAL : color }} />
+        {showTick && <div className="absolute -top-1 -bottom-1 w-px bg-ink-3" style={{ left: `${tickPct}%` }} />}
+      </div>
+      <div className="relative h-4 mt-1">
+        {showTick && <span className="absolute text-[10px] text-ink-3 whitespace-nowrap tabular" style={labelStyle}>this month's {c(contributionCents)}</span>}
+      </div>
+      <p className={`text-xs tabular ${balanceCents < 0 ? 'text-critical font-semibold' : 'text-ink-3'}`}>{c(balanceCents)} left to spend</p>
+    </div>
+  )
+}
+
+function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogTx, onDeleteTx, negative, recoveryNote, color: colorOverride, fundBalanceCents }) {
   const [expanded, setExpanded] = useState(false)
   const remaining = budgetCents - spentCents
   const over = spentCents > budgetCents
   const pct = budgetCents > 0 ? (spentCents / budgetCents) * 100 : 0
   const color = colorOverride ?? fundStatusColor(pct)
+  // Regular funds: spending past the monthly contribution just draws on the
+  // saved-up balance — calm, never critical (only a negative balance is).
+  const fundMode = fundBalanceCents != null
 
   return (
     <div>
-      <div className="px-4 py-3.5">
+      <div className="px-4 py-3.5 cursor-pointer" onClick={() => setExpanded((v) => !v)}>
         <div className="flex items-start gap-2.5">
-          <button onClick={() => setExpanded((v) => !v)}
+          <button onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
             className="shrink-0 w-5 h-5 mt-0.5 flex items-center justify-center text-ink-3 hover:text-ink-2">
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
@@ -897,7 +1024,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
                   the frequent action sits where the thumb lands; delete moved
                   into the edit modal as a quiet destructive action instead of
                   living on the row (owner kept almost-tapping it). */}
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                 {onEdit && <IconButton compact onClick={onEdit}><Pencil size={12} /></IconButton>}
                 {onLogTx && <IconButton onClick={onLogTx} title="Log transaction"><Receipt size={14} /></IconButton>}
               </div>
@@ -908,16 +1035,22 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
               <div className="mt-2">
                 <div className="flex items-baseline justify-between gap-2 mb-1.5">
                   <span className="text-xs tabular">
-                    <span className={`font-semibold ${spentCents === 0 ? 'text-ink-3' : over ? 'text-critical' : 'text-ink'}`}>
-                      {spentCents === 0 ? '—' : c(spentCents)}
+                    <span className={`font-semibold ${spentCents === 0 ? 'text-ink-3' : (over && !fundMode) || (fundMode && negative) ? 'text-critical' : 'text-ink'}`}>
+                      {spentCents === 0 ? '\u2014' : c(spentCents)}
                     </span>
                     <span className="text-ink-3"> / {c(budgetCents)}</span>
+                    {fundMode && over && <span className="text-ink-2"> {'\u00b7'} {c(spentCents - budgetCents)} over</span>}
                   </span>
-                  <span className={`text-xs shrink-0 tabular ${over ? 'text-critical font-semibold' : 'text-ink-3'}`}>
-                    {over ? `over by ${c(Math.abs(remaining))}` : `${c(remaining)} left`}
-                  </span>
+                  {!(fundMode && over) && (
+                    <span className={`text-xs shrink-0 tabular ${over ? 'text-critical font-semibold' : 'text-ink-3'}`}>
+                      {over ? `over by ${c(Math.abs(remaining))}` : `${c(remaining)} left`}
+                    </span>
+                  )}
                 </div>
-                <Bar pct={pct} color={color} height={6} />
+                <Bar pct={fundMode ? Math.min(pct, 100) : pct} color={color} height={6} />
+                {fundMode && (
+                  <p className={`text-xs tabular mt-1.5 ${negative ? 'text-critical' : 'text-ink-3'}`}>{c(fundBalanceCents)} in fund</p>
+                )}
               </div>
             )}
           </div>
@@ -925,6 +1058,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
       </div>
       {expanded && (
         <div className="mx-4 mb-3 rounded-2xl bg-paper overflow-hidden">
+          {fundMode && <FundAvailableBar spentCents={spentCents} balanceCents={fundBalanceCents} contributionCents={budgetCents} color={color} />}
           {txns.length === 0
             ? <p className="text-xs text-ink-3 px-4 py-3">No transactions this month</p>
             : <div className="divide-y divide-line">
@@ -1092,6 +1226,7 @@ export default function ExpensesPage() {
   const [reallocatePrompt, setReallocatePrompt] = useState(null) // U5: { itemId, itemName, delta, isNew, oldAmount? }
   const [unlockedMonth, setUnlockedMonth] = useState(null) // U8: { year, month } currently unlocked for editing this session
   const [loadError, setLoadError] = useState('')
+  const [showTransfersOut, setShowTransfersOut] = useState(false)
 
   // Reorder mode — Bills (flattens category grouping while active, so order
   // is unambiguous) and Funds (reuses the funds reorder endpoint — Funds
@@ -1133,10 +1268,13 @@ export default function ExpensesPage() {
   const load = useCallback(async () => {
     if (!selected) return
     try {
-      const [srcData, sumData, plan, catData, fundsData, txData, clock] = await Promise.all([
+      // The plan GET auto-creates an unplanned month (U4); the summary and
+      // line-items lookups don't, so they must run after it.
+      const plan = await apiGet(`/plans/${selected.year}/${selected.month}`)
+      const [srcData, sumData, spentItems, catData, fundsData, txData, clock] = await Promise.all([
         apiGet('/income-sources'),
         apiGet(`/monthly-summary?year=${selected.year}&month=${selected.month}`),
-        apiGet(`/plans/${selected.year}/${selected.month}`),
+        apiGet(`/line-items/?year=${selected.year}&month=${selected.month}`),
         apiGet('/line-items/categories'),
         apiGet('/funds/'),
         apiGet('/transactions/'),
@@ -1144,7 +1282,8 @@ export default function ExpensesPage() {
       ])
       setIncomeSources(srcData)
       setSummary(sumData)
-      setLineItems(plan.line_items)
+      const spentById = Object.fromEntries(spentItems.map((i) => [i.id, i.spent_cents ?? 0]))
+      setLineItems(plan.line_items.map((i) => ({ ...i, spent_cents: spentById[i.id] ?? 0 })))
       setCategories(catData)
       setFunds(fundsData)
       setTransactions(txData)
@@ -1402,6 +1541,7 @@ export default function ExpensesPage() {
   }
 
   const bills = lineItems.filter((i) => i.type === 'bill')
+  const savingsWhy = savingsReasons(currentMonthTxns)
   const catMap = Object.fromEntries(categories.map((cat) => [cat.id, cat.name]))
   const grouped = {}
   const uncategorized = []
@@ -1429,13 +1569,16 @@ export default function ExpensesPage() {
   const totalBillSpent = bills.reduce((s, b) => s + (txnsByItemId[b.id] ?? []).reduce((a, t) => a + t.amount_cents, 0), 0)
   const totalFundPlanned = funds.reduce((s, f) => s + f.monthly_contribution_cents, 0)
   const totalFundSpent = funds.filter((f) => f.destination_type !== 'transfer_out' && f.monthly_contribution_cents > 0).reduce((s, f) => s + fundSpent(f), 0)
-  const transfersOutTotal = funds.filter((f) => f.destination_type === 'transfer_out').reduce((s, f) => s + fundSpent(f), 0)
+  const transferOutFundIds = new Set(funds.filter((f) => f.destination_type === 'transfer_out').map((f) => f.id))
+  const transferOutTxns = currentMonthTxns.filter((t) =>
+    (t.fund_id && transferOutFundIds.has(t.fund_id)) || (t.from_savings && t.destination_type === 'transfer_out'))
+  const transfersOutTotal = transferOutTxns.reduce((s, t) => s + t.amount_cents, 0)
   const totalPlanned = totalBillPlanned + totalFundPlanned
   const totalSpent = totalBillSpent + totalFundSpent
   const billPct = totalBillPlanned > 0 ? (totalBillSpent / totalBillPlanned) * 100 : 0
   const fundPct = totalFundPlanned > 0 ? (totalFundSpent / totalFundPlanned) * 100 : 0
   const overBillsCount = bills.filter((b) => (txnsByItemId[b.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > b.amount_cents).length
-  const overFundsCount = funds.filter((f) => f.monthly_contribution_cents > 0 && (txnsByFundId[f.id] ?? []).reduce((s, t) => s + t.amount_cents, 0) > f.monthly_contribution_cents).length
+  const overFundsCount = funds.filter((f) => f.destination_type !== 'transfer_out' && f.balance_cents < 0).length
 
   // Donut chart segments
   const chartSegments = []
@@ -1535,6 +1678,11 @@ export default function ExpensesPage() {
             )}
           </div>
           <p className="text-3xl font-bold text-ink tabular">{c(summary.expected_income_cents)}</p>
+          {(summary.savings_withdrawals_cents ?? 0) > 0 && (
+            <p className="text-xs font-semibold text-critical -mt-2">
+              {c(summary.savings_withdrawals_cents)} spent from Savings — not counted against budget
+            </p>
+          )}
           <p className="text-xs text-ink-2 -mt-2">
             Expected expenses {c(summary.expected_bills_total_cents + summary.expected_fund_contributions_total_cents)}
             {' '}· Bills {c(summary.expected_bills_total_cents)} + Funds {c(summary.expected_fund_contributions_total_cents)}
@@ -1567,6 +1715,12 @@ export default function ExpensesPage() {
       {(totalBillPlanned > 0 || totalFundPlanned > 0) && (
         <Card className="p-5">
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-4">Spending Progress</p>
+          {summary && (
+            <div className="mb-5 pb-4 border-b border-line">
+              <MonthStatus summary={summary} reasons={savingsWhy} locked={locked} onDeleteWithdrawal={handleDeleteTx}
+                withdrawals={currentMonthTxns.filter((t) => t.from_savings && t.destination_type !== 'transfer_out')} />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             {totalBillPlanned > 0 && (
               <div className="flex flex-col items-center gap-2.5 text-center">
@@ -1575,13 +1729,12 @@ export default function ExpensesPage() {
                 </Ring>
                 <div>
                   <p className="text-xs font-semibold text-ink-2">Bills</p>
-                  <p className="text-xs text-ink-3 tabular">{c(totalBillSpent)} / {c(totalBillPlanned)}</p>
                 </div>
               </div>
             )}
             {totalFundPlanned > 0 && (
               <div className="flex flex-col items-center gap-2.5 text-center">
-                <Ring pct={fundPct} size={76} stroke={8} color={fundStatusColor(fundPct)}>
+                <Ring pct={Math.min(fundPct, 100)} size={76} stroke={8} color={overFundsCount > 0 ? CRITICAL : FUNDS_HUE}>
                   <span className="text-base font-bold text-ink tabular">{Math.round(fundPct)}%</span>
                 </Ring>
                 <div>
@@ -1593,12 +1746,35 @@ export default function ExpensesPage() {
           </div>
 
           {transfersOutTotal > 0 && (
-            <div className="mt-4 pt-4 border-t border-line flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold text-ink-2">Transfers out</p>
-                <p className="text-[11px] text-ink-3">Moved to accounts you own — not spending</p>
-              </div>
-              <span className="text-sm font-semibold tabular" style={{ color: TRANSFER_OUT }}>{c(transfersOutTotal)}</span>
+            <div className="mt-4 pt-4 border-t border-line">
+              <button onClick={() => setShowTransfersOut((v) => !v)} className="w-full flex items-center justify-between text-left">
+                <div>
+                  <p className="text-xs font-semibold text-ink-2">Transfers out</p>
+                  <p className="text-[11px] text-ink-3">Moved to accounts you own — not spending</p>
+                </div>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold tabular" style={{ color: TRANSFER_OUT }}>{c(transfersOutTotal)}</span>
+                  {showTransfersOut ? <ChevronUp size={14} className="text-ink-3" /> : <ChevronDown size={14} className="text-ink-3" />}
+                </span>
+              </button>
+              {showTransfersOut && (
+                <div className="mt-3 divide-y divide-line">
+                  {transferOutTxns.map((t) => {
+                    const fundName = funds.find((f) => f.id === t.fund_id)?.name
+                    return (
+                      <div key={t.id} className="flex items-center gap-2 py-2">
+                        <p className="min-w-0 flex-1 text-xs text-ink-2 truncate">
+                          → {t.merchant || fundName || 'Other account'} · {t.date.slice(5).replace('-', '/')}
+                        </p>
+                        <span className="text-xs font-semibold tabular" style={{ color: TRANSFER_OUT }}>{c(t.amount_cents)}</span>
+                        {!locked && (
+                          <IconButton compact onClick={() => handleDeleteTx(t)} className="hover:bg-critical-soft hover:text-critical"><Trash2 size={13} /></IconButton>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -1758,7 +1934,7 @@ export default function ExpensesPage() {
             <button onClick={() => setFundsOpen((v) => !v)} disabled={fundsReordering}
               className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3 disabled:opacity-60">
               {fundsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Funds
-              {overFundsCount > 0 && <Badge tone="critical">{overFundsCount} over budget</Badge>}
+              {overFundsCount > 0 && <Badge tone="critical">{overFundsCount} recovering</Badge>}
             </button>
             {!locked && (
               fundsReordering ? (
@@ -1825,7 +2001,8 @@ export default function ExpensesPage() {
                   return <ItemRow key={fund.id} name={fund.name}
                     subtitle={subtitle} negative={isNegative} recoveryNote={recoveryNote}
                     budgetCents={fund.monthly_contribution_cents} spentCents={spent} txns={fundTxns}
-                    color={isTransferOut ? TRANSFER_OUT : (fundPct > 100 ? CRITICAL : entityColor(fund))}
+                    color={isTransferOut ? TRANSFER_OUT : (isNegative ? CRITICAL : entityColor(fund))}
+                    fundBalanceCents={isTransferOut ? undefined : fund.balance_cents}
                     onEdit={locked ? undefined : () => setEditFundContrib(fund)}
                     onLogTx={locked ? undefined : () => setLogTx({ fundId: fund.id })}
                     onDeleteTx={locked ? undefined : handleDeleteTx} />
@@ -1839,8 +2016,8 @@ export default function ExpensesPage() {
       {/* Modals */}
       {logTx && (
         <LogTransactionModal
-          bills={bills} funds={funds} incomeSources={incomeSources}
-          defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultSourceId={logTx.sourceId}
+          bills={bills} funds={funds} incomeSources={incomeSources} coverEnabled={isCurrentMonth}
+          defaultLineItemId={logTx.lineItemId} defaultFundId={logTx.fundId} defaultSourceId={logTx.sourceId} defaultSavings={logTx.savings}
           defaultDate={logTxDefaultDate}
           onClose={() => setLogTx(null)} onSave={handleLogTx} onSaveSplit={handleLogSplitTx} onLogPaycheck={handleLogPaycheck}
           onLogMiscIncome={handleLogMiscIncome}

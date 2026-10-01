@@ -136,16 +136,21 @@ def _migrate() -> None:
         fk_rows = conn.execute(text("PRAGMA foreign_key_list(transactions)")).fetchall()
         # PRAGMA foreign_key_list columns: (id, seq, table, from, to, on_update, on_delete, match)
         line_item_on_delete = next((fk[6] for fk in fk_rows if fk[3] == "line_item_id"), None)
+        tx_sql = conn.execute(text(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'"
+        )).scalar() or ""
         needs_rebuild = (
             ("line_item_id" in tx_cols and tx_cols["line_item_id"][3] == 1)  # notnull=1 legacy
             or "fund_id" not in tx_cols
             or (line_item_on_delete is not None and line_item_on_delete != "SET NULL")
+            # ids must never be reused: ledger_entries.transaction_id is a plain int
+            or "AUTOINCREMENT" not in tx_sql.upper()
         )
         if needs_rebuild:
             conn.execute(text("DROP TABLE IF EXISTS transactions_new"))
             conn.execute(text("""
                 CREATE TABLE transactions_new (
-                    id INTEGER PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     amount_cents INTEGER NOT NULL,
                     date TEXT NOT NULL,
                     merchant TEXT,
@@ -156,7 +161,8 @@ def _migrate() -> None:
                     external_id TEXT,
                     status TEXT NOT NULL DEFAULT 'posted',
                     line_item_name TEXT,
-                    destination_type TEXT
+                    destination_type TEXT,
+                    from_savings BOOLEAN NOT NULL DEFAULT 0
                 )
             """))
             # Preserve EVERY column. Sanitize dangling line_item_id/fund_id (legacy
@@ -167,14 +173,15 @@ def _migrate() -> None:
             sta = "t.status" if "status" in tx_cols else "'posted'"
             nam = "t.line_item_name" if "line_item_name" in tx_cols else "NULL"
             dst = "t.destination_type" if "destination_type" in tx_cols else "NULL"
+            fsv = "t.from_savings" if "from_savings" in tx_cols else "0"
             conn.execute(text(f"""
                 INSERT INTO transactions_new
                     (id, amount_cents, date, merchant, line_item_id, fund_id, created_at,
-                     source, external_id, status, line_item_name, destination_type)
+                     source, external_id, status, line_item_name, destination_type, from_savings)
                 SELECT t.id, t.amount_cents, t.date, t.merchant,
                        CASE WHEN e.id IS NULL THEN NULL ELSE t.line_item_id END,
                        CASE WHEN f.id IS NULL THEN NULL ELSE t.fund_id END,
-                       t.created_at, {src}, {ext}, {sta}, {nam}, {dst}
+                       t.created_at, {src}, {ext}, {sta}, {nam}, {dst}, {fsv}
                 FROM transactions t
                 LEFT JOIN expenses e ON e.id = t.line_item_id
                 LEFT JOIN funds f ON f.id = t.fund_id
@@ -195,11 +202,30 @@ def _migrate() -> None:
             conn.execute(text("ALTER TABLE transactions ADD COLUMN line_item_name TEXT"))
         if "destination_type" not in tx_cols2:
             conn.execute(text("ALTER TABLE transactions ADD COLUMN destination_type TEXT"))
+        if "from_savings" not in tx_cols2:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN from_savings BOOLEAN NOT NULL DEFAULT 0"))
         # Partial unique index: dedupe imported rows, leave manual (NULL) rows free.
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_transactions_source_external_id "
             "ON transactions (source, external_id) WHERE external_id IS NOT NULL"
         ))
+
+        # Seed the AUTOINCREMENT high-water mark past every id ever used — including
+        # ids of deleted txs that only survive as ledger_entries.transaction_id — so a
+        # new tx can never alias old ledger history. Monotonic (MAX), so idempotent.
+        conn.execute(text("""
+            INSERT INTO sqlite_sequence (name, seq)
+            SELECT 'transactions', 0
+            WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'transactions')
+        """))
+        conn.execute(text("""
+            UPDATE sqlite_sequence SET seq = MAX(
+                seq,
+                COALESCE((SELECT MAX(id) FROM transactions), 0),
+                COALESCE((SELECT MAX(transaction_id) FROM ledger_entries), 0)
+            )
+            WHERE name = 'transactions'
+        """))
 
         # Backfill name snapshots for rows whose line item still resolves (one-time;
         # idempotent since it only fills NULLs). Orphans that already lost their

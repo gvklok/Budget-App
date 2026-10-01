@@ -96,6 +96,7 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     line_item_name = Column(String, nullable=True)  # snapshot of the line item's name at creation
     destination_type = Column(String, nullable=True)  # snapshot of the fund's destination at spend time; null for bills
+    from_savings = Column(Boolean, nullable=False, default=False)  # Savings Withdrawal: debits Savings, not MR/a Fund
     # Bank-sync seam (passive; no API accepts these yet). external_id is the
     # bank/provider's own id; the partial unique index dedupes imported rows
     # while leaving manual rows (external_id NULL) unconstrained.
@@ -111,6 +112,9 @@ class Transaction(Base):
             unique=True,
             sqlite_where=text("external_id IS NOT NULL"),
         ),
+        # AUTOINCREMENT: ids are never reused. LedgerEntry.transaction_id is a
+        # plain int, so a reused id would alias a deleted tx's ledger history.
+        {"sqlite_autoincrement": True},
     )
 
 

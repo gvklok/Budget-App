@@ -725,6 +725,7 @@ export default function FundsPage() {
           initialFrom={transferInitialFrom}
           onClose={closeTransfer}
           onTransfer={handleTransfer}
+          onMovedOut={load}
         />
       )}
     </div>
