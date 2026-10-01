@@ -69,3 +69,8 @@ export function monthLabel(ym) {
     year: 'numeric',
   })
 }
+
+// Local-calendar YYYY-MM-DD (toISOString is UTC and rolls to tomorrow in the evening).
+export function localDateStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
