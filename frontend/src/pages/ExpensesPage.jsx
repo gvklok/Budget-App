@@ -498,7 +498,10 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
             <label className={labelClass}>Bill</label>
             <select value={lineItemId} onChange={(e) => setLineItemId(e.target.value)} className={inputClass}>
               <option value="">Select…</option>
-              {bills.map((li) => <option key={li.id} value={li.id}>{li.name}</option>)}
+              {bills.map((li) => {
+                const left = li.amount_cents - (li.spent_cents ?? 0)
+                return <option key={li.id} value={li.id}>{li.name} ({left >= 0 ? `${c(left)} available` : `${c(-left)} over`})</option>
+              })}
             </select>
           </div>
         )}
