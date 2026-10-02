@@ -620,3 +620,7 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   planned amounts. Deliberate edits (create, PATCH, U5 reallocate) set both.
   Bill rows show "+$X covered" / "−$X lent" when they differ. Migration
   backfills planned_cents = amount_cents.
+- Overview "Where it went" donut no longer lumps the tail into a grey "Other"
+  slice: every bill, spend fund and From Savings gets its own slice plus a
+  legend row (name, amount, percent), matching the Expenses category donut.
+  Sub-gap slices render as a thin sliver instead of vanishing.

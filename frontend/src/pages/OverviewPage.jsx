@@ -1151,9 +1151,9 @@ function SpendRow({ name, amount, dotColor, barColor, maxVal, delta, deltaLabel 
 }
 
 // Straight-butt-cap donut with gaps (the same treatment as the Expenses
-// category donut) — top 6 spending entities across the range + "Other",
-// identity colors matching the dots in the list below. Center shows total
-// spent (bills + funds, transfers-out excluded — not spending).
+// category donut) — every spending entity across the range gets its own slice
+// and legend row, in the identity colors matching the dots in the list below.
+// Center shows total spent (bills + funds, transfers-out excluded — not spending).
 function RangeDonut({ bills, spendFunds, savingsCents = 0, billColorByName, fundColorById }) {
   const entities = [
     ...bills.map((b) => ({ name: b.name, amount: b.spent_cents, color: billColorByName[b.name] || colorForName(b.name) })),
@@ -1163,10 +1163,7 @@ function RangeDonut({ bills, spendFunds, savingsCents = 0, billColorByName, fund
 
   if (entities.length === 0) return null
 
-  const top = entities.slice(0, 6)
-  const otherAmount = entities.slice(6).reduce((s, e) => s + e.amount, 0)
-  const segments = top.map((e) => ({ label: e.name, amount: e.amount, color: e.color }))
-  if (otherAmount > 0) segments.push({ label: 'Other', amount: otherAmount, color: INK_3 })
+  const segments = entities.map((e) => ({ label: e.name, amount: e.amount, color: e.color }))
   const total = segments.reduce((s, seg) => s + seg.amount, 0)
 
   const SIZE = 132
@@ -1177,13 +1174,14 @@ function RangeDonut({ bills, spendFunds, savingsCents = 0, billColorByName, fund
   let cumFrac = 0
 
   return (
-    <div className="flex justify-center mb-4 pb-4 border-b border-line">
+    <div className="flex flex-col items-center gap-4 mb-4 pb-4 border-b border-line">
       <div className="relative" style={{ width: SIZE, height: SIZE }}>
         <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
           <circle cx={cx} cy={cy} r={R} fill="none" stroke={LINE} strokeWidth={SW} />
           {segments.map((seg, i) => {
             const frac = seg.amount / total
-            const dash = Math.max(0, frac * circ - GAP)
+            // Floor keeps sub-gap slices visible as a sliver instead of vanishing.
+            const dash = Math.max(1.5, frac * circ - GAP)
             const rot = -90 + cumFrac * 360
             cumFrac += frac
             return (
@@ -1198,6 +1196,19 @@ function RangeDonut({ bills, spendFunds, savingsCents = 0, billColorByName, fund
           <span className="text-lg font-bold text-ink tabular">{c(total)}</span>
           <span className="text-[10px] text-ink-3">spent</span>
         </div>
+      </div>
+      <div className="w-full space-y-2.5">
+        {segments.map((seg, i) => {
+          const pct = Math.round((seg.amount / total) * 100)
+          return (
+            <div key={i} className="flex items-center gap-2.5">
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: seg.color }} />
+              <span className="flex-1 text-sm text-ink-2 truncate">{seg.label}</span>
+              <span className="text-xs font-mono font-semibold tabular text-ink-2">{c(seg.amount)}</span>
+              <span className="text-xs w-9 text-right tabular text-ink-3">{pct < 1 ? '<1' : pct}%</span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
