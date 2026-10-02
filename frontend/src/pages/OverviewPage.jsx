@@ -1197,7 +1197,7 @@ function RangeDonut({ bills, spendFunds, savingsCents = 0, billColorByName, fund
             <div key={i} className="flex items-center gap-2.5">
               <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: seg.color }} />
               <span className="flex-1 text-sm text-ink-2 truncate">{seg.label}</span>
-              <span className="text-xs font-mono font-semibold tabular text-ink-2">{c(seg.amount)}</span>
+              <span className="text-sm font-semibold tabular text-ink">{c(seg.amount)}</span>
               <span className="text-xs w-9 text-right tabular text-ink-3">{pct < 1 ? '<1' : pct}%</span>
             </div>
           )
