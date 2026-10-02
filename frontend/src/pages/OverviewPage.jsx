@@ -99,14 +99,11 @@ function topRoundedRectPath(x, y, w, h, r) {
 // the averages and the rate so a long 1y window isn't diluted by history that
 // predates the seed/real data.
 
-function Stat({ label, value, dotColor, tone }) {
+function Stat({ label, value, tone }) {
   const valueClass = tone === 'critical' ? 'text-critical' : tone === 'muted' ? 'text-ink-3 font-normal' : 'text-ink'
   return (
     <div>
-      <p className="text-[11px] text-ink-3 mb-0.5 flex items-center gap-1.5">
-        {dotColor && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dotColor }} />}
-        {label}
-      </p>
+      <p className="text-[11px] text-ink-3 mb-0.5">{label}</p>
       <p className={`text-sm font-semibold tabular ${valueClass}`}>{value}</p>
     </div>
   )
@@ -114,7 +111,7 @@ function Stat({ label, value, dotColor, tone }) {
 
 // Months with no activity at all are excluded so a long 1y window isn't
 // diluted by history that predates the seed/real data. Shared by
-// PeriodReviewCard and MoneyFlowContent (plus the page's Money Flow teaser)
+// the Overview cards and MoneyFlowContent (plus the page's Money Flow teaser)
 // so all three agree on the same totals.
 // A month counts as "having data" if the backend says so, else if anything
 // moved (savings withdrawals included — they're real spending).
@@ -150,99 +147,12 @@ function aggregateRange(months) {
     totalFunds: sum('funds_spent_cents'),
     totalSavings: sum('savings_withdrawals_cents'),
     totalTransfers: sum('transfers_out_cents'),
-    totalSetAside: active.reduce((t, m) => t + (m.set_aside_from_savings_cents ?? 0), 0),
     overspentCount: active.filter((m) => savedOf(m) < 0).length,
     plannedMonths: planned.length,
     totalPlanned: planned.reduce((s, m) => s + (m.bills_planned_cents ?? 0), 0),
     billsOverMonths: overMonths.length,
     billsOverTotal: overMonths.reduce((s, m) => s + m.bills_over_cents, 0),
   }
-}
-
-// Headline for every range: where the window's income went, summed from the
-// monthly rows. Allocation-based — "Saved" is what the backend says is left
-// after bills, fund contributions, Savings withdrawals and transfers out.
-function IncomeWentCard({ months, rangeMonths, endYM }) {
-  const a = aggregateRange(months)
-  if (a.n === 0) return null
-  const startYM = shiftYM(endYM.year, endYM.month, -(rangeMonths - 1))
-  const title = rangeMonths === 1
-    ? monthFullLabel(endYM.year, endYM.month)
-    : rangeHeaderLabel(startYM.year, startYM.month, endYM.year, endYM.month)
-  const income = a.totalIncome
-  const saved = a.totalSaved
-  const rows = [
-    { key: 'bills', label: 'Bills', amount: a.totalBills, color: BILLS },
-    ...(a.hasSaved ? [{ key: 'funds', label: 'Into funds', amount: a.totalIntoFunds, color: FUNDS_HUE }] : []),
-    { key: 'sav', label: 'From Savings', amount: a.totalSavings, color: CRITICAL, text: CRITICAL, hideZero: true },
-    ...(a.hasSaved ? [{ key: 'saved', label: 'Saved', amount: saved, color: SAVING, text: saved < 0 ? CRITICAL : undefined, neg: saved < 0 }] : []),
-  ].filter((r) => !(r.hideZero && r.amount === 0))
-  const barParts = rows.filter((r) => r.amount > 0)
-  const barTotal = Math.max(income, barParts.reduce((s, r) => s + r.amount, 0))
-  const pct = (v) => (income > 0 ? `${Math.round((v / income) * 100)}%` : null)
-  const spent = a.hasCashOut ? a.totalCashOut : a.totalBills + a.totalFunds + a.totalSavings
-  const periodWord = rangeMonths === 1 ? 'this month' : 'over this period'
-  return (
-    <Card className="p-5 mb-3">
-      <div className="flex items-baseline justify-between gap-3 mb-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</p>
-        <p className="text-xs text-ink-3 shrink-0">Income <span className="tabular font-semibold text-ink">{c(income)}</span></p>
-      </div>
-      <p className="text-sm font-semibold text-ink mb-2">Where your income went</p>
-      {barTotal > 0 && (
-        <div className="flex h-2.5 gap-0.5 mb-3.5" role="img" aria-label="Where your income went">
-          {barParts.map((r) => (
-            <div key={r.key} className="h-full first:rounded-l-full last:rounded-r-full min-w-[2px]"
-              style={{ width: `${(r.amount / barTotal) * 100}%`, background: r.color }} />
-          ))}
-        </div>
-      )}
-      <div className="space-y-2">
-        {rows.map((r) => (
-          <div key={r.key} className="flex items-center gap-2 text-sm">
-            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: r.neg ? CRITICAL : r.color }} />
-            <span className="text-ink-2 flex-1 min-w-0 truncate">{r.label}</span>
-            <span className={`tabular font-semibold ${r.text || r.neg ? '' : 'text-ink'}`} style={r.text ? { color: r.text } : undefined}>{c(r.amount)}</span>
-            <span className="tabular text-xs text-ink-3 w-9 text-right shrink-0">{pct(r.amount) ?? ''}</span>
-          </div>
-        ))}
-      </div>
-      {a.totalTransfers > 0 && (
-        <div className="flex items-center gap-2 text-sm mt-2.5 pt-2.5 border-t border-line">
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: TRANSFER_OUT }} />
-          <span className="text-ink-2 flex-1 min-w-0 truncate">Transfers out <span className="text-xs text-ink-3">· not spending</span></span>
-          <span className="tabular font-semibold" style={{ color: TRANSFER_OUT }}>{c(a.totalTransfers)}</span>
-        </div>
-      )}
-      {a.totalSetAside !== 0 && (
-        <div className={`flex items-center gap-2 text-sm ${a.totalTransfers > 0 ? 'mt-2' : 'mt-2.5 pt-2.5 border-t border-line'}`}>
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: FUNDS_HUE }} />
-          <span className="text-ink-2 flex-1 min-w-0 truncate">
-            {a.totalSetAside > 0 ? 'Set aside from Savings' : 'Returned to Savings from funds'}{' '}
-            <span className="text-xs text-ink-3">· {a.totalSetAside > 0 ? 'starting new funds · not counted' : 'from deleted funds · not counted'}</span>
-          </span>
-          <span className="tabular font-semibold text-ink-2">{c(Math.abs(a.totalSetAside))}</span>
-        </div>
-      )}
-      <div className="mt-3 pt-3 border-t border-line space-y-1.5">
-        <div className="flex items-baseline justify-between gap-3 text-sm">
-          <span className="text-ink-2">Actually spent</span>
-          <span className="tabular font-semibold text-ink">{c(spent)}</span>
-        </div>
-        <p className="text-[11px] text-ink-3 -mt-1">
-          bills {c(a.totalBills)} · from funds {c(a.totalFunds)} · from Savings {c(a.totalSavings)}
-        </p>
-        {a.hasNetCash && (
-          <div className="flex items-baseline justify-between gap-3 text-sm pt-1">
-            <span className="text-ink-2">Your cash <span className="text-xs text-ink-3">{periodWord}</span></span>
-            <span className="tabular font-semibold" style={{ color: a.totalNetCash < 0 ? CRITICAL : SAVING_TEXT }}>
-              {a.totalNetCash < 0 ? '\u2212' : '+'}{c(Math.abs(a.totalNetCash))}
-            </span>
-          </div>
-        )}
-      </div>
-    </Card>
-  )
 }
 
 // Compact "Feb – Jul" range label for the hero rate's small caption — short
@@ -260,16 +170,36 @@ function periodRangeShortLabel(months) {
   return `${firstLabel} – ${monthShortLabel(last.year, last.month)}${last.year !== first.year ? ` ${last.year}` : ''}`
 }
 
-function PeriodReviewCard({ months, rangeMonths }) {
-  const { n, totalIncome, totalSaved: totalKept, totalBills, totalFunds, totalSavings, totalTransfers, overspentCount } = aggregateRange(months)
-  const avgSpent = n > 0 ? (totalBills + totalFunds + totalSavings) / n : 0
-  const avgKept = n > 0 ? totalKept / n : 0
-  const rate = totalIncome > 0 ? (totalKept / totalIncome) * 100 : null
+function periodTitle(rangeMonths, endYM) {
+  if (rangeMonths === 1) return monthFullLabel(endYM.year, endYM.month)
+  const startYM = shiftYM(endYM.year, endYM.month, -(rangeMonths - 1))
+  return rangeHeaderLabel(startYM.year, startYM.month, endYM.year, endYM.month)
+}
+
+// Budget-performance view for every range: savings rate up top, then where the
+// window's income went, summed from the monthly rows. Allocation-based —
+// "Saved" is what the backend says is left after bills, fund contributions,
+// Savings withdrawals and transfers out. Real-money totals live in CashInOutCard.
+function BudgetPerformanceCard({ months, rangeMonths, endYM }) {
+  const a = aggregateRange(months)
+  const { n, totalIncome: income, totalSaved: saved, overspentCount } = a
   const singleMonth = rangeMonths === 1
+  const rate = income > 0 ? (saved / income) * 100 : null
+  const rows = [
+    { key: 'bills', label: 'Bills', amount: a.totalBills, color: BILLS },
+    ...(a.hasSaved ? [{ key: 'funds', label: 'Into funds', amount: a.totalIntoFunds, color: FUNDS_HUE }] : []),
+    { key: 'sav', label: 'From Savings', amount: a.totalSavings, color: CRITICAL, text: CRITICAL, hideZero: true },
+    ...(a.hasSaved ? [{ key: 'saved', label: 'Saved', amount: saved, color: SAVING, text: saved < 0 ? CRITICAL : undefined, neg: saved < 0 }] : []),
+  ].filter((r) => !(r.hideZero && r.amount === 0))
+  const barParts = rows.filter((r) => r.amount > 0)
+  const barTotal = Math.max(income, barParts.reduce((s, r) => s + r.amount, 0))
+  const pct = (v) => (income > 0 ? `${Math.round((v / income) * 100)}%` : null)
 
   return (
     <Card className="p-5 mb-3">
-      <SectionLabel>Period Review</SectionLabel>
+      <SectionLabel action={<p className="text-[11px] text-ink-3">{periodTitle(rangeMonths, endYM)}</p>}>
+        How you did on your budget
+      </SectionLabel>
       {n === 0 ? (
         <EmptyState title="No activity in this period yet." />
       ) : (
@@ -278,38 +208,56 @@ function PeriodReviewCard({ months, rangeMonths }) {
               (calm green, the app's one saving hue), with the plain-language
               sentence demoted underneath as supporting detail. */}
           {rate != null ? (
-            <div className="mb-1">
+            <div className="mb-4">
               <span className="hero-figure text-5xl font-bold tabular" style={{ color: rate < 0 ? CRITICAL : SAVING }}>
                 {Math.round(rate)}%
               </span>
               <p className="text-xs text-ink-3 mt-0.5">savings rate · {periodRangeShortLabel(months)}</p>
               <p className="text-sm text-ink-2 mt-2">
-                You saved <span className="tabular font-semibold text-ink">{c(totalKept)}</span> of{' '}
-                <span className="tabular">{c(totalIncome)}</span> income
+                You saved <span className="tabular font-semibold text-ink">{c(saved)}</span> of{' '}
+                <span className="tabular">{c(income)}</span> income
               </p>
             </div>
           ) : (
             /* No income recorded in the window — still lead with a NUMBER, not
                a sentence: the period's spending is the next-best headline. */
-            <div className="mb-1">
-              <span className="hero-figure text-5xl font-bold tabular text-ink">{c(totalBills + totalFunds + totalSavings)}</span>
+            <div className="mb-4">
+              <span className="hero-figure text-5xl font-bold tabular text-ink">{c(a.totalBills + a.totalFunds + a.totalSavings)}</span>
               <p className="text-xs text-ink-3 mt-0.5">spent · {periodRangeShortLabel(months)}</p>
               <p className="text-sm text-ink-2 mt-2">No income recorded this period — log a paycheck and this becomes your savings rate</p>
             </div>
           )}
 
+          <div className="flex items-baseline justify-between gap-3 mb-2 pt-4 border-t border-line">
+            <p className="text-sm font-semibold text-ink">Where your income went</p>
+            <p className="text-xs text-ink-3 shrink-0">Income <span className="tabular font-semibold text-ink">{c(income)}</span></p>
+          </div>
+          {barTotal > 0 && (
+            <div className="flex h-2.5 gap-0.5 mb-3.5" role="img" aria-label="Where your income went">
+              {barParts.map((r) => (
+                <div key={r.key} className="h-full first:rounded-l-full last:rounded-r-full min-w-[2px]"
+                  style={{ width: `${(r.amount / barTotal) * 100}%`, background: r.color }} />
+              ))}
+            </div>
+          )}
+          <div className="space-y-2">
+            {rows.map((r) => (
+              <div key={r.key} className="flex items-center gap-2 text-sm">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: r.neg ? CRITICAL : r.color }} />
+                <span className="text-ink-2 flex-1 min-w-0 truncate">{r.label}</span>
+                <span className={`tabular font-semibold ${r.text || r.neg ? '' : 'text-ink'}`} style={r.text ? { color: r.text } : undefined}>{c(r.amount)}</span>
+                <span className="tabular text-xs text-ink-3 w-9 text-right shrink-0">{pct(r.amount) ?? ''}</span>
+              </div>
+            ))}
+          </div>
+
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-line">
-            <Stat label="Spent on bills" value={c(totalBills)} dotColor={BILLS} />
-            <Stat label="Spent from funds" value={c(totalFunds)} dotColor={FUNDS_HUE} />
-            {totalSavings > 0 && <Stat label="From Savings" value={c(totalSavings)} dotColor={CRITICAL} />}
-            <Stat label="Transfers out" value={c(totalTransfers)} dotColor={TRANSFER_OUT} />
-            {!singleMonth && <Stat label="Avg spent / month" value={c(avgSpent)} />}
-            {!singleMonth && <Stat label="Avg saved / month" value={c(avgKept)} />}
             <Stat
               label="Months below zero"
               value={overspentCount > 0 ? String(overspentCount) : '0 — nice'}
               tone={overspentCount > 0 ? 'critical' : 'muted'}
             />
+            {!singleMonth && <Stat label="Avg saved / month" value={c(saved / n)} />}
           </div>
 
           {!singleMonth && (
@@ -319,6 +267,51 @@ function PeriodReviewCard({ months, rangeMonths }) {
           )}
         </>
       )}
+    </Card>
+  )
+}
+
+// Real-money view: what actually came in and left the accounts, independent of
+// how the budget allocated it. Transfers out are shown as not-spending.
+function CashInOutCard({ months, rangeMonths, endYM }) {
+  const a = aggregateRange(months)
+  if (a.n === 0) return null
+  const singleMonth = rangeMonths === 1
+  const spent = a.hasCashOut ? a.totalCashOut : a.totalBills + a.totalFunds + a.totalSavings
+  const periodWord = singleMonth ? 'this month' : 'over this period'
+  return (
+    <Card className="p-5 mb-3">
+      <SectionLabel action={<p className="text-[11px] text-ink-3">{periodTitle(rangeMonths, endYM)}</p>}>
+        Cash in &amp; out
+      </SectionLabel>
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="text-ink-2">Income in</span>
+          <span className="tabular font-semibold text-ink">{c(a.totalIncome)}</span>
+        </div>
+        <div className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="text-ink-2">Actually spent</span>
+          <span className="tabular font-semibold text-ink">{c(spent)}</span>
+        </div>
+        <p className="text-[11px] text-ink-3 -mt-1">
+          bills {c(a.totalBills)} · from funds {c(a.totalFunds)} · from Savings {c(a.totalSavings)}
+          {!singleMonth && <> · avg {c(spent / a.n)} / month</>}
+        </p>
+        <p className="text-[11px] text-ink-3">Real money that left your accounts, including spending from funds.</p>
+        <div className="flex items-center gap-2 text-sm pt-2 border-t border-line">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: TRANSFER_OUT }} />
+          <span className="text-ink-2 flex-1 min-w-0 truncate">Transfers out <span className="text-xs text-ink-3">· not spending</span></span>
+          <span className="tabular font-semibold" style={{ color: TRANSFER_OUT }}>{c(a.totalTransfers)}</span>
+        </div>
+        {a.hasNetCash && (
+          <div className="flex items-baseline justify-between gap-3 text-sm pt-2 border-t border-line">
+            <span className="text-ink-2">Your cash <span className="text-xs text-ink-3">{periodWord}</span></span>
+            <span className="tabular font-semibold" style={{ color: a.totalNetCash < 0 ? CRITICAL : SAVING_TEXT }}>
+              {a.totalNetCash < 0 ? '−' : '+'}{c(Math.abs(a.totalNetCash))}
+            </span>
+          </div>
+        )}
+      </div>
     </Card>
   )
 }
@@ -1582,9 +1575,9 @@ export default function OverviewPage() {
         <>
           {/* Picked-month headline (Bills / Funds / From Savings) leads the
               page — the Overview is month-first; ranges extend back from it. */}
-          <IncomeWentCard months={monthly} rangeMonths={range} endYM={{ year: picked.year, month: picked.month }} />
+          <BudgetPerformanceCard months={monthly} rangeMonths={range} endYM={{ year: picked.year, month: picked.month }} />
 
-          <PeriodReviewCard months={monthly} rangeMonths={range} />
+          <CashInOutCard months={monthly} rangeMonths={range} endYM={{ year: picked.year, month: picked.month }} />
 
           {current && (
             <WhereItWentCard
@@ -1608,7 +1601,7 @@ export default function OverviewPage() {
           )}
 
           {/* Money Flow / Kept vs Spent / Savings Rate — collapsed by default
-              (owner: "too worky on the top"); Period Review and Where It Went
+              (owner: "too worky on the top"); the budget/cash cards and Where It Went
               stay always-expanded as the page's core read. Spending Pace now
               sits at the very bottom — owner is reconsidering whether to keep
               it at all, so it's demoted pending that decision rather than

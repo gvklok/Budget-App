@@ -624,3 +624,8 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   slice: every bill, spend fund and From Savings gets its own slice plus a
   legend row (name, amount, percent), matching the Expenses category donut.
   Sub-gap slices render as a thin sliver instead of vanishing.
+- Overview top cards split by meaning: "How you did on your budget" (savings
+  rate hero, where your income went, months below zero, avg saved) and
+  "Cash in & out" (income in, actually spent, transfers out, net cash). The
+  duplicated Period Review tiles are gone, and the "Set aside from Savings"
+  row is hidden from the UI (backend field unchanged).
