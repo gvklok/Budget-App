@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, ArrowDownRight, Search, X } from 'lucide-react'
 import { fmt, apiGet, apiDel, monthLabel } from '../api'
 import { entityColor, colorForName, TRANSFER_OUT, SAVING, CRITICAL } from '../theme'
-import { Card, SectionLabel, Badge, EmptyState, PrimaryButton } from '../components/ui'
+import { Card, SectionLabel, Badge, EmptyState, PrimaryButton, Segmented } from '../components/ui'
 import { useRefetchOnFocus } from '../hooks'
 
 function c(cents) { return fmt(cents / 100) }
@@ -34,6 +34,31 @@ function groupByMonth(transactions) {
   return groups
 }
 
+const isIncomeTx = (tx) => tx.kind === 'paycheck' || tx.kind === 'misc_income'
+
+// Single source of truth for a row's displayed name — search matches on this
+// same string.
+function txName(tx) {
+  if (isIncomeTx(tx)) return tx.kind === 'paycheck' ? 'Paycheck' : 'Other Income'
+  const isSavings = !!tx.from_savings
+  const isTransferOut = tx.destination_type === 'transfer_out'
+  if (isSavings && isTransferOut) return `→ ${tx.merchant || 'Other account'}`
+  if (isSavings && !isTransferOut) return 'Savings withdrawal'
+  return tx.fund_name || tx.line_item_name || 'Uncategorized'
+}
+
+function matchesQuery(tx, q) {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return true
+  if (txName(tx).toLowerCase().includes(needle)) return true
+  if ((tx.merchant || '').toLowerCase().includes(needle)) return true
+  const digits = needle.replace(/[$,]/g, '')
+  if (digits && /^\d*\.?\d*$/.test(digits)) {
+    return (Math.abs(tx.amount_cents) / 100).toFixed(2).includes(digits)
+  }
+  return false
+}
+
 function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, onToggle, onDeleted }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -42,7 +67,7 @@ function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, o
   // fund/bill identity, so they get their own treatment: SAVING green (the
   // app's one "money kept/coming in" hue) instead of an entity color, and an
   // inflow arrow instead of an identity dot.
-  const isIncome = tx.kind === 'paycheck' || tx.kind === 'misc_income'
+  const isIncome = isIncomeTx(tx)
   // A transaction that resolved a fund_name is fund-routed (direct fund spend,
   // or a fund-type line item) — same precedence FundsPage/ExpensesPage use to
   // decide "is this row a Fund or a Bill." Bills only ever resolve line_item_name.
@@ -53,10 +78,7 @@ function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, o
   // spend named "Savings".
   const isSavingsTransfer = !isIncome && isSavings && isTransferOut
   const isWithdrawal = !isIncome && isSavings && !isTransferOut
-  const name = isIncome
-    ? (tx.kind === 'paycheck' ? 'Paycheck' : 'Other Income')
-    : isSavingsTransfer ? `→ ${tx.merchant || 'Other account'}`
-    : isWithdrawal ? 'Savings withdrawal' : isSavings ? (tx.merchant || 'Savings') : (tx.fund_name || tx.line_item_name || 'Uncategorized')
+  const name = txName(tx)
   const color = isIncome
     ? SAVING
     : isSavingsTransfer ? TRANSFER_OUT
@@ -139,6 +161,10 @@ export default function TransactionsPage() {
   const [loadError, setLoadError] = useState('')
   const [openKey, setOpenKey] = useState(null)
   const [currentYM, setCurrentYM] = useState('')
+  const [query, setQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -196,7 +222,22 @@ export default function TransactionsPage() {
   // identity dot here always matches its color everywhere else in the app.
   const fundColorById = Object.fromEntries(funds.map((f) => [f.id, f.color]))
   const billColorByName = Object.fromEntries(bills.map((b) => [b.name, b.color]))
-  const groups = groupByMonth(transactions)
+  const filtersActive = !!(query.trim() || typeFilter !== 'all' || fromDate || toDate)
+  const filtered = filtersActive
+    ? transactions.filter((tx) => {
+        const inc = isIncomeTx(tx)
+        if (typeFilter === 'income' && !inc) return false
+        if (typeFilter === 'spending' && inc) return false
+        if (fromDate && tx.date < fromDate) return false
+        if (toDate && tx.date > toDate) return false
+        return matchesQuery(tx, query)
+      })
+    : transactions
+  const totalOut = filtered.filter((t) => !isIncomeTx(t)).reduce((a, t) => a + t.amount_cents, 0)
+  const totalIn = filtered.filter(isIncomeTx).reduce((a, t) => a + t.amount_cents, 0)
+  const groups = groupByMonth(filtered)
+  function clearFilters() { setQuery(''); setTypeFilter('all'); setFromDate(''); setToDate('') }
+  const dateInput = 'w-full min-w-0 bg-card border border-line rounded-xl px-3 py-2 text-base text-ink focus:outline-none focus:border-accent'
 
   return (
     <div className="px-4 pt-6 pb-6 space-y-6">
@@ -211,11 +252,62 @@ export default function TransactionsPage() {
         <h1 className="text-3xl font-bold text-ink tracking-tight">All Transactions</h1>
       </div>
 
+      {transactions.length > 0 && (
+        <div className="space-y-3">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name, merchant or amount"
+              aria-label="Search transactions"
+              className="w-full bg-card border border-line rounded-xl pl-9 pr-9 py-2 text-base text-ink placeholder:text-ink-3 focus:outline-none focus:border-accent"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-ink-3 hover:text-ink-2"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <Segmented
+            options={[{ value: 'all', label: 'All' }, { value: 'spending', label: 'Spending' }, { value: 'income', label: 'Income' }]}
+            value={typeFilter}
+            onChange={setTypeFilter}
+          />
+          <div className="flex gap-3">
+            <label className="flex-1 min-w-0 text-xs text-ink-3">
+              From
+              <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={`${dateInput} mt-1`} />
+            </label>
+            <label className="flex-1 min-w-0 text-xs text-ink-3">
+              To
+              <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={`${dateInput} mt-1`} />
+            </label>
+          </div>
+          {filtersActive && (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-ink-2 tabular">
+                {filtered.length} {filtered.length === 1 ? 'result' : 'results'} · {c(totalOut)} out · {c(totalIn)} in
+              </p>
+              <button type="button" onClick={clearFilters} className="text-xs font-semibold text-accent-ink shrink-0">Clear</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {transactions.length === 0 ? (
         <EmptyState
           title="No transactions logged yet"
           action={<Link to="/expenses" className="text-sm font-semibold text-accent-ink">Log a transaction →</Link>}
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState title="No matches" />
       ) : (
         groups.map((group) => (
           <div key={group.ym}>
