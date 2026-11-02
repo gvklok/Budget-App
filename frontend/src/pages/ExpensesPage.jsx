@@ -1025,6 +1025,10 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
   // Regular funds: spending past the monthly contribution just draws on the
   // saved-up balance — calm, never critical (only a negative balance is).
   const fundMode = fundBalanceCents != null
+  // A fund can't spend more than it holds: when the balance is below what's left
+  // of this month's contribution (e.g. still recovering from last month), "left"
+  // is the balance, floored at $0.
+  const leftCents = fundMode ? Math.max(0, Math.min(remaining, fundBalanceCents)) : remaining
 
   return (
     <div>
@@ -1071,7 +1075,7 @@ function ItemRow({ name, subtitle, budgetCents, spentCents, txns, onEdit, onLogT
                   </span>
                   {!(fundMode && over) && (
                     <span className={`text-xs shrink-0 tabular ${over ? 'text-critical font-semibold' : 'text-ink-3'}`}>
-                      {over ? `over by ${c(Math.abs(remaining))}` : `${c(remaining)} left`}
+                      {over ? `over by ${c(Math.abs(remaining))}` : `${c(leftCents)} left`}
                     </span>
                   )}
                 </div>
