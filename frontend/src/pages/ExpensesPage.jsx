@@ -1220,6 +1220,56 @@ function ReorderRow({ name, amountCents, first, last, onUp, onDown }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+// Income received so far — a line + thin bar; tapping it lists the month's
+// logged income (paychecks + other income) inline.
+function IncomeReceived({ year, month, actualCents, expectedCents }) {
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState(null)
+  useEffect(() => {
+    if (!open) return
+    apiGet(`/transactions/?include_income=true&year=${year}&month=${month}`)
+      .then((all) => setRows(all.filter((t) => t.kind === 'paycheck' || t.kind === 'misc_income')))
+      .catch(() => setRows([]))
+  }, [open, year, month, actualCents])
+  return (
+    <div className="pt-3 border-t border-line">
+      <button onClick={() => setOpen((v) => !v)} className="w-full text-left" aria-expanded={open}>
+        <div className="flex items-center justify-between text-xs mb-1.5">
+          <span className="text-ink-2 flex items-center gap-1">
+            Income received so far
+            {open ? <ChevronUp size={12} className="text-ink-3" /> : <ChevronDown size={12} className="text-ink-3" />}
+          </span>
+          <span className="tabular font-semibold" style={{ color: SAVING_TEXT }}>
+            {c(actualCents)}
+            <span className="text-ink-3 font-normal"> of {c(expectedCents)}</span>
+          </span>
+        </div>
+        <Bar pct={(actualCents / expectedCents) * 100} color={SAVING} height={4} animate={false} />
+      </button>
+      {open && (
+        <div className="mt-3 rounded-2xl bg-paper overflow-hidden">
+          {rows === null
+            ? <p className="text-xs text-ink-3 px-4 py-3">Loading…</p>
+            : rows.length === 0
+            ? <p className="text-xs text-ink-3 px-4 py-3">No income logged this month</p>
+            : <div className="divide-y divide-line">
+                {rows.map((t) => (
+                  <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="text-xs text-ink-3 w-14 shrink-0">{fmtDate(t.date)}</span>
+                    <span className="flex-1 min-w-0 text-xs text-ink-2 truncate">
+                      {t.merchant || (t.kind === 'paycheck' ? 'Paycheck' : 'Other income')}
+                      {t.kind === 'paycheck' && t.merchant && <span className="text-ink-3"> · Paycheck</span>}
+                    </span>
+                    <span className="text-xs font-semibold tabular shrink-0" style={{ color: SAVING_TEXT }}>+{c(t.amount_cents)}</span>
+                  </div>
+                ))}
+              </div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ExpensesPage() {
   const [incomeSources, setIncomeSources] = useState([])
   const [summary, setSummary] = useState(null)
@@ -1725,16 +1775,8 @@ export default function ExpensesPage() {
           {/* Income received so far this month — kept minimal (a line + thin
               bar, no new card) per owner's explicit ask not to clutter this
               section. */}
-          <div className="pt-3 border-t border-line">
-            <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className="text-ink-2">Income received so far</span>
-              <span className="tabular font-semibold" style={{ color: SAVING_TEXT }}>
-                {c(summary.actual_income_cents ?? 0)}
-                <span className="text-ink-3 font-normal"> of {c(summary.expected_income_cents)}</span>
-              </span>
-            </div>
-            <Bar pct={((summary.actual_income_cents ?? 0) / summary.expected_income_cents) * 100} color={SAVING} height={4} animate={false} />
-          </div>
+          <IncomeReceived key={`${currentYear}-${currentMonth}`} year={currentYear} month={currentMonth}
+            actualCents={summary.actual_income_cents ?? 0} expectedCents={summary.expected_income_cents} />
         </Card>
       )}
 

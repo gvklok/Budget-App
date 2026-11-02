@@ -634,3 +634,5 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   of (contribution − spent) and the balance, floored at $0 — so a fund still
   recovering from a negative month never claims more than it has. Funds with
   more than the allocation still show the allocation-based amount.
+- Expenses: tapping "Income received so far" lists that month's logged income
+  (date, label, amount) inline; deleted/edited-away entries are excluded.
