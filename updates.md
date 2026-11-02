@@ -630,3 +630,7 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   stat. Deleting income never blocks; Savings may go negative. Pay schedules
   are untouched. Covers made at creation still stand after an edit/delete.
   Past months on All Transactions can be unlocked per visit, like Expenses.
+- Fund rows: "$X left" is capped by what the fund actually holds — the lower
+  of (contribution − spent) and the balance, floored at $0 — so a fund still
+  recovering from a negative month never claims more than it has. Funds with
+  more than the allocation still show the allocation-based amount.
