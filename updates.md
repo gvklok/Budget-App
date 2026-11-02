@@ -620,3 +620,13 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   planned amounts. Deliberate edits (create, PATCH, U5 reallocate) set both.
   Bill rows show "+$X covered" / "−$X lent" when they differ. Migration
   backfills planned_cents = amount_cents.
+- All Transactions: search (name, merchant or amount), All/Spending/Income
+  filter, and a From/To date range, with a count and in/out totals.
+- Edit and delete, "as if it never happened" (owner ruling): `PATCH
+  /transactions/{id}` reverses the live spend and re-debits under the same tx
+  id (no cover flow); `DELETE /income/{id}` and `PATCH /income/{id}` record an
+  `income_reversal` (dated in the original's month, linked via
+  `ledger_entries.reverses_entry_id`) so the income drops out of every month
+  stat. Deleting income never blocks; Savings may go negative. Pay schedules
+  are untouched. Covers made at creation still stand after an edit/delete.
+  Past months on All Transactions can be unlocked per visit, like Expenses.

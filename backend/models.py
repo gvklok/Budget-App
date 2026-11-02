@@ -148,6 +148,8 @@ class LedgerEntry(Base):
     # a fund-side bucket); null for bill/MR/savings movements. Reporting classifies
     # by this so flipping a fund's destination never reclassifies past months.
     destination_type = Column(String, nullable=True)
+    # income_reversal only: the paycheck/misc_income entry it cancels.
+    reverses_entry_id = Column(Integer, nullable=True)
 
 
 class ChecklistItem(Base):

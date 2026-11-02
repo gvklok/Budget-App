@@ -17,27 +17,30 @@ def record(
     transaction_id: Optional[int] = None,
     date: Optional[str] = None,
     destination_type: Optional[str] = None,
-) -> None:
+    reverses_entry_id: Optional[int] = None,
+) -> Optional[models.LedgerEntry]:
     """Append an immutable LedgerEntry. amount_cents must be positive; zero-value
     movements are skipped (nothing happened). date defaults to the effective
     'today'; callers pass the transaction's own date where the spec requires it.
-    Does NOT commit — the caller commits alongside the balance mutation."""
+    Does NOT commit — the caller commits alongside the balance mutation.
+    Returns the (unflushed) entry, or None when skipped."""
     if amount_cents == 0:
-        return
+        return None
     if date is None:
         date = get_current_date(db).isoformat()
-    db.add(
-        models.LedgerEntry(
-            date=date,
-            kind=kind,
-            from_bucket=from_bucket,
-            to_bucket=to_bucket,
-            amount_cents=amount_cents,
-            label=label,
-            transaction_id=transaction_id,
-            destination_type=destination_type,
-        )
+    entry = models.LedgerEntry(
+        date=date,
+        kind=kind,
+        from_bucket=from_bucket,
+        to_bucket=to_bucket,
+        amount_cents=amount_cents,
+        label=label,
+        transaction_id=transaction_id,
+        destination_type=destination_type,
+        reverses_entry_id=reverses_entry_id,
     )
+    db.add(entry)
+    return entry
 
 
 def paired_spend_entries(db: Session, tx_ids=None):
@@ -77,6 +80,26 @@ def live_spend_entries(db: Session, tx_ids) -> dict[int, models.LedgerEntry]:
     return {tid: stack[-1] for tid, stack in live.items() if stack}
 
 
+INCOME_KINDS = ("paycheck", "misc_income")
+
+
+def live_income_query(db: Session):
+    """paycheck/misc_income entries that haven't been deleted/edited away. A
+    reversed income vanishes from every stat; the income_reversal row itself is
+    never income (it shares the original's date, so balance walks still net)."""
+    reversed_ids = (
+        db.query(models.LedgerEntry.reverses_entry_id)
+        .filter(
+            models.LedgerEntry.kind == "income_reversal",
+            models.LedgerEntry.reverses_entry_id.isnot(None),
+        )
+    )
+    return db.query(models.LedgerEntry).filter(
+        models.LedgerEntry.kind.in_(INCOME_KINDS),
+        ~models.LedgerEntry.id.in_(reversed_ids),
+    )
+
+
 INITIAL_BALANCE_LABEL = "Initial balance"
 FUND_DELETED_LABEL_PREFIX = "Fund deleted: "
 
@@ -93,7 +116,7 @@ def fund_contributions_by_month(db: Session, month_prefix: Optional[str] = None)
         return bool(bucket) and bucket.startswith("fund:")
 
     q = db.query(models.LedgerEntry).filter(
-        ~models.LedgerEntry.kind.in_(["adjustment", "spend", "spend_reversal", "paycheck", "misc_income"])
+        ~models.LedgerEntry.kind.in_(["adjustment", "spend", "spend_reversal", *INCOME_KINDS, "income_reversal"])
     )
     if month_prefix:
         q = q.filter(models.LedgerEntry.date.like(f"{month_prefix}%"))

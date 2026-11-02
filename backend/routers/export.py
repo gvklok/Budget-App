@@ -70,6 +70,7 @@ def export_data(db: Session = Depends(get_db)):
                 "amount_cents": e.amount_cents,
                 "label": e.label,
                 "transaction_id": e.transaction_id,
+                "reverses_entry_id": e.reverses_entry_id,
             }
             for e in ledger_entries
         ],

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 import models
 import plans as plans_lib
-from ledger import live_spend_entries, paired_spend_entries, fund_contributions_by_month
+from ledger import live_income_query, live_spend_entries, paired_spend_entries, fund_contributions_by_month
 from database import get_db
 from routers.transactions import _deleted_fund_names
 
@@ -56,7 +56,7 @@ def monthly(months: int = 6, year: Optional[int] = None, month: Optional[int] = 
         for row in db.query(models.Fund.id).filter(models.Fund.destination_type == "transfer_out").all()
     }
 
-    for e in db.query(models.LedgerEntry).filter(models.LedgerEntry.kind.in_(["paycheck", "misc_income"])).all():
+    for e in live_income_query(db).all():
         month_totals = totals.get(e.date[:7])
         if month_totals is not None:
             month_totals["income_cents"] += e.amount_cents

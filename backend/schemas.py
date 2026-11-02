@@ -178,6 +178,17 @@ class TransactionCreate(BaseModel):
     cover: Optional[CoverSource] = None
 
 
+class TransactionUpdate(BaseModel):
+    """Every field optional. A bucket change is exactly one of line_item_id /
+    fund_id / from_savings=true; merchant "" clears it."""
+    amount_cents: Optional[int] = None
+    date: Optional[str] = None
+    merchant: Optional[str] = None
+    line_item_id: Optional[int] = None
+    fund_id: Optional[int] = None
+    from_savings: Optional[bool] = None
+
+
 class SplitTransactionMain(BaseModel):
     line_item_id: Optional[int] = None
     fund_id: Optional[int] = None  # exactly one of line_item_id / fund_id / from_savings
@@ -212,6 +223,7 @@ class LedgerEntryOut(BaseModel):
     label: Optional[str] = None
     transaction_id: Optional[int] = None
     destination_type: Optional[str] = None
+    reverses_entry_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
