@@ -381,3 +381,14 @@ def test_edit_misc_income_keeps_kind(client):
     rows = _income_rows(client)
     assert len(rows) == 1 and rows[0]["kind"] == "misc_income" and rows[0]["merchant"] == "Birthday gift"
     assert _balances(client)["savings"] == 5000
+
+
+def test_paycheck_with_date_lands_in_that_month(client):
+    src = client.post("/income-sources", json={
+        "name": "Job", "amount_cents": 100000, "frequency": "monthly", "anchor_date": "2026-01-01",
+    }).json()
+    r = client.post("/paycheck", json={"source_id": src["id"], "amount_cents": 90000, "date": "2026-10-14"})
+    assert r.status_code == 200
+    e = next(e for e in client.get("/ledger/").json() if e["kind"] == "paycheck")
+    assert e["date"] == "2026-10-14" and e["amount_cents"] == 90000
+    assert client.post("/paycheck", json={"source_id": src["id"], "date": "10/14/2026"}).status_code == 400

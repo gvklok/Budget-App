@@ -264,7 +264,7 @@ function FundContributionModal({ fund, onClose, onSave }) {
 
 function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaultLineItemId, defaultFundId, defaultSourceId, defaultSavings, defaultDate, onClose, onSave, onSaveSplit, onLogPaycheck, onLogMiscIncome }) {
   const today = defaultDate ?? localDateStr()
-  const [mode, setMode] = useState(defaultSourceId ? 'paycheck' : defaultSavings ? 'savings' : defaultFundId ? 'fund' : 'category')
+  const [mode, setMode] = useState(defaultSourceId ? 'income' : defaultSavings ? 'savings' : defaultFundId ? 'fund' : 'category')
   const [lineItemId, setLineItemId] = useState(defaultLineItemId ?? '')
   const [fundId, setFundId] = useState(defaultFundId ?? '')
   const [amount, setAmount] = useState('')
@@ -379,45 +379,38 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
     ? (bills.find((b) => String(b.id) === String(lineItemId))?.name ?? 'The main Bill')
     : (funds.find((f) => String(f.id) === String(fundId))?.name ?? 'The main Fund')
 
-  // Other income mode — one-off, non-recurring income (gift, Zelle, etc).
-  // Lands in Savings, no source_id.
-  const [miscAmount, setMiscAmount] = useState('')
-  const [miscLabel, setMiscLabel] = useState('')
-  const [miscDate, setMiscDate] = useState(today)
-
-  // Paycheck mode — no fund/date/merchant, money lands on Savings now. Amount
-  // pre-fills from the selected source (editable — bonus/odd checks) and
-  // re-fills whenever the source selection changes.
-  const initialSourceId = defaultSourceId ?? incomeSources?.[0]?.id ?? ''
+  // Income — one tab: pick a recurring source (logged as a paycheck, amount
+  // pre-filled and editable for a bonus/odd check) or "Other" for one-off
+  // income (gift, Zelle, a sale), which needs a description. Lands in Savings.
+  const initialSourceId = defaultSourceId ?? incomeSources?.[0]?.id ?? 'other'
   const [sourceId, setSourceId] = useState(initialSourceId)
-  const [paycheckAmount, setPaycheckAmount] = useState(() => {
+  const [incomeAmount, setIncomeAmount] = useState(() => {
     const src = incomeSources?.find((s) => s.id === initialSourceId)
     return src ? (src.amount_cents / 100).toFixed(2) : ''
   })
+  const [incomeLabel, setIncomeLabel] = useState('')
+  const [incomeDate, setIncomeDate] = useState(today)
+  const isOtherIncome = sourceId === 'other'
   function handleSourceChange(id) {
-    const numId = id === '' ? '' : Number(id)
+    if (id === 'other') { setSourceId('other'); return }
+    const numId = Number(id)
     setSourceId(numId)
     const src = incomeSources?.find((s) => s.id === numId)
-    if (src) setPaycheckAmount((src.amount_cents / 100).toFixed(2))
+    if (src) setIncomeAmount((src.amount_cents / 100).toFixed(2))
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (mode === 'paycheck') {
-      if (!sourceId) return setError('Select an income source')
-      if (!paycheckAmount) return setError('Amount is required')
+    if (mode === 'income') {
+      if (!incomeAmount || Number(incomeAmount) <= 0) return setError('Amount is required')
+      if (isOtherIncome && !incomeLabel.trim()) return setError('Add a description for this income')
       setSaving(true); setError('')
       try {
-        await onLogPaycheck({ source_id: Number(sourceId), amount_cents: toCents(paycheckAmount) })
-        onClose()
-      } catch (err) { setError(err.message) } finally { setSaving(false) }
-      return
-    }
-    if (mode === 'other') {
-      if (!miscAmount) return setError('Amount is required')
-      setSaving(true); setError('')
-      try {
-        await onLogMiscIncome({ amount_cents: toCents(miscAmount), label: miscLabel.trim() || null, date: miscDate })
+        if (isOtherIncome) {
+          await onLogMiscIncome({ amount_cents: toCents(incomeAmount), label: incomeLabel.trim(), date: incomeDate })
+        } else {
+          await onLogPaycheck({ source_id: Number(sourceId), amount_cents: toCents(incomeAmount), date: incomeDate })
+        }
         onClose()
       } catch (err) { setError(err.message) } finally { setSaving(false) }
       return
@@ -481,7 +474,7 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
     <Modal title="Log Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Segmented
-          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'paycheck', label: 'Paycheck' }, { value: 'other', label: 'Other Income' }]}
+          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'income', label: 'Income' }]}
           value={mode} onChange={setMode}
         />
         {/* Savings sits apart from the bills/funds/income tabs — spending it is
@@ -490,8 +483,8 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
             className={`w-full flex items-center justify-between rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors ${
               mode === 'savings' ? 'border-critical/40 bg-critical-soft text-critical' : 'border-line text-ink-3'
             }`}>
-            <span>Spend from Savings</span>
-            <span className="font-normal">{mode === 'savings' ? 'selected' : 'one-off, no bill or Fund'}</span>
+            <span>Withdraw from Savings</span>
+            <span className="font-normal">{mode === 'savings' ? 'selected' : 'big purchase, emergency'}</span>
           </button>
         {mode === 'category' && (
           <div>
@@ -514,58 +507,41 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
             </select>
           </div>
         )}
-        {mode === 'paycheck' && (
-          incomeSources && incomeSources.length > 0 ? (
-            <>
-              <div>
-                <label className={labelClass}>Income source</label>
-                <select value={sourceId} onChange={(e) => handleSourceChange(e.target.value)} className={inputClass}>
-                  <option value="">Select…</option>
-                  {incomeSources.map((s) => <option key={s.id} value={s.id}>{s.name} ({c(s.amount_cents)})</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={labelClass}>Amount</label>
-                <input autoFocus type="number" step="0.01" min="0" value={paycheckAmount}
-                  onChange={(e) => setPaycheckAmount(e.target.value)} placeholder="0.00"
-                  className={inputClass} />
-                <p className="text-xs text-ink-3 mt-1.5">Pre-filled from the source — edit for a bonus or odd check.</p>
-              </div>
-              {paycheckAmount && Number(paycheckAmount) > 0 && (
-                <p className="text-sm font-semibold" style={{ color: SAVING_TEXT }}>
-                  + {c(toCents(paycheckAmount))} → Savings
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-ink-3">Add an income source below first.</p>
-          )
-        )}
-        {mode === 'other' && (
+        {mode === 'income' && (
           <>
             <div>
-              <label className={labelClass}>Amount</label>
-              <input autoFocus type="number" step="0.01" min="0" value={miscAmount}
-                onChange={(e) => setMiscAmount(e.target.value)} placeholder="0.00"
-                className={inputClass} />
+              <label className={labelClass}>Source</label>
+              <select value={sourceId} onChange={(e) => handleSourceChange(e.target.value)} className={inputClass}>
+                {(incomeSources ?? []).map((src) => <option key={src.id} value={src.id}>{src.name} ({c(src.amount_cents)})</option>)}
+                <option value="other">Other</option>
+              </select>
             </div>
+            {isOtherIncome && (
+              <div>
+                <label className={labelClass}>Description</label>
+                <input value={incomeLabel} onChange={(e) => setIncomeLabel(e.target.value)}
+                  placeholder="e.g. Birthday gift from Mom, jacket sold" className={inputClass} />
+              </div>
+            )}
             <div>
-              <label className={labelClass}>Description</label>
-              <input value={miscLabel} onChange={(e) => setMiscLabel(e.target.value)}
-                placeholder="e.g. Birthday gift from Mom, Zelle from Dave" className={inputClass} />
+              <label className={labelClass}>Amount</label>
+              <input autoFocus type="number" step="0.01" min="0" value={incomeAmount}
+                onChange={(e) => setIncomeAmount(e.target.value)} placeholder="0.00"
+                className={inputClass} />
+              {!isOtherIncome && <p className="text-xs text-ink-3 mt-1.5">Pre-filled from the source — edit for a bonus or odd check.</p>}
             </div>
             <div>
               <label className={labelClass}>Date</label>
-              <input type="date" value={miscDate} onChange={(e) => setMiscDate(e.target.value)} className={inputClass} />
+              <input type="date" value={incomeDate} onChange={(e) => setIncomeDate(e.target.value)} className={inputClass} />
             </div>
-            {miscAmount && Number(miscAmount) > 0 && (
+            {incomeAmount && Number(incomeAmount) > 0 && (
               <p className="text-sm font-semibold" style={{ color: SAVING_TEXT }}>
-                + {c(toCents(miscAmount))} → Savings
+                + {c(toCents(incomeAmount))} → Savings
               </p>
             )}
           </>
         )}
-        {mode !== 'paycheck' && mode !== 'other' && (
+        {mode !== 'income' && (
           <>
             <div>
               <label className={labelClass}>Amount</label>
@@ -689,9 +665,9 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
         )}
         {error && <p className="text-sm text-critical">{error}</p>}
         <PrimaryButton type="submit"
-          disabled={saving || splitInvalid || savingsOver || reasonMissing || coverMissing || (mode === 'paycheck' && (!incomeSources || incomeSources.length === 0))}
+          disabled={saving || splitInvalid || savingsOver || reasonMissing || coverMissing}
           className="w-full">
-          {saving ? 'Saving…' : mode === 'paycheck' ? 'Log paycheck' : mode === 'other' ? 'Log income' : 'Log'}
+          {saving ? 'Saving…' : mode === 'income' ? 'Log income' : mode === 'savings' ? 'Withdraw' : 'Log'}
         </PrimaryButton>
       </form>
     </Modal>

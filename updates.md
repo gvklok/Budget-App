@@ -636,3 +636,8 @@ Fund (the Savings Withdrawal anticipated by U1, previously dev-simulator only).
   more than the allocation still show the allocation-based amount.
 - Expenses: tapping "Income received so far" lists that month's logged income
   (date, label, amount) inline; deleted/edited-away entries are excluded.
+- Log Transaction: Paycheck + Other Income merged into one "Income" tab — pick
+  an income source (logged as a paycheck, amount pre-filled) or "Other" (needs
+  a description). Both take a date; `POST /paycheck` accepts optional `date`.
+  "Spend from Savings" renamed "Withdraw from Savings" (big purchase,
+  emergency); withdrawals still show red on All Transactions.
