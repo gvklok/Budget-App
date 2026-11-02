@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, ArrowUpRight, ArrowDownRight, Search, X } from 'lucide-react'
-import { fmt, apiGet, apiDel, apiPatch, monthLabel } from '../api'
+import { ArrowLeft, ArrowUpRight, ArrowDownRight, Search, X, Calendar, ChevronDown, ChevronUp } from 'lucide-react'
+import { fmt, apiGet, apiDel, apiPatch, monthLabel, localDateStr } from '../api'
 import { entityColor, colorForName, TRANSFER_OUT, SAVING, CRITICAL } from '../theme'
 import { Card, SectionLabel, Badge, EmptyState, PrimaryButton, Segmented } from '../components/ui'
 import { useRefetchOnFocus } from '../hooks'
@@ -269,6 +269,7 @@ export default function TransactionsPage() {
   const [typeFilter, setTypeFilter] = useState('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
+  const [datesOpen, setDatesOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -341,7 +342,30 @@ export default function TransactionsPage() {
   const totalIn = filtered.filter(isIncomeTx).reduce((a, t) => a + t.amount_cents, 0)
   const groups = groupByMonth(filtered)
   function clearFilters() { setQuery(''); setTypeFilter('all'); setFromDate(''); setToDate('') }
-  const dateInput = 'w-full min-w-0 bg-card border border-line rounded-xl px-3 py-2 text-base text-ink focus:outline-none focus:border-accent'
+  // iOS Safari ignores width on native date inputs unless appearance is reset,
+  // and collapses an empty one — hence appearance-none + a fixed height.
+  const dateInput = 'block w-full min-w-0 h-10 appearance-none bg-card border border-line rounded-xl px-3 text-base text-ink text-left focus:outline-none focus:border-accent'
+  const monthRange = (ym) => {
+    const [y, m] = ym.split('-').map(Number)
+    return [`${ym}-01`, `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`]
+  }
+  const prevYM = (ym) => {
+    const [y, m] = ym.split('-').map(Number)
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
+  }
+  const thisYM = currentYM || localDateStr().slice(0, 7)
+  const last30 = (() => { const d = new Date(); const from = new Date(d); from.setDate(d.getDate() - 29); return [localDateStr(from), localDateStr(d)] })()
+  const presets = [
+    { label: 'This month', range: monthRange(thisYM) },
+    { label: 'Last month', range: monthRange(prevYM(thisYM)) },
+    { label: 'Last 30 days', range: last30 },
+  ]
+  const activePreset = presets.find((p) => p.range[0] === fromDate && p.range[1] === toDate)
+  const dateLabel = activePreset ? activePreset.label
+    : fromDate && toDate ? `${fmtDate(fromDate)} – ${fmtDate(toDate)}`
+    : fromDate ? `From ${fmtDate(fromDate)}`
+    : toDate ? `Until ${fmtDate(toDate)}`
+    : 'Any date'
 
   return (
     <div className="px-4 pt-6 pb-6 space-y-6">
@@ -384,15 +408,42 @@ export default function TransactionsPage() {
             value={typeFilter}
             onChange={setTypeFilter}
           />
-          <div className="flex gap-3">
-            <label className="flex-1 min-w-0 text-xs text-ink-3">
-              From
-              <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={`${dateInput} mt-1`} />
-            </label>
-            <label className="flex-1 min-w-0 text-xs text-ink-3">
-              To
-              <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={`${dateInput} mt-1`} />
-            </label>
+          <div>
+            <button
+              type="button"
+              onClick={() => setDatesOpen((v) => !v)}
+              aria-expanded={datesOpen}
+              className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-xs font-medium transition-colors ${fromDate || toDate ? 'border-accent text-accent-ink bg-accent-soft' : 'border-line text-ink-2 bg-card'}`}
+            >
+              <Calendar size={13} />
+              {dateLabel}
+              {datesOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+            {datesOpen && (
+              <div className="mt-2 p-3 rounded-2xl bg-paper space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {presets.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => { setFromDate(p.range[0]); setToDate(p.range[1]); setDatesOpen(false) }}
+                      className={`h-8 px-3 rounded-full text-xs font-medium border ${activePreset === p ? 'border-accent text-accent-ink bg-accent-soft' : 'border-line text-ink-2 bg-card'}`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-[3rem_1fr] items-center gap-x-2 gap-y-2">
+                  <label htmlFor="tx-from" className="text-xs text-ink-3">From</label>
+                  <input id="tx-from" type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={dateInput} />
+                  <label htmlFor="tx-to" className="text-xs text-ink-3">To</label>
+                  <input id="tx-to" type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={dateInput} />
+                </div>
+                {(fromDate || toDate) && (
+                  <button type="button" onClick={() => { setFromDate(''); setToDate('') }} className="text-xs font-semibold text-accent-ink">Any date</button>
+                )}
+              </div>
+            )}
           </div>
           {filtersActive && (
             <div className="flex items-center justify-between gap-3">
