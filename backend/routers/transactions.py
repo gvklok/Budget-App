@@ -136,6 +136,24 @@ def _debit(tx: models.Transaction, db: Session) -> None:
     rc.balance_cents -= tx.amount_cents
 
 
+def _debit_and_record_spend(tx: models.Transaction, db: Session) -> None:
+    """Debit the tx's bucket + Real Cash and append its spend entry. Expects the
+    tx's name/destination snapshot already set. Does NOT commit."""
+    _debit(tx, db)
+    bucket, label = _bucket_and_label(tx, db)
+    ledger.record(
+        db,
+        kind="spend",
+        amount_cents=tx.amount_cents,
+        from_bucket=bucket,
+        to_bucket="external",
+        label=label,
+        transaction_id=tx.id,
+        date=tx.date,
+        destination_type=tx.destination_type,
+    )
+
+
 def _credit_bucket(bucket: Optional[str], amount_cents: int, db: Session) -> bool:
     """Credit `amount_cents` to the named ledger bucket ('mr', 'savings', or
     'fund:{id}'). Returns True if the bucket resolved and was credited, False if
@@ -411,9 +429,7 @@ def list_transactions(
     # Income isn't tied to a specific bucket, so a bucket-scoped query (fund_id
     # or line_item_id) always falls back to spend-only, regardless of the flag.
     if include_income and fund_id is None and line_item_id is None:
-        income_query = db.query(models.LedgerEntry).filter(
-            models.LedgerEntry.kind.in_(["paycheck", "misc_income"])
-        )
+        income_query = ledger.live_income_query(db)
         if year is not None and month is not None:
             prefix = f"{year:04d}-{month:02d}"
             income_query = income_query.filter(models.LedgerEntry.date.like(f"{prefix}%"))
@@ -471,19 +487,7 @@ def create_transaction(body: schemas.TransactionCreate, db: Session = Depends(ge
     covered_from = None
     if overage > 0:
         covered_from = _apply_cover(cover, overage, bill, fund, tx.id, db)
-    _debit(tx, db)
-    bucket, label = _bucket_and_label(tx, db)
-    ledger.record(
-        db,
-        kind="spend",
-        amount_cents=tx.amount_cents,
-        from_bucket=bucket,
-        to_bucket="external",
-        label=label,
-        transaction_id=tx.id,
-        date=tx.date,
-        destination_type=destination,
-    )
+    _debit_and_record_spend(tx, db)
     db.commit()
     db.refresh(tx)
     out = schemas.TransactionOut.model_validate(tx)
@@ -519,19 +523,7 @@ def _create_leg(
     line_name, destination = _snapshot_name_and_destination(tx, db)
     tx.line_item_name = line_name
     tx.destination_type = destination
-    _debit(tx, db)
-    bucket, label = _bucket_and_label(tx, db)
-    ledger.record(
-        db,
-        kind="spend",
-        amount_cents=tx.amount_cents,
-        from_bucket=bucket,
-        to_bucket="external",
-        label=label,
-        transaction_id=tx.id,
-        date=tx.date,
-        destination_type=destination,
-    )
+    _debit_and_record_spend(tx, db)
     return tx
 
 
@@ -593,12 +585,10 @@ def create_split_transaction(body: schemas.SplitTransactionCreate, db: Session =
     return {"ok": True, "transactions": _enrich(transactions, db)}
 
 
-@router.delete("/{tx_id}")
-def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
-    tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
-    if not tx:
-        raise HTTPException(404, "Transaction not found")
-
+def _reverse_spend(tx: models.Transaction, db: Session) -> None:
+    """Undo the tx's LIVE spend as of its current amount/date: credit the
+    original bucket (or Savings, if that fund is gone) and Real Cash, and append
+    a spend_reversal. Does NOT commit or touch the Transaction row."""
     rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
 
     # Reverse against the ORIGINAL spend's ledger entry, not the tx's current
@@ -649,6 +639,78 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
         date=tx.date,
         destination_type=spend.destination_type if spend is not None else None,
     )
+
+
+@router.patch("/{tx_id}", response_model=schemas.TransactionOut)
+def update_transaction(tx_id: int, body: schemas.TransactionUpdate, db: Session = Depends(get_db)):
+    """Edit as if the purchase had been logged this way originally: reverse the
+    live spend, then debit the new bucket under the same tx id. Plain debit
+    rules (no cover flow); any failure commits nothing."""
+    tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
+    if not tx:
+        raise HTTPException(404, "Transaction not found")
+    if body.date is not None:
+        try:
+            date_type.fromisoformat(body.date)
+        except ValueError:
+            raise HTTPException(400, "date must be YYYY-MM-DD")
+    if body.amount_cents is not None and body.amount_cents <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    bucket_fields = sum([body.line_item_id is not None, body.fund_id is not None, bool(body.from_savings)])
+    if bucket_fields > 1:
+        raise HTTPException(400, "Provide only one of line_item_id, fund_id, or from_savings")
+
+    new_amount = body.amount_cents if body.amount_cents is not None else tx.amount_cents
+    new_date = body.date if body.date is not None else tx.date
+    new_merchant = tx.merchant if body.merchant is None else (body.merchant or None)
+    old_ref = (tx.line_item_id, tx.fund_id, bool(tx.from_savings))
+    new_ref = (body.line_item_id, body.fund_id, bool(body.from_savings)) if bucket_fields else old_ref
+    bucket_changed = new_ref != old_ref
+
+    if not bucket_changed and new_amount == tx.amount_cents and new_date == tx.date:
+        # Label-only edit: no money moves, so the ledger is left alone.
+        if tx.from_savings and not (new_merchant and new_merchant.strip()):
+            raise HTTPException(400, "A reason is required when spending from Savings")
+        tx.merchant = new_merchant
+        db.commit()
+        db.refresh(tx)
+        return _enrich([tx], db)[0]
+
+    new_line_item_id, new_fund_id, new_from_savings = new_ref
+    if new_line_item_id is None and new_fund_id is None and not new_from_savings:
+        raise HTTPException(400, "This purchase's bill or fund no longer exists — choose where it comes from")
+    savings_destination = _validate_bucket_ref(
+        new_line_item_id, new_fund_id, new_from_savings, None, new_merchant, db, None,
+    )
+    if new_from_savings and tx.from_savings:
+        # Staying a Savings Withdrawal keeps its external_spend/transfer_out tag.
+        savings_destination = tx.destination_type or savings_destination
+
+    _reverse_spend(tx, db)
+
+    tx.amount_cents = new_amount
+    tx.date = new_date
+    tx.merchant = new_merchant
+    tx.line_item_id = new_line_item_id
+    tx.fund_id = new_fund_id
+    tx.from_savings = new_from_savings
+    if bucket_changed:
+        tx.destination_type = savings_destination
+        line_name, destination = _snapshot_name_and_destination(tx, db)
+        tx.line_item_name = line_name
+        tx.destination_type = destination
+    _debit_and_record_spend(tx, db)
+    db.commit()
+    db.refresh(tx)
+    return _enrich([tx], db)[0]
+
+
+@router.delete("/{tx_id}")
+def delete_transaction(tx_id: int, db: Session = Depends(get_db)):
+    tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
+    if not tx:
+        raise HTTPException(404, "Transaction not found")
+    _reverse_spend(tx, db)
     db.delete(tx)
     db.commit()
     return {"ok": True}

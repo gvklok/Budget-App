@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, ArrowDownRight, Search, X } from 'lucide-react'
-import { fmt, apiGet, apiDel, monthLabel } from '../api'
+import { fmt, apiGet, apiDel, apiPatch, monthLabel } from '../api'
 import { entityColor, colorForName, TRANSFER_OUT, SAVING, CRITICAL } from '../theme'
 import { Card, SectionLabel, Badge, EmptyState, PrimaryButton, Segmented } from '../components/ui'
 import { useRefetchOnFocus } from '../hooks'
@@ -59,8 +59,101 @@ function matchesQuery(tx, q) {
   return false
 }
 
-function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, onToggle, onDeleted }) {
+const fieldCls = 'w-full min-w-0 bg-card border border-line rounded-xl px-3 py-2 text-base text-ink focus:outline-none focus:border-accent'
+
+// Inline edit form. Only changed fields are sent. Bucket ("From") is a single
+// select whose value encodes the kind: b:<lineItemId> | f:<fundId> | s.
+function EditForm({ tx, isIncome, funds, currentYM, unlockedYM, onSaved, onCancel }) {
+  const origBucket = isIncome ? '' : tx.from_savings ? 's' : tx.fund_id ? `f:${tx.fund_id}` : tx.line_item_id ? `b:${tx.line_item_id}` : ''
+  const origNote = isIncome ? (tx.label ?? tx.merchant ?? '') : (tx.merchant ?? '')
+  const [amount, setAmount] = useState((tx.amount_cents / 100).toFixed(2))
+  const [date, setDate] = useState(tx.date)
+  const [note, setNote] = useState(origNote)
+  const [bucket, setBucket] = useState(origBucket)
+  const [bills, setBills] = useState([])
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (isIncome) return
+    const [y, m] = tx.date.split('-').map(Number)
+    apiGet(`/line-items/?year=${y}&month=${m}`)
+      .then((items) => setBills(items.filter((i) => i.type === 'bill')))
+      .catch(() => {})
+  }, [tx.date, isIncome])
+
+  async function save() {
+    const cents = Math.round(parseFloat(amount) * 100)
+    if (!Number.isFinite(cents) || cents <= 0) { setErr('Enter an amount greater than $0'); return }
+    if (!date) { setErr('Pick a date'); return }
+    if (currentYM && date.slice(0, 7) < currentYM && date.slice(0, 7) !== unlockedYM) { setErr('That date is in a locked past month'); return }
+    const body = {}
+    if (cents !== tx.amount_cents) body.amount_cents = cents
+    if (date !== tx.date) body.date = date
+    if (note !== origNote) body[isIncome ? 'label' : 'merchant'] = note
+    if (!isIncome && bucket !== origBucket) {
+      if (bucket === 's') body.from_savings = true
+      else if (bucket.startsWith('f:')) body.fund_id = Number(bucket.slice(2))
+      else if (bucket.startsWith('b:')) body.line_item_id = Number(bucket.slice(2))
+    }
+    if (Object.keys(body).length === 0) { onCancel(); return }
+    setBusy(true)
+    setErr('')
+    try {
+      await apiPatch(isIncome ? `/income/${tx.id}` : `/transactions/${tx.id}`, body)
+      await onSaved()
+    } catch (e) {
+      setErr(e.message || 'Could not save')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="px-4 pb-4 -mt-1 space-y-3">
+      <label className="block text-xs text-ink-3">
+        Amount
+        <input type="number" inputMode="decimal" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${fieldCls} mt-1 tabular`} />
+      </label>
+      <label className="block text-xs text-ink-3">
+        Date
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${fieldCls} mt-1`} />
+      </label>
+      <label className="block text-xs text-ink-3">
+        {isIncome ? 'Label' : 'Note'}
+        <input type="text" value={note} onChange={(e) => setNote(e.target.value)} className={`${fieldCls} mt-1`} />
+      </label>
+      {!isIncome && (
+        <label className="block text-xs text-ink-3">
+          From
+          <select value={bucket} onChange={(e) => setBucket(e.target.value)} className={`${fieldCls} mt-1`}>
+            {origBucket === '' && <option value="" disabled>Choose…</option>}
+            {bills.length > 0 && (
+              <optgroup label="Bills">
+                {bills.map((b) => <option key={`b${b.id}`} value={`b:${b.id}`}>{b.name}</option>)}
+              </optgroup>
+            )}
+            {funds.length > 0 && (
+              <optgroup label="Funds">
+                {funds.map((f) => <option key={`f${f.id}`} value={`f:${f.id}`}>{f.name}</option>)}
+              </optgroup>
+            )}
+            <option value="s">Savings</option>
+          </select>
+        </label>
+      )}
+      {err && <p className="text-xs text-critical">{err}</p>}
+      <div className="flex items-center gap-4">
+        <button onClick={save} disabled={busy} className="text-sm font-semibold text-accent-ink disabled:opacity-50">{busy ? 'Saving…' : 'Save'}</button>
+        <button onClick={onCancel} disabled={busy} className="text-sm font-semibold text-ink-3 disabled:opacity-50">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+function TransactionRow({ tx, funds, fundColorById, billColorByName, currentYM, unlockedYM, onUnlock, open, onToggle, onDeleted }) {
+  const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState(false)
+  useEffect(() => { if (!open) setEditing(false) }, [open])
   const [err, setErr] = useState('')
   // Income entries (paychecks + one-off "Other Income" gifts) arrive in the
   // same list as spend rows (`?include_income=true`) — they carry no
@@ -90,12 +183,12 @@ function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, o
 
   const refundTo = isSavings ? 'Savings' : isFund ? tx.fund_name : 'Monthly Reserve'
   // U8: past months are locked; only the effective current month or later is deletable.
-  const locked = !!currentYM && tx.date.slice(0, 7) < currentYM
+  const locked = !!currentYM && tx.date.slice(0, 7) < currentYM && tx.date.slice(0, 7) !== unlockedYM
   async function confirmDelete() {
     setBusy(true)
     setErr('')
     try {
-      await apiDel(`/transactions/${tx.id}`)
+      await apiDel(isIncome ? `/income/${tx.id}` : `/transactions/${tx.id}`)
       await onDeleted()
     } catch (e) {
       setErr(e.message || 'Could not delete')
@@ -106,8 +199,8 @@ function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, o
   return (
     <div>
     <div
-      className={`flex items-center gap-3 px-4 py-3 ${isIncome ? '' : 'cursor-pointer'}`}
-      onClick={isIncome ? undefined : onToggle}
+      className="flex items-center gap-3 px-4 py-3 cursor-pointer"
+      onClick={onToggle}
     >
       {isIncome
         ? <ArrowUpRight size={14} className="shrink-0" style={{ color }} />
@@ -136,12 +229,21 @@ function TransactionRow({ tx, fundColorById, billColorByName, currentYM, open, o
         {isIncome ? '+' : ''}{c(tx.amount_cents)}
       </span>
     </div>
-    {open && !isIncome && locked && (
-      <p className="px-4 pb-3 -mt-1 text-xs text-ink-3">Past months are locked — unlock the month on Expenses to change it</p>
+    {open && locked && (
+      <div className="px-4 pb-3 -mt-1 flex items-center gap-3">
+        <p className="text-xs text-ink-3 flex-1 min-w-0">Past months are locked</p>
+        <button onClick={() => onUnlock(tx.date.slice(0, 7))} className="text-xs font-semibold text-accent-ink shrink-0">Unlock {monthLabel(tx.date.slice(0, 7))}</button>
+      </div>
     )}
-    {open && !isIncome && !locked && (
+    {open && !locked && editing && (
+      <EditForm tx={tx} isIncome={isIncome} funds={funds} currentYM={currentYM} unlockedYM={unlockedYM} onSaved={onDeleted} onCancel={() => setEditing(false)} />
+    )}
+    {open && !locked && !editing && (
       <div className="px-4 pb-3 -mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
-        <p className="text-xs text-ink-2 flex-1 min-w-0">Delete this? It goes back to {refundTo}.</p>
+        <p className="text-xs text-ink-2 flex-1 min-w-0">
+          {isIncome ? `Delete this income? ${c(tx.amount_cents)} comes out of Savings.` : `Delete this? It goes back to ${refundTo}.`}
+        </p>
+        <button onClick={() => setEditing(true)} disabled={busy} className="text-xs font-semibold text-accent-ink disabled:opacity-50">Edit</button>
         <button onClick={confirmDelete} disabled={busy} className="text-xs font-semibold text-critical disabled:opacity-50">
           {busy ? 'Deleting…' : 'Delete'}
         </button>
@@ -161,6 +263,8 @@ export default function TransactionsPage() {
   const [loadError, setLoadError] = useState('')
   const [openKey, setOpenKey] = useState(null)
   const [currentYM, setCurrentYM] = useState('')
+  // U8: per-visit unlock of one past month, like Expenses' month unlock.
+  const [unlockedYM, setUnlockedYM] = useState(null)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [fromDate, setFromDate] = useState('')
@@ -314,7 +418,7 @@ export default function TransactionsPage() {
             <SectionLabel>{monthLabel(group.ym)}</SectionLabel>
             <Card className="overflow-hidden divide-y divide-line">
               {group.entries.map((tx) => (
-                <TransactionRow key={`${tx.kind}-${tx.id}`} tx={tx} fundColorById={fundColorById} billColorByName={billColorByName} currentYM={currentYM}
+                <TransactionRow key={`${tx.kind}-${tx.id}`} tx={tx} funds={funds} fundColorById={fundColorById} billColorByName={billColorByName} currentYM={currentYM} unlockedYM={unlockedYM} onUnlock={setUnlockedYM}
                   open={openKey === `${tx.kind}-${tx.id}`}
                   onToggle={() => setOpenKey(openKey === `${tx.kind}-${tx.id}` ? null : `${tx.kind}-${tx.id}`)}
                   onDeleted={handleDeleted} />

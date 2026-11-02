@@ -266,6 +266,8 @@ def _migrate() -> None:
         led_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(ledger_entries)"))}
         if "destination_type" not in led_cols:
             conn.execute(text("ALTER TABLE ledger_entries ADD COLUMN destination_type TEXT"))
+        if "reverses_entry_id" not in led_cols:
+            conn.execute(text("ALTER TABLE ledger_entries ADD COLUMN reverses_entry_id INTEGER"))
         conn.execute(text("""
             UPDATE ledger_entries SET destination_type = (
                 SELECT f.destination_type FROM funds f

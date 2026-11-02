@@ -13,7 +13,7 @@ import ledger
 import plans as plans_lib
 from clock import get_current_date
 from database import get_db
-from ledger import live_spend_entries, paired_spend_entries, fund_contributions_by_month
+from ledger import live_income_query, live_spend_entries, paired_spend_entries, fund_contributions_by_month
 
 router = APIRouter()
 
@@ -250,6 +250,95 @@ def log_misc_income(body: LogMiscIncomeBody, db: Session = Depends(get_db)):
     return {"ok": True, "added_cents": body.amount_cents, "label": label}
 
 
+class EditIncomeBody(BaseModel):
+    amount_cents: Optional[int] = None
+    date: Optional[str] = None  # YYYY-MM-DD
+    label: Optional[str] = None
+
+
+def _live_income_entry(entry_id: int, db: Session) -> models.LedgerEntry:
+    entry = (
+        db.query(models.LedgerEntry)
+        .filter(models.LedgerEntry.id == entry_id, models.LedgerEntry.kind.in_(ledger.INCOME_KINDS))
+        .first()
+    )
+    if not entry:
+        raise HTTPException(404, "Income entry not found")
+    already = (
+        db.query(models.LedgerEntry.id)
+        .filter(models.LedgerEntry.kind == "income_reversal", models.LedgerEntry.reverses_entry_id == entry.id)
+        .first()
+    )
+    if already:
+        raise HTTPException(400, f"This ${entry.amount_cents / 100:,.2f} income entry was already deleted or edited")
+    return entry
+
+
+def _reverse_income(entry: models.LedgerEntry, db: Session) -> None:
+    """Take the income back out of Savings + Real Cash, dated in the entry's own
+    month so its month stats net to zero. Savings may go negative: undoing a
+    mistaken entry is never blocked, and the invariant holds either way. Never
+    touches the IncomeSource / pay schedule. Does NOT commit."""
+    savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
+    savings.balance_cents -= entry.amount_cents
+    rc.balance_cents -= entry.amount_cents
+    ledger.record(
+        db,
+        kind="income_reversal",
+        amount_cents=entry.amount_cents,
+        from_bucket="savings",
+        to_bucket="external",
+        label=entry.label,
+        date=entry.date,
+        reverses_entry_id=entry.id,
+    )
+
+
+@router.delete("/income/{entry_id}")
+def delete_income(entry_id: int, db: Session = Depends(get_db)):
+    entry = _live_income_entry(entry_id, db)
+    _reverse_income(entry, db)
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/income/{entry_id}")
+def edit_income(entry_id: int, body: EditIncomeBody, db: Session = Depends(get_db)):
+    """Reverse the original and log a fresh entry of the same kind with the new
+    values; only the reversal links back, so the history stays auditable."""
+    entry = _live_income_entry(entry_id, db)
+    if body.amount_cents is not None and body.amount_cents <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    if body.date is not None:
+        try:
+            date.fromisoformat(body.date)
+        except ValueError:
+            raise HTTPException(400, "date must be YYYY-MM-DD")
+    amount = body.amount_cents if body.amount_cents is not None else entry.amount_cents
+    new_date = body.date if body.date is not None else entry.date
+    label = (body.label or "").strip() or entry.label
+    if (amount, new_date, label) == (entry.amount_cents, entry.date, entry.label):
+        return {"ok": True, "entry_id": entry.id}
+
+    _reverse_income(entry, db)
+    savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
+    rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
+    savings.balance_cents += amount
+    rc.balance_cents += amount
+    new_entry = ledger.record(
+        db,
+        kind=entry.kind,
+        amount_cents=amount,
+        from_bucket="external",
+        to_bucket="savings",
+        label=label,
+        date=new_date,
+    )
+    db.commit()
+    return {"ok": True, "entry_id": new_entry.id}
+
+
 # ── Monthly summary ───────────────────────────────────────────────────────────
 # U3: bills come from the requested (or effective-current, if omitted) month's
 # plan. Funds stay month-agnostic — this app's Fund contributions are a global
@@ -279,11 +368,9 @@ def monthly_summary(year: Optional[int] = None, month: Optional[int] = None, db:
     # requested/effective-current month instead of a rolling window.
     month_prefix = f"{year:04d}-{month:02d}"
     actual_income = (
-        db.query(func.coalesce(func.sum(models.LedgerEntry.amount_cents), 0))
-        .filter(
-            models.LedgerEntry.kind.in_(["paycheck", "misc_income"]),
-            models.LedgerEntry.date.like(f"{month_prefix}%"),
-        )
+        live_income_query(db)
+        .filter(models.LedgerEntry.date.like(f"{month_prefix}%"))
+        .with_entities(func.coalesce(func.sum(models.LedgerEntry.amount_cents), 0))
         .scalar()
         or 0
     )
