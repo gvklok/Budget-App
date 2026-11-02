@@ -192,6 +192,7 @@ def delete_income_source(source_id: int, db: Session = Depends(get_db)):
 class LogPaycheckBody(BaseModel):
     source_id: int
     amount_cents: Optional[int] = None  # override for a bonus/odd check; default = source amount
+    date: Optional[str] = None  # YYYY-MM-DD; default = effective today
 
 
 class LogMiscIncomeBody(BaseModel):
@@ -211,12 +212,17 @@ def log_paycheck(body: LogPaycheckBody, db: Session = Depends(get_db)):
     amount = body.amount_cents if body.amount_cents is not None else source.amount_cents
     if amount <= 0:
         raise HTTPException(400, "Amount must be positive")
+    if body.date is not None:
+        try:
+            date.fromisoformat(body.date)
+        except ValueError:
+            raise HTTPException(400, "date must be YYYY-MM-DD")
 
     savings = db.query(models.Savings).filter(models.Savings.id == 1).first()
     rc = db.query(models.RealCash).filter(models.RealCash.id == 1).first()
     savings.balance_cents += amount
     rc.balance_cents += amount
-    ledger.record(db, kind="paycheck", amount_cents=amount, from_bucket="external", to_bucket="savings", label=source.name)
+    ledger.record(db, kind="paycheck", amount_cents=amount, from_bucket="external", to_bucket="savings", label=source.name, date=body.date)
     db.commit()
     return {"ok": True, "added_cents": amount, "source_id": source.id, "name": source.name}
 
