@@ -474,18 +474,13 @@ function LogTransactionModal({ bills, funds, incomeSources, coverEnabled, defaul
     <Modal title="Log Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Segmented
-          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'income', label: 'Income' }]}
+          options={[{ value: 'category', label: 'Bill' }, { value: 'fund', label: 'Fund' }, { value: 'income', label: 'Income' }, { value: 'savings', label: 'Withdraw' }]}
           value={mode} onChange={setMode}
         />
-        {/* Savings sits apart from the bills/funds/income tabs — spending it is
-            the intentional exception, not one more everyday bucket. */}
-          <button type="button" onClick={() => setMode('savings')}
-            className={`w-full flex items-center justify-between rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors ${
-              mode === 'savings' ? 'border-critical/40 bg-critical-soft text-critical' : 'border-line text-ink-3'
-            }`}>
-            <span>Withdraw from Savings</span>
-            <span className="font-normal">{mode === 'savings' ? 'selected' : 'big purchase, emergency'}</span>
-          </button>
+        {/* Withdrawing is the intentional exception — say so plainly. */}
+        {mode === 'savings' && (
+          <p className="text-xs font-medium text-critical">Comes straight out of Savings — for a big purchase or an emergency.</p>
+        )}
         {mode === 'category' && (
           <div>
             <label className={labelClass}>Bill</label>
